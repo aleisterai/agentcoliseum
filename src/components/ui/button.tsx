@@ -56,15 +56,21 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     const isDisabled = disabled || loading;
     // Slot can only have a single child. When asChild, skip the spinner
     // wrapper and let the caller compose their own label.
-    const content =
-      asChild
-        ? children
-        : (
+    //
+    // When not loading, render children as direct flex items so the button's
+    // own `gap-2` / `items-center` apply between an icon and its label.
+    // Wrapping in a <span> here would force them into a single inline flow,
+    // baseline-aligning the icon against the text.
+    const content = asChild
+      ? children
+      : loading
+        ? (
           <>
-            {loading && <Loader2 className="animate-spin" aria-hidden="true" />}
-            <span>{loading && loadingText ? loadingText : children}</span>
+            <Loader2 className="animate-spin" aria-hidden="true" />
+            <span>{loadingText ?? children}</span>
           </>
-        );
+        )
+        : children;
     return (
       <Comp
         className={cn(buttonVariants({ variant, size, className }))}

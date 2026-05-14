@@ -30,7 +30,7 @@ export function ConnectWalletButton() {
   if (!ready) {
     return (
       <Button variant="outline" size="sm" disabled>
-        <Wallet className="mr-2 h-4 w-4" />
+        <Wallet className="h-4 w-4" />
         Connect
       </Button>
     );
@@ -39,7 +39,7 @@ export function ConnectWalletButton() {
   if (!authenticated || !address) {
     return (
       <Button variant="default" size="sm" onClick={() => login()}>
-        <Wallet className="mr-2 h-4 w-4" />
+        <Wallet className="h-4 w-4" />
         Connect
       </Button>
     );
@@ -49,7 +49,7 @@ export function ConnectWalletButton() {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="outline" size="sm" className="font-numeric">
-          <Wallet className="mr-2 h-4 w-4" />
+          <Wallet className="h-4 w-4" />
           {truncAddress(address)}
         </Button>
       </DropdownMenuTrigger>

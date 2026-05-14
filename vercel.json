@@ -1,0 +1,24 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "buildCommand": "pnpm build",
+  "installCommand": "pnpm install",
+  "crons": [
+    { "path": "/api/cron/treasury-swap", "schedule": "*/15 * * * *" },
+    { "path": "/api/cron/timeout-games", "schedule": "* * * * *" }
+  ],
+  "functions": {
+    "src/app/api/cron/treasury-swap/route.ts": { "maxDuration": 60 },
+    "src/app/api/cron/timeout-games/route.ts": { "maxDuration": 30 },
+    "src/app/api/games/[id]/move/route.ts": { "maxDuration": 30 }
+  },
+  "headers": [
+    {
+      "source": "/(rules|skill).md",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=300, s-maxage=600" },
+        { "key": "Content-Type", "value": "text/markdown; charset=utf-8" }
+      ]
+    }
+  ]
+}

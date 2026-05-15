@@ -1,249 +1,142 @@
 import Link from "next/link";
-import { desc, eq, or } from "drizzle-orm";
-import { db } from "@/lib/db/client";
-import { agents, games } from "@/lib/db/schema";
 import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
-import { cn, formatUsdc } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { listCatalog, type CatalogCategory, type CatalogItem } from "@/lib/game/catalog";
+import { PlaceholderArt } from "@/components/game/placeholder-art";
 
-export const dynamic = "force-dynamic";
+export const dynamic = "force-static";
 
-type Filter = "all" | "live" | "lobby" | "completed";
+type CategoryFilter = "all" | CatalogCategory;
 
-const FILTERS: Array<{ key: Filter; label: string }> = [
+const CATEGORIES: Array<{ key: CategoryFilter; label: string }> = [
   { key: "all", label: "All" },
-  { key: "live", label: "Live" },
-  { key: "lobby", label: "Open" },
-  { key: "completed", label: "Completed" },
+  { key: "classic", label: "Classic" },
+  { key: "abstract", label: "Abstract" },
+  { key: "imperfect-info", label: "Imperfect info" },
+  { key: "dice", label: "Dice" },
 ];
-
-type GameRow = {
-  id: string;
-  gameType: string;
-  mode: "free" | "paid" | "system";
-  status: "lobby" | "active" | "completed" | "abandoned";
-  stakeUsdc: number | null;
-  potUsdc: number | null;
-  /** Legacy mirror — Connect 4 only, null elsewhere. */
-  boardState: number[][] | null;
-  initiatorAgentId: string | null;
-  acceptorAgentId: string | null;
-  winnerAgentId: string | null;
-  systemBotDifficulty: "easy" | "medium" | "hard" | null;
-  createdAt: Date;
-  completedAt: Date | null;
-};
 
 export default async function GamesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ filter?: string }>;
+  searchParams: Promise<{ category?: string }>;
 }) {
-  const { filter: rawFilter } = await searchParams;
-  const filter: Filter = (FILTERS.find((f) => f.key === rawFilter)?.key ?? "all") as Filter;
+  const { category: raw } = await searchParams;
+  const active: CategoryFilter = (CATEGORIES.find((c) => c.key === raw)?.key ?? "all") as CategoryFilter;
 
-  const rows = (await db
-    .select({
-      id: games.id,
-      gameType: games.gameType,
-      mode: games.mode,
-      status: games.status,
-      stakeUsdc: games.stakeUsdc,
-      potUsdc: games.potUsdc,
-      boardState: games.boardState,
-      initiatorAgentId: games.initiatorAgentId,
-      acceptorAgentId: games.acceptorAgentId,
-      winnerAgentId: games.winnerAgentId,
-      systemBotDifficulty: games.systemBotDifficulty,
-      createdAt: games.createdAt,
-      completedAt: games.completedAt,
-    })
-    .from(games)
-    .orderBy(desc(games.createdAt))
-    .limit(120)) as GameRow[];
+  const all = listCatalog();
+  const visible = active === "all" ? all : all.filter((g) => g.category === active);
 
-  const visible = rows.filter((r) => {
-    if (filter === "live") return r.status === "active";
-    if (filter === "lobby") return r.status === "lobby";
-    if (filter === "completed") return r.status === "completed";
-    return r.status !== "abandoned";
-  });
+  const counts: Record<CategoryFilter, number> = {
+    all: all.length,
+    classic: all.filter((g) => g.category === "classic").length,
+    abstract: all.filter((g) => g.category === "abstract").length,
+    "imperfect-info": all.filter((g) => g.category === "imperfect-info").length,
+    dice: all.filter((g) => g.category === "dice").length,
+    card: all.filter((g) => g.category === "card").length,
+  };
 
-  const agentIds = Array.from(
-    new Set(
-      visible.flatMap((r) =>
-        [r.initiatorAgentId, r.acceptorAgentId, r.winnerAgentId].filter(Boolean) as string[],
-      ),
-    ),
-  );
-  const agentRows = agentIds.length
-    ? await db
-        .select({
-          id: agents.id,
-          handle: agents.handle,
-          displayName: agents.displayName,
-          elo: agents.elo,
-        })
-        .from(agents)
-        .where(or(...agentIds.map((id) => eq(agents.id, id))))
-    : [];
-  const aMap = Object.fromEntries(agentRows.map((a) => [a.id, a]));
-
-  const counts = {
-    all: rows.filter((r) => r.status !== "abandoned").length,
-    live: rows.filter((r) => r.status === "active").length,
-    lobby: rows.filter((r) => r.status === "lobby").length,
-    completed: rows.filter((r) => r.status === "completed").length,
-  } as const;
+  const liveCount = all.filter((g) => g.status === "live").length;
 
   return (
     <main className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-8 sm:px-6">
-      <header className="flex flex-wrap items-baseline justify-between gap-3">
-        <h1 className="text-3xl font-semibold tracking-tight">Games</h1>
-        <span className="font-numeric text-xs uppercase tracking-widest text-muted-foreground">
-          {visible.length} game{visible.length === 1 ? "" : "s"}
-        </span>
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-3xl font-semibold tracking-tight">Games</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            20 games headed for the coliseum.{" "}
+            <span className="font-numeric text-foreground/80">{liveCount} live</span>
+            {" · "}
+            <span className="font-numeric">{all.length - liveCount} coming soon</span>.
+          </p>
+        </div>
+        <Link
+          href="/lobby"
+          className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:border-border/80 hover:bg-secondary/60 hover:text-foreground"
+        >
+          Open challenges →
+        </Link>
       </header>
 
       <nav className="flex flex-wrap gap-1.5">
-        {FILTERS.map((f) => {
-          const active = f.key === filter;
+        {CATEGORIES.map((c) => {
+          const isActive = c.key === active;
           return (
             <Link
-              key={f.key}
-              href={f.key === "all" ? "/games" : `/games?filter=${f.key}`}
+              key={c.key}
+              href={c.key === "all" ? "/games" : `/games?category=${c.key}`}
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
-                active
+                isActive
                   ? "border-accent/40 bg-accent/10 text-accent"
                   : "border-border text-muted-foreground hover:border-border/80 hover:bg-secondary/60 hover:text-foreground",
               )}
             >
-              {f.label}
-              <span className="font-numeric text-xs opacity-70">{counts[f.key]}</span>
+              {c.label}
+              <span className="font-numeric text-xs opacity-70">{counts[c.key]}</span>
             </Link>
           );
         })}
       </nav>
 
-      {visible.length === 0 ? (
-        <Card className="flex flex-col items-center justify-center gap-2 py-16 text-center">
-          <p className="text-sm text-muted-foreground">No games in this view yet.</p>
-          <p className="font-numeric text-xs uppercase tracking-widest text-muted-foreground/70">
-            check back soon
-          </p>
-        </Card>
-      ) : (
-        <ul
-          role="list"
-          className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
-        >
-          {visible.map((g) => (
-            <li key={g.id}>
-              <GameCard game={g} aMap={aMap} />
-            </li>
-          ))}
-        </ul>
-      )}
+      <ul
+        role="list"
+        className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5"
+      >
+        {visible.map((game) => (
+          <li key={game.id}>
+            <GameCard game={game} />
+          </li>
+        ))}
+      </ul>
     </main>
   );
 }
 
-function GameCard({
-  game,
-  aMap,
-}: {
-  game: GameRow;
-  aMap: Record<string, { handle: string; displayName: string; elo: number }>;
-}) {
-  const initiator = game.initiatorAgentId ? aMap[game.initiatorAgentId] : null;
-  const acceptor = game.acceptorAgentId ? aMap[game.acceptorAgentId] : null;
-  const winner = game.winnerAgentId ? aMap[game.winnerAgentId] : null;
-
-  return (
-    <Link
-      href={`/games/${game.id}`}
-      className="group block h-full rounded-lg border border-border bg-card transition-all duration-200 hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-[0_0_0_1px_var(--accent),0_8px_24px_-8px_rgba(0,0,0,0.6)]"
-    >
+function GameCard({ game }: { game: CatalogItem }) {
+  const isLive = game.status === "live";
+  const containerClass = cn(
+    "group relative block h-full rounded-lg border border-border bg-card transition-all duration-200",
+    isLive
+      ? "hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-[0_0_0_1px_var(--accent),0_8px_24px_-8px_rgba(0,0,0,0.6)]"
+      : "opacity-70",
+  );
+  const inner = (
+    <>
       <div className="relative">
-        {game.gameType === "connect4" && game.boardState ? (
-          <BoardPreview board={game.boardState} />
-        ) : (
-          <GenericPreview gameType={game.gameType} />
-        )}
+        <PlaceholderArt id={game.id} label={game.displayName} className="rounded-t-lg" />
         <div className="absolute right-2 top-2">
-          <StatusPill status={game.status} />
-        </div>
-        <div className="absolute left-2 top-2">
-          <ModePill mode={game.mode} difficulty={game.systemBotDifficulty} gameType={game.gameType} />
+          <StatusPill status={game.status} wave={game.wave} />
         </div>
       </div>
-      <div className="flex flex-col gap-2 p-3.5">
-        <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium">
-              {initiator ? `@${initiator.handle}` : <span className="text-muted-foreground">open</span>}
-              <span className="px-1.5 text-muted-foreground/60">vs</span>
-              {acceptor ? (
-                `@${acceptor.handle}`
-              ) : game.mode === "system" ? (
-                <span className="text-muted-foreground">system bot</span>
-              ) : (
-                <span className="text-muted-foreground">anyone</span>
-              )}
-            </p>
-          </div>
-          {game.mode === "paid" && game.stakeUsdc != null && (
-            <span className="shrink-0 rounded-sm bg-accent/10 px-1.5 py-0.5 font-numeric text-xs font-semibold text-accent">
-              {formatUsdc(game.stakeUsdc)}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center justify-between gap-2 font-numeric text-xs text-muted-foreground">
-          <span>{footerLeft(game, winner?.handle)}</span>
-          <span className="text-foreground/70 transition-colors group-hover:text-accent">
-            {game.status === "lobby" ? "join →" : game.status === "active" ? "watch →" : "replay →"}
+      <div className="flex flex-col gap-1.5 p-3.5">
+        <h3 className="text-sm font-semibold leading-tight">{game.displayName}</h3>
+        <p className="line-clamp-2 text-xs text-muted-foreground">{game.shortDescription}</p>
+        <div className="mt-1 flex items-center justify-between gap-2 font-numeric text-[10px] uppercase tracking-[0.18em] text-muted-foreground/80">
+          <span>{game.category}</span>
+          <span className={cn("transition-colors", isLive && "text-foreground/70 group-hover:text-accent")}>
+            {isLive ? "play →" : `wave ${game.wave}`}
           </span>
         </div>
       </div>
-    </Link>
+    </>
+  );
+  if (isLive) {
+    return (
+      <Link href={`/lobby?gameType=${game.id}`} className={containerClass}>
+        {inner}
+      </Link>
+    );
+  }
+  return (
+    <div className={containerClass} aria-disabled tabIndex={-1}>
+      {inner}
+    </div>
   );
 }
 
-function footerLeft(g: GameRow, winnerHandle: string | undefined): string {
-  if (g.status === "completed") {
-    return winnerHandle ? `won by @${winnerHandle}` : "draw";
-  }
-  if (g.status === "active" && g.boardState) {
-    const n = countMoves(g.boardState);
-    return `${n} move${n === 1 ? "" : "s"} · ${timeAgo(g.createdAt)}`;
-  }
-  if (g.status === "active") {
-    return `in play · ${timeAgo(g.createdAt)}`;
-  }
-  return `posted ${timeAgo(g.createdAt)}`;
-}
-
-function countMoves(board: number[][]): number {
-  let n = 0;
-  for (const row of board) for (const cell of row) if (cell !== 0) n++;
-  return n;
-}
-
-function timeAgo(d: Date | null | undefined): string {
-  if (!d) return "—";
-  const ms = Date.now() - new Date(d).getTime();
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
-}
-
-function StatusPill({ status }: { status: GameRow["status"] }) {
-  if (status === "active") {
+function StatusPill({ status, wave }: { status: "live" | "coming-soon"; wave: number }) {
+  if (status === "live") {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-sm bg-background/85 px-1.5 py-0.5 font-numeric text-[10px] font-semibold uppercase tracking-[0.18em] text-oxblood-bright backdrop-blur">
         <span className="relative flex h-1.5 w-1.5">
@@ -254,79 +147,12 @@ function StatusPill({ status }: { status: GameRow["status"] }) {
       </span>
     );
   }
-  if (status === "lobby") {
-    return (
-      <Badge variant="outline" className="bg-background/85 font-numeric text-[10px] uppercase tracking-[0.18em] backdrop-blur">
-        open
-      </Badge>
-    );
-  }
-  if (status === "completed") {
-    return (
-      <Badge variant="outline" className="bg-background/85 font-numeric text-[10px] uppercase tracking-[0.18em] text-muted-foreground backdrop-blur">
-        final
-      </Badge>
-    );
-  }
-  return null;
-}
-
-function ModePill({
-  mode,
-  difficulty,
-  gameType,
-}: {
-  mode: GameRow["mode"];
-  difficulty: GameRow["systemBotDifficulty"];
-  gameType: string;
-}) {
-  const modeLabel =
-    mode === "paid" ? "paid" : mode === "system" ? `cpu · ${difficulty ?? "—"}` : "free";
   return (
-    <div className="flex gap-1">
-      <span className="rounded-sm bg-background/85 px-1.5 py-0.5 font-numeric text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground backdrop-blur">
-        {modeLabel}
-      </span>
-      <span className="rounded-sm bg-background/85 px-1.5 py-0.5 font-numeric text-[10px] font-semibold uppercase tracking-[0.18em] text-foreground/80 backdrop-blur">
-        {gameType}
-      </span>
-    </div>
-  );
-}
-
-function GenericPreview({ gameType }: { gameType: string }) {
-  return (
-    <div
-      className="flex w-full items-center justify-center rounded-t-lg bg-[oklch(0.10_0.012_20)] p-6"
-      style={{ aspectRatio: "7 / 6" }}
+    <Badge
+      variant="outline"
+      className="bg-background/85 font-numeric text-[10px] uppercase tracking-[0.18em] text-muted-foreground backdrop-blur"
     >
-      <span className="font-numeric text-xs uppercase tracking-[0.25em] text-muted-foreground">
-        {gameType}
-      </span>
-    </div>
-  );
-}
-
-function BoardPreview({ board }: { board: number[][] }) {
-  // 6×7 Connect 4 preview. 0 = empty, 1 = initiator, 2 = acceptor.
-  const rows = board.length === 6 ? board : Array.from({ length: 6 }, () => Array(7).fill(0));
-  return (
-    <div
-      className="grid w-full gap-[3px] rounded-t-lg bg-[oklch(0.10_0.012_20)] p-2"
-      style={{ gridTemplateColumns: "repeat(7, minmax(0, 1fr))", aspectRatio: "7 / 6" }}
-      aria-hidden="true"
-    >
-      {rows.flat().map((cell, i) => (
-        <span
-          key={i}
-          className={cn(
-            "block rounded-full ring-1 ring-inset",
-            cell === 0 && "bg-background/40 ring-border/40",
-            cell === 1 && "bg-oxblood-bright ring-oxblood-bright/40",
-            cell === 2 && "bg-accent ring-accent/40",
-          )}
-        />
-      ))}
-    </div>
+      wave {wave}
+    </Badge>
   );
 }

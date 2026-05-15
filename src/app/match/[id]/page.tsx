@@ -1,17 +1,24 @@
 import { notFound } from "next/navigation";
-import { eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { agents, matches, matchMoves } from "@/lib/db/schema";
-import { GameView } from "./game-view";
+import {
+  agents,
+  matches,
+  matchMoves,
+  matchChat,
+  matchReactions,
+} from "@/lib/db/schema";
+import { MatchView } from "./game-view";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Match spectator/replay page. Translates the new schema (matches table,
- * boardgame.io state, match_moves with opaque payloads) into the Connect-4
- * specific shape the existing GameView component expects. Wave 0b will
- * replace this whole view with a 1:1 port of match.html that works for
- * every adapter — for now we keep Connect 4 rendering on the previous shell.
+ * Match page — server entry. Hydrates the full design-spec match view:
+ * status strip, P1/P2 agent rails (with per-agent stats + clock), live board,
+ * scrubber, move/x402/annotation tabs, reasoning trace, and spectator chat.
+ *
+ * All visual structure lives in the client component (MatchView). This file
+ * only ferries the initial server snapshot.
  */
 export default async function MatchPage({
   params,
@@ -22,59 +29,115 @@ export default async function MatchPage({
   const match = await db.query.matches.findFirst({ where: eq(matches.id, id) });
   if (!match) notFound();
 
-  const [p1, p2] = await Promise.all([
+  const [p1, p2, moveRows, chatRows, reactionRows] = await Promise.all([
     match.p1AgentId
       ? db.query.agents.findFirst({ where: eq(agents.id, match.p1AgentId) })
       : Promise.resolve(null),
     match.p2AgentId
       ? db.query.agents.findFirst({ where: eq(agents.id, match.p2AgentId) })
       : Promise.resolve(null),
+    db
+      .select()
+      .from(matchMoves)
+      .where(eq(matchMoves.matchId, id))
+      .orderBy(matchMoves.moveNumber),
+    db
+      .select()
+      .from(matchChat)
+      .where(eq(matchChat.matchId, id))
+      .orderBy(desc(matchChat.createdAt))
+      .limit(80),
+    db
+      .select({
+        emoji: matchReactions.emoji,
+        total: sql<number>`SUM(${matchReactions.count})::int`,
+      })
+      .from(matchReactions)
+      .where(eq(matchReactions.matchId, id))
+      .groupBy(matchReactions.emoji),
   ]);
 
-  const moveRows = await db
-    .select()
-    .from(matchMoves)
-    .where(eq(matchMoves.matchId, id))
-    .orderBy(matchMoves.moveNumber);
-
+  // For each agent: pull recent record vs everyone else (cheap aggregate from
+  // the per-agent counters we already maintain).
   const stateG = (match.state as { G?: { board?: number[][] } } | null)?.G;
   const boardState = (stateG?.board ?? []) as number[][];
 
   return (
-    <GameView
+    <MatchView
       initial={{
         id: match.id,
         gameType: match.gameType,
         mode: match.mode,
-        status: match.status === "active"
-          ? "active"
-          : match.status === "completed"
-            ? "completed"
-            : match.status === "abandoned"
-              ? "abandoned"
-              : "active",
+        status: match.status,
         stakeUsdc: match.stakeUsdc,
         potUsdc: match.potUsdc,
         boardState,
         currentTurnAgentId: match.currentTurnAgentId,
+        currentTurnPlayerId: match.currentTurnPlayerId,
+        turnStartedAt: match.turnStartedAt.toISOString(),
         winnerAgentId: match.winnerAgentId,
-        initiator: p1 ?? null,
-        acceptor: p2 ?? null,
+        resultReason: match.resultReason,
+        clockBudgetMs: match.clockBudgetMs,
+        p1MsLeft: match.p1MsLeft,
+        p2MsLeft: match.p2MsLeft,
+        moveCount: match.moveCount,
+        p1: p1
+          ? {
+              id: p1.id,
+              handle: p1.handle,
+              displayName: p1.displayName,
+              avatarUrl: p1.avatarUrl,
+              tokenCa: p1.tokenCa,
+              elo: p1.elo,
+              wins: p1.wins,
+              losses: p1.losses,
+              draws: p1.draws,
+              eloDelta: match.p1EloDelta,
+            }
+          : null,
+        p2: p2
+          ? {
+              id: p2.id,
+              handle: p2.handle,
+              displayName: p2.displayName,
+              avatarUrl: p2.avatarUrl,
+              tokenCa: p2.tokenCa,
+              elo: p2.elo,
+              wins: p2.wins,
+              losses: p2.losses,
+              draws: p2.draws,
+              eloDelta: match.p2EloDelta,
+            }
+          : null,
         isSystemGame: match.mode === "system",
+        startedAt: match.startedAt.toISOString(),
+        completedAt: match.completedAt?.toISOString() ?? null,
         moves: moveRows.map((m) => {
           const payload = (m.payload as { column?: number } | null) ?? {};
           const stateAfterG = (m.stateAfter as { G?: { board?: number[][] } })?.G;
           return {
             moveNumber: m.moveNumber,
             agentId: m.agentId,
+            playerId: m.playerId,
             column: payload.column ?? 0,
             boardStateAfter: (stateAfterG?.board ?? []) as number[][],
+            reasoning: m.reasoning,
+            evScore: m.evScore,
             thinkingMs: m.thinkingMs,
             x402PaymentId: m.x402PaymentId,
             createdAt: m.createdAt.toISOString(),
           };
         }),
-        completedAt: match.completedAt?.toISOString() ?? null,
+        chat: chatRows
+          .map((c) => ({
+            id: c.id,
+            speakerOwnerId: c.speakerOwnerId,
+            anonymousToken: c.anonymousToken,
+            body: c.body,
+            createdAt: c.createdAt.toISOString(),
+          }))
+          .reverse(),
+        reactions: reactionRows.map((r) => ({ emoji: r.emoji, count: r.total })),
       }}
     />
   );

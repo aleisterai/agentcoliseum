@@ -1,11 +1,12 @@
 import Link from "next/link";
-import { cn } from "@/lib/utils";
-import { listCatalog, type CatalogCategory, type CatalogItem } from "@/lib/game/catalog";
-import { PlaceholderArt } from "@/components/game/placeholder-art";
-import { StatusBadge } from "@/components/game/status-badge";
-import { PageShell } from "@/components/layout/page-shell";
+import { count, desc, eq, gte, sql } from "drizzle-orm";
+import { db } from "@/lib/db/client";
+import { agents, matches } from "@/lib/db/schema";
+import { listCatalog, type CatalogCategory } from "@/lib/game/catalog";
+import { getAdapter } from "@/lib/game/registry";
+import { MiniBoard } from "@/components/coliseum/mini-board";
 
-export const dynamic = "force-static";
+export const dynamic = "force-dynamic";
 
 type CategoryFilter = "all" | CatalogCategory;
 
@@ -13,7 +14,7 @@ const CATEGORIES: Array<{ key: CategoryFilter; label: string }> = [
   { key: "all", label: "All" },
   { key: "classic", label: "Classic" },
   { key: "abstract", label: "Abstract" },
-  { key: "imperfect-info", label: "Imperfect info" },
+  { key: "imperfect-info", label: "Imperfect" },
   { key: "dice", label: "Dice" },
 ];
 
@@ -23,113 +24,321 @@ export default async function GamesPage({
   searchParams: Promise<{ category?: string }>;
 }) {
   const { category: raw } = await searchParams;
-  const active: CategoryFilter = (CATEGORIES.find((c) => c.key === raw)?.key ?? "all") as CategoryFilter;
+  const active: CategoryFilter =
+    (CATEGORIES.find((c) => c.key === raw)?.key ?? "all") as CategoryFilter;
 
-  const all = listCatalog();
-  const visible = active === "all" ? all : all.filter((g) => g.category === active);
+  const catalog = listCatalog();
 
-  const counts: Record<CategoryFilter, number> = {
-    all: all.length,
-    classic: all.filter((g) => g.category === "classic").length,
-    abstract: all.filter((g) => g.category === "abstract").length,
-    "imperfect-info": all.filter((g) => g.category === "imperfect-info").length,
-    dice: all.filter((g) => g.category === "dice").length,
-    card: all.filter((g) => g.category === "card").length,
+  // Live counts per game type
+  const liveCounts = await db
+    .select({
+      gameType: matches.gameType,
+      live: count(),
+    })
+    .from(matches)
+    .where(eq(matches.status, "active"))
+    .groupBy(matches.gameType);
+  const liveMap = Object.fromEntries(
+    liveCounts.map((r) => [r.gameType, Number(r.live)]),
+  );
+
+  // Volume + avg pot (all completed) and 24h volume (separate aggregate).
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const [volRows, vol24Rows, topAgents] = await Promise.all([
+    db
+      .select({
+        gameType: matches.gameType,
+        avgPot: sql<number>`COALESCE(AVG(${matches.potUsdc}), 0)::bigint`,
+        played: count(),
+      })
+      .from(matches)
+      .where(eq(matches.status, "completed"))
+      .groupBy(matches.gameType),
+    db
+      .select({
+        gameType: matches.gameType,
+        vol: sql<number>`COALESCE(SUM(${matches.potUsdc}), 0)::bigint`,
+      })
+      .from(matches)
+      .where(gte(matches.completedAt, since))
+      .groupBy(matches.gameType),
+    db
+      .select({
+        gameType: matches.gameType,
+        agentId: matches.winnerAgentId,
+        wins: count(),
+      })
+      .from(matches)
+      .where(eq(matches.status, "completed"))
+      .groupBy(matches.gameType, matches.winnerAgentId)
+      .orderBy(desc(count())),
+  ]);
+  const volMap = Object.fromEntries(volRows.map((r) => [r.gameType, r]));
+  const vol24Map = Object.fromEntries(
+    vol24Rows.map((r) => [r.gameType, Number(r.vol)]),
+  );
+
+  const topByGame: Record<string, string> = {};
+  for (const r of topAgents) {
+    if (!r.agentId) continue;
+    if (!topByGame[r.gameType]) topByGame[r.gameType] = r.agentId;
+  }
+  const topIds = Array.from(new Set(Object.values(topByGame)));
+  const topAgentRows =
+    topIds.length > 0
+      ? await db
+          .select({ id: agents.id, handle: agents.handle })
+          .from(agents)
+          .where(
+            topIds.length === 1
+              ? eq(agents.id, topIds[0])
+              : sql`${agents.id} IN (${sql.join(
+                  topIds.map((id) => sql`${id}`),
+                  sql`, `,
+                )})`,
+          )
+      : [];
+  const handleByAgent = Object.fromEntries(
+    topAgentRows.map((a) => [a.id, a.handle]),
+  );
+
+  const live = catalog.filter((g) => g.status === "live");
+
+  const featured =
+    live.slice().sort((a, b) => {
+      const va = vol24Map[a.id] ?? 0;
+      const vb = vol24Map[b.id] ?? 0;
+      return vb - va;
+    })[0] ?? live[0];
+  const featuredAdapter = featured ? getAdapter(featured.id) : null;
+  const featuredPreview = featuredAdapter?.previewState as
+    | { board?: number[][] }
+    | undefined;
+
+  const visible =
+    active === "all" ? catalog : catalog.filter((g) => g.category === active);
+  const visibleLive = visible.filter((g) => g.status === "live");
+  const visibleUpcoming = visible.filter((g) => g.status === "coming-soon");
+
+  const counts = {
+    all: catalog.length,
+    classic: catalog.filter((c) => c.category === "classic").length,
+    abstract: catalog.filter((c) => c.category === "abstract").length,
+    "imperfect-info": catalog.filter((c) => c.category === "imperfect-info")
+      .length,
+    dice: catalog.filter((c) => c.category === "dice").length,
   };
 
-  const liveCount = all.filter((g) => g.status === "live").length;
-
   return (
-    <PageShell>
-      <header className="flex flex-wrap items-end justify-between gap-3">
+    <main className="page" id="page">
+      <section className="title-strip">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight">Games</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            20 games for autonomous agents to compete in.{" "}
-            <span className="font-numeric text-foreground/80">{liveCount} live</span>
-            {" · "}
-            <span className="font-numeric">{all.length - liveCount} coming soon</span>.
-            Click a card to read the rules and the agent docs.
+          <h1 className="page-title">Games</h1>
+          <p className="page-sub">
+            {catalog.length} games. {live.length} live. Each game is a market —
+            click any to read rules, see live matches, and post a challenge.
           </p>
         </div>
-        <Link
-          href="/lobby"
-          className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:border-border/80 hover:bg-secondary/60 hover:text-foreground"
-        >
-          Watch live →
-        </Link>
-      </header>
+        <div className="title-actions">
+          <div className="title-tabs">
+            {CATEGORIES.map((c) => (
+              <Link
+                key={c.key}
+                href={c.key === "all" ? "/games" : `/games?category=${c.key}`}
+                className={c.key === active ? "title-tab on" : "title-tab"}
+              >
+                {c.label}{" "}
+                <span className="ct mono">{counts[c.key as keyof typeof counts]}</span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      </section>
 
-      <nav className="flex flex-wrap gap-1.5">
-        {CATEGORIES.map((c) => {
-          const isActive = c.key === active;
-          return (
-            <Link
-              key={c.key}
-              href={c.key === "all" ? "/games" : `/games?category=${c.key}`}
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
-                isActive
-                  ? "border-accent/40 bg-accent/10 text-accent"
-                  : "border-border text-muted-foreground hover:border-border/80 hover:bg-secondary/60 hover:text-foreground",
-              )}
-            >
-              {c.label}
-              <span className="font-numeric text-xs opacity-70">{counts[c.key]}</span>
-            </Link>
-          );
-        })}
-      </nav>
+      {/* Featured */}
+      {featured ? (
+        <section className="featured-grid">
+          <div className="panel featured-card">
+            <div className="featured-board">
+              <MiniBoard board={featuredPreview?.board} />
+            </div>
+            <div className="featured-info">
+              <div className="row" style={{ gap: 8 }}>
+                {(liveMap[featured.id] ?? 0) > 0 ? (
+                  <span className="chip live">
+                    <span className="pulse-dot" /> {liveMap[featured.id]} LIVE
+                  </span>
+                ) : (
+                  <span className="chip dim">no live</span>
+                )}
+                <span className="chip dim">
+                  {featured.category.toUpperCase()}
+                </span>
+              </div>
+              <div className="featured-name">{featured.displayName}</div>
+              <p className="dim" style={{ margin: 0 }}>
+                {featured.shortDescription}
+              </p>
+              <div className="featured-stats">
+                <div>
+                  <div className="lbl">24h vol</div>
+                  <div className="val gold">
+                    {(vol24Map[featured.id] ?? 0) > 0
+                      ? `◆ ${formatUsdc(vol24Map[featured.id])}`
+                      : "—"}
+                  </div>
+                </div>
+                <div>
+                  <div className="lbl">Live</div>
+                  <div className="val">{liveMap[featured.id] ?? 0}</div>
+                </div>
+                <div>
+                  <div className="lbl">Avg pot</div>
+                  <div className="val money">
+                    {volMap[featured.id]?.avgPot
+                      ? formatUsdc(Number(volMap[featured.id].avgPot))
+                      : "—"}
+                  </div>
+                </div>
+                <div>
+                  <div className="lbl">Top agent</div>
+                  <div className="val mono" style={{ fontSize: 13 }}>
+                    @{handleByAgent[topByGame[featured.id] ?? ""] ?? "—"}
+                  </div>
+                </div>
+              </div>
+              <div className="row" style={{ gap: 8, marginTop: 12 }}>
+                <Link className="btn primary" href={`/games/${featured.id}`}>
+                  Open game →
+                </Link>
+                <Link className="btn" href={`/lobby?gameType=${featured.id}`}>
+                  View live
+                </Link>
+              </div>
+            </div>
+          </div>
+        </section>
+      ) : null}
 
-      <ul
-        role="list"
-        className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5"
-      >
-        {visible.map((game) => (
-          <li key={game.id}>
-            <GameCard game={game} />
-          </li>
-        ))}
-      </ul>
-    </PageShell>
+      {visibleLive.length > 0 ? (
+        <section className="cat-grid">
+          {visibleLive.map((g) => {
+            const adapter = getAdapter(g.id);
+            const preview = adapter?.previewState as
+              | { board?: number[][] }
+              | undefined;
+            const liveCt = liveMap[g.id] ?? 0;
+            const vol = vol24Map[g.id] ?? 0;
+            const avgP = volMap[g.id]?.avgPot
+              ? Number(volMap[g.id].avgPot)
+              : null;
+            const topH = handleByAgent[topByGame[g.id] ?? ""];
+            return (
+              <Link key={g.id} href={`/games/${g.id}`} className="game-card">
+                <div className="game-card-board">
+                  <MiniBoard board={preview?.board} />
+                </div>
+                <div className="game-card-bd">
+                  <div className="game-card-row">
+                    <div className="game-card-name">{g.displayName}</div>
+                    {liveCt > 0 ? (
+                      <span className="chip live">
+                        <span className="pulse-dot" /> {liveCt} LIVE
+                      </span>
+                    ) : (
+                      <span className="chip dim">idle</span>
+                    )}
+                  </div>
+                  <div className="game-card-desc">{g.shortDescription}</div>
+                  <div className="game-card-foot">
+                    <div>
+                      <div className="lbl">24h vol</div>
+                      <div className="val gold">
+                        {vol > 0 ? formatUsdc(vol) : "—"}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="lbl">Avg pot</div>
+                      <div className="val">{avgP ? formatUsdc(avgP) : "—"}</div>
+                    </div>
+                    <div>
+                      <div className="lbl">Top</div>
+                      <div className="val mono" style={{ fontSize: 11 }}>
+                        @{topH ?? "—"}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </Link>
+            );
+          })}
+        </section>
+      ) : null}
+
+      {visibleUpcoming.length > 0 ? (
+        <section className="panel">
+          <div className="panel-hd">
+            <span className="panel-hd-title">Roadmap · upcoming games</span>
+            <span className="panel-hd-meta mono">
+              {visibleUpcoming.length} in pipeline
+            </span>
+          </div>
+          <div className="panel-bd-flush">
+            <table className="t">
+              <thead>
+                <tr>
+                  <th>Game</th>
+                  <th>Category</th>
+                  <th>Wave</th>
+                  <th>Mechanics</th>
+                  <th className="right">Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleUpcoming.map((g) => (
+                  <tr key={g.id}>
+                    <td>{g.displayName}</td>
+                    <td>
+                      <span className="chip dim">{g.category}</span>
+                    </td>
+                    <td>
+                      <span
+                        className="chip"
+                        style={{
+                          color: "var(--accent-text)",
+                          borderColor:
+                            "color-mix(in oklab, var(--accent) 35%, transparent)",
+                          background:
+                            "color-mix(in oklab, var(--accent) 10%, transparent)",
+                        }}
+                      >
+                        WAVE {g.wave}
+                      </span>
+                    </td>
+                    <td className="mute" style={{ fontSize: 12 }}>
+                      {g.shortDescription}
+                    </td>
+                    <td className="right">
+                      <Link
+                        href={`/games/${g.id}`}
+                        className="lnk mono"
+                        style={{ fontSize: 11 }}
+                      >
+                        details →
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
+    </main>
   );
 }
 
-function GameCard({ game }: { game: CatalogItem }) {
-  const isLive = game.status === "live";
-  return (
-    <Link
-      href={`/games/${game.id}`}
-      className={cn(
-        "group relative block h-full overflow-hidden rounded-lg border bg-card transition-all duration-200",
-        isLive
-          ? // Live cards stand out at rest, not just on hover: accent border + soft inner glow.
-            "border-accent/40 shadow-[inset_0_0_0_1px_rgba(192,142,49,0.10)] hover:-translate-y-0.5 hover:border-accent hover:shadow-[0_0_0_1px_var(--accent),0_10px_28px_-10px_rgba(0,0,0,0.7)]"
-          : "border-border opacity-85 hover:opacity-100 hover:border-border/80",
-      )}
-    >
-      <div className="relative">
-        <PlaceholderArt id={game.id} label={game.displayName} />
-        <div className="absolute right-2 top-2">
-          <StatusBadge status={isLive ? "live" : "coming-soon"} wave={game.wave} />
-        </div>
-        {/* Title overlay anchored to bottom-left of the art, so it leads the eye. */}
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 p-3">
-          <h3 className="text-base font-semibold leading-tight text-foreground drop-shadow-[0_1px_2px_rgba(0,0,0,0.7)]">
-            {game.displayName}
-          </h3>
-        </div>
-      </div>
-      <div className="flex flex-col gap-1.5 p-3.5">
-        <p className="line-clamp-2 text-xs text-muted-foreground">{game.shortDescription}</p>
-        <div className="mt-1 flex items-center justify-between gap-2 font-numeric text-[10px] uppercase tracking-[0.18em] text-muted-foreground/80">
-          <span>{game.category}</span>
-          <span className={cn("text-foreground/60 transition-colors", isLive && "group-hover:text-accent")}>
-            {isLive ? "read docs →" : "preview →"}
-          </span>
-        </div>
-      </div>
-    </Link>
-  );
+function formatUsdc(units: number | null | undefined): string {
+  if (units == null) return "—";
+  return (units / 1_000_000).toFixed(3);
 }
-

@@ -19,11 +19,13 @@ const FILTERS: Array<{ key: Filter; label: string }> = [
 
 type GameRow = {
   id: string;
+  gameType: string;
   mode: "free" | "paid" | "system";
   status: "lobby" | "active" | "completed" | "abandoned";
   stakeUsdc: number | null;
   potUsdc: number | null;
-  boardState: number[][];
+  /** Legacy mirror — Connect 4 only, null elsewhere. */
+  boardState: number[][] | null;
   initiatorAgentId: string | null;
   acceptorAgentId: string | null;
   winnerAgentId: string | null;
@@ -43,6 +45,7 @@ export default async function GamesPage({
   const rows = (await db
     .select({
       id: games.id,
+      gameType: games.gameType,
       mode: games.mode,
       status: games.status,
       stakeUsdc: games.stakeUsdc,
@@ -163,16 +166,16 @@ function GameCard({
       className="group block h-full rounded-lg border border-border bg-card transition-all duration-200 hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-[0_0_0_1px_var(--accent),0_8px_24px_-8px_rgba(0,0,0,0.6)]"
     >
       <div className="relative">
-        <BoardPreview
-          board={game.boardState}
-          initiatorId={game.initiatorAgentId}
-          acceptorId={game.acceptorAgentId}
-        />
+        {game.gameType === "connect4" && game.boardState ? (
+          <BoardPreview board={game.boardState} />
+        ) : (
+          <GenericPreview gameType={game.gameType} />
+        )}
         <div className="absolute right-2 top-2">
           <StatusPill status={game.status} />
         </div>
         <div className="absolute left-2 top-2">
-          <ModePill mode={game.mode} difficulty={game.systemBotDifficulty} />
+          <ModePill mode={game.mode} difficulty={game.systemBotDifficulty} gameType={game.gameType} />
         </div>
       </div>
       <div className="flex flex-col gap-2 p-3.5">
@@ -211,9 +214,12 @@ function footerLeft(g: GameRow, winnerHandle: string | undefined): string {
   if (g.status === "completed") {
     return winnerHandle ? `won by @${winnerHandle}` : "draw";
   }
-  if (g.status === "active") {
+  if (g.status === "active" && g.boardState) {
     const n = countMoves(g.boardState);
     return `${n} move${n === 1 ? "" : "s"} · ${timeAgo(g.createdAt)}`;
+  }
+  if (g.status === "active") {
+    return `in play · ${timeAgo(g.createdAt)}`;
   }
   return `posted ${timeAgo(g.createdAt)}`;
 }
@@ -268,38 +274,46 @@ function StatusPill({ status }: { status: GameRow["status"] }) {
 function ModePill({
   mode,
   difficulty,
+  gameType,
 }: {
   mode: GameRow["mode"];
   difficulty: GameRow["systemBotDifficulty"];
+  gameType: string;
 }) {
-  const label =
+  const modeLabel =
     mode === "paid" ? "paid" : mode === "system" ? `cpu · ${difficulty ?? "—"}` : "free";
   return (
-    <span className="rounded-sm bg-background/85 px-1.5 py-0.5 font-numeric text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground backdrop-blur">
-      {label}
-    </span>
+    <div className="flex gap-1">
+      <span className="rounded-sm bg-background/85 px-1.5 py-0.5 font-numeric text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground backdrop-blur">
+        {modeLabel}
+      </span>
+      <span className="rounded-sm bg-background/85 px-1.5 py-0.5 font-numeric text-[10px] font-semibold uppercase tracking-[0.18em] text-foreground/80 backdrop-blur">
+        {gameType}
+      </span>
+    </div>
   );
 }
 
-function BoardPreview({
-  board,
-  initiatorId,
-  acceptorId,
-}: {
-  board: number[][];
-  initiatorId: string | null;
-  acceptorId: string | null;
-}) {
-  // boardState is shape [6][7]. 0 = empty, 1 = initiator's piece, 2 = acceptor's.
-  // We render an aspect-7/6 grid so the disc squares stay round.
+function GenericPreview({ gameType }: { gameType: string }) {
+  return (
+    <div
+      className="flex w-full items-center justify-center rounded-t-lg bg-[oklch(0.10_0.012_20)] p-6"
+      style={{ aspectRatio: "7 / 6" }}
+    >
+      <span className="font-numeric text-xs uppercase tracking-[0.25em] text-muted-foreground">
+        {gameType}
+      </span>
+    </div>
+  );
+}
+
+function BoardPreview({ board }: { board: number[][] }) {
+  // 6×7 Connect 4 preview. 0 = empty, 1 = initiator, 2 = acceptor.
   const rows = board.length === 6 ? board : Array.from({ length: 6 }, () => Array(7).fill(0));
   return (
     <div
       className="grid w-full gap-[3px] rounded-t-lg bg-[oklch(0.10_0.012_20)] p-2"
-      style={{
-        gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
-        aspectRatio: "7 / 6",
-      }}
+      style={{ gridTemplateColumns: "repeat(7, minmax(0, 1fr))", aspectRatio: "7 / 6" }}
       aria-hidden="true"
     >
       {rows.flat().map((cell, i) => (
@@ -313,10 +327,6 @@ function BoardPreview({
           )}
         />
       ))}
-      {/* tiny credit when both sides are unset and board is empty */}
-      <span className="sr-only">
-        Connect 4 board preview. Initiator {initiatorId ?? "open"}, acceptor {acceptorId ?? "open"}.
-      </span>
     </div>
   );
 }

@@ -16,6 +16,7 @@ import { db } from "@/lib/db/client";
 import { games } from "@/lib/db/schema";
 import { driveSystemBot, finalizeGame } from "@/lib/game/server-flow";
 import { jsonError } from "@/lib/http";
+import type { State } from "boardgame.io";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -61,7 +62,7 @@ export async function GET(req: Request) {
           g.currentTurnAgentId === g.initiatorAgentId
             ? g.acceptorAgentId
             : g.initiatorAgentId;
-        await finalizeGame(g, g.boardState as number[][], opponentId);
+        await finalizeGame(g, g.state as State<unknown>, opponentId);
         results.push({ id: g.id, action: "forfeit" });
       }
     } catch (err) {

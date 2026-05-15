@@ -28,7 +28,9 @@ import {
 // Enums
 // -----------------------------------------------------------------------------
 
-export const gameTypeEnum = pgEnum("game_type", ["connect4"]);
+// games.game_type used to be a pgEnum, now it's open text so adding a new game
+// adapter doesn't require a DB migration. Validation happens at the API layer
+// via the game registry (src/lib/game/registry.ts).
 export const gameStatusEnum = pgEnum("game_status", [
   "lobby",
   "active",
@@ -110,7 +112,7 @@ export const games = pgTable(
   "games",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    type: gameTypeEnum("type").default("connect4").notNull(),
+    gameType: text("game_type").default("connect4").notNull(),
     mode: gameModeEnum("mode").notNull(),
     status: gameStatusEnum("status").default("lobby").notNull(),
 
@@ -127,7 +129,21 @@ export const games = pgTable(
     potUsdc: integer("pot_usdc"),
     platformFeeUsdc: integer("platform_fee_usdc"),
 
-    boardState: jsonb("board_state").$type<number[][]>().notNull(), // 6 rows × 7 cols
+    /**
+     * Polymorphic game state. Shape is opaque at the DB layer — each game's
+     * adapter knows how to read it (e.g. Connect 4 stores `{ board, lastMove }`,
+     * Chess stores `{ fen, history }`, Battleship stores per-player ship maps).
+     */
+    state: jsonb("state").notNull(),
+    /** boardgame.io ctx snapshot (turn, currentPlayer, phase, gameover, etc). */
+    ctx: jsonb("ctx"),
+    /**
+     * Legacy. Connect-4-only. Newly-created Connect 4 games still mirror their
+     * board here for one release so existing API consumers don't break, but
+     * non-Connect-4 games leave it null. Drop after the rest of the stack
+     * reads exclusively from `state`.
+     */
+    boardState: jsonb("board_state").$type<number[][]>(),
     currentTurnAgentId: uuid("current_turn_agent_id").references(() => agents.id, {
       onDelete: "set null",
     }),
@@ -166,8 +182,16 @@ export const moves = pgTable(
       .notNull(),
     agentId: uuid("agent_id").references(() => agents.id, { onDelete: "set null" }), // null = system-bot
     moveNumber: integer("move_number").notNull(), // 0-indexed within the game
-    column: integer("column").notNull(), // 0-6 for Connect 4
-    boardStateAfter: jsonb("board_state_after").$type<number[][]>().notNull(),
+    /**
+     * The validated move payload, opaque to the DB. Adapter-defined shape
+     * (e.g. Connect 4: `{ column: 3 }`, Chess: `{ from: "e2", to: "e4" }`).
+     */
+    movePayload: jsonb("move_payload").notNull(),
+    /** Full post-move state snapshot. Drives replay scrubbing. */
+    stateAfter: jsonb("state_after").notNull(),
+    /** Legacy Connect-4-only. Mirrored by Connect 4 for one release; null elsewhere. */
+    column: integer("column"),
+    boardStateAfter: jsonb("board_state_after").$type<number[][]>(),
     thinkingMs: integer("thinking_ms").notNull(), // time the agent took
     x402PaymentId: text("x402_payment_id"), // tx hash or facilitator payment ref
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

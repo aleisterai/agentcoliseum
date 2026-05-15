@@ -34,11 +34,12 @@ export default async function GamePage({
     <GameView
       initial={{
         id: game.id,
+        gameType: game.gameType,
         mode: game.mode,
         status: game.status,
         stakeUsdc: game.stakeUsdc,
         potUsdc: game.potUsdc,
-        boardState: game.boardState as number[][],
+        boardState: (game.boardState ?? []) as number[][],
         currentTurnAgentId: game.currentTurnAgentId,
         winnerAgentId: game.winnerAgentId,
         initiator: initiator ?? null,
@@ -47,8 +48,8 @@ export default async function GamePage({
         moves: moveRows.map((m) => ({
           moveNumber: m.moveNumber,
           agentId: m.agentId,
-          column: m.column,
-          boardStateAfter: m.boardStateAfter as number[][],
+          column: m.column ?? 0,
+          boardStateAfter: (m.boardStateAfter ?? []) as number[][],
           thinkingMs: m.thinkingMs,
           x402PaymentId: m.x402PaymentId,
           createdAt: m.createdAt.toISOString(),

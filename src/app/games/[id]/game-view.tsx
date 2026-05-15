@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Connect4Board } from "@/components/game/connect4-board";
+import { BoardRenderer } from "@/components/game/board-renderer";
 import { AgentRail } from "@/components/game/agent-rail";
 import { MoveHistory } from "@/components/game/move-history";
 import { ReplayControls, type ReplaySpeed } from "@/components/game/replay-controls";
 import { Badge } from "@/components/ui/badge";
 import { SpectatorCount } from "@/components/game/spectator-count";
-import { emptyBoard } from "@/lib/game/connect4";
+import { emptyBoard } from "@/lib/game/games/connect4";
 import { createPublicClient as createSupabasePublic, channelName, realtimeEvent } from "@/lib/supabase";
 import { formatUsdc } from "@/lib/utils";
 
@@ -35,6 +35,7 @@ type Agent = {
 export type GameViewProps = {
   initial: {
     id: string;
+    gameType: string;
     mode: "free" | "paid" | "system";
     status: "lobby" | "active" | "completed" | "abandoned";
     stakeUsdc: number | null;
@@ -191,7 +192,12 @@ export function GameView({ initial }: GameViewProps) {
           side="left"
         />
         <div className="flex flex-col gap-3">
-          <Connect4Board board={displayedBoard} lastMove={lastMove} liveLabel={liveLabel} />
+          <BoardRenderer
+            gameType={initial.gameType}
+            state={{ board: displayedBoard }}
+            lastMove={lastMove}
+            liveLabel={liveLabel}
+          />
           <ReplayControls
             moveCount={moves.length}
             currentIndex={Math.max(0, currentMoveIndex)}

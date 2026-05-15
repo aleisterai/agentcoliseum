@@ -1,25 +1,23 @@
 /**
- * Server-side game flow primitives. Shared between the move endpoint, the
- * timeout cron, and any future admin tools.
+ * Server-side game flow primitives, refactored to be game-agnostic.
  *
- *   applyMoveTransaction()  — applies a move, advances turn, records the move row
- *   finalizeGame()          — marks a game completed, updates Elo, schedules treasury
- *   driveSystemBotIfNeeded()— if it's the system-bot's turn, plays its move
+ *   applyMoveTransaction()  — validates, applies via adapter+engine, persists,
+ *                             broadcasts, and runs cascading effects (Elo,
+ *                             treasury, system-bot reply).
+ *   driveSystemBot()        — picks and applies the system bot's move using
+ *                             the adapter's bot strategies.
+ *   finalizeGame()          — marks completed, updates Elo, queues treasury.
  *
- * Pure-game helpers stay in lib/game/connect4.ts. This file holds the DB-bound
- * orchestration.
+ * Pure-rules helpers stay inside each adapter's `games/<id>/game.ts`. This
+ * file holds the DB-bound orchestration only.
  */
 import "server-only";
 import { eq, sql as dsql } from "drizzle-orm";
+import type { State } from "boardgame.io";
 import { db } from "@/lib/db/client";
 import { agents, games, moves, treasuryFlows, type Game } from "@/lib/db/schema";
-import {
-  applyMove as applyToBoard,
-  checkResult,
-  isLegalMove,
-  type Player,
-} from "@/lib/game/connect4";
-import { chooseMove } from "@/lib/game/system-bot";
+import { getAdapter } from "@/lib/game/registry";
+import { buildEngine } from "@/lib/game/engine";
 import { updateRatings, type Outcome } from "@/lib/game/elo";
 import { broadcastGame, broadcastLobby, realtimeEvent } from "@/lib/realtime";
 
@@ -35,18 +33,35 @@ export class NotYourTurnError extends Error {
     this.name = "NotYourTurnError";
   }
 }
+export class UnknownGameTypeError extends Error {
+  constructor(id: string) {
+    super(`unknown_game_type: ${id}`);
+    this.name = "UnknownGameTypeError";
+  }
+}
+
+type PlayerID = "0" | "1";
+
+/** Map agent → player ID. Initiator is "0"; acceptor is "1". System bot is "1". */
+function playerIdFor(game: Game, agentId: string): PlayerID {
+  return game.initiatorAgentId === agentId ? "0" : "1";
+}
+
+/** Inverse: given a player ID, return the agent ID (or null = system bot). */
+function agentIdFor(game: Game, pid: PlayerID): string | null {
+  if (pid === "0") return game.initiatorAgentId;
+  return game.acceptorAgentId; // null when system game
+}
 
 /**
- * Apply a single move from `agentId` in `gameId` at `column`. Validates turn
- * order, legality, applies it, runs result detection, and triggers cascading
- * effects (Elo update + treasury on win, system-bot reply on system games).
- *
- * Returns the updated game row.
+ * Apply an agent's move. Validates turn order and legality through the
+ * adapter, persists the new state, broadcasts, and cascades end-of-game
+ * side effects.
  */
 export async function applyMoveTransaction(input: {
   gameId: string;
   agentId: string;
-  column: number;
+  payload: unknown;
   thinkingMs: number;
   x402PaymentId?: string;
 }): Promise<Game> {
@@ -55,67 +70,77 @@ export async function applyMoveTransaction(input: {
   if (!game) throw new IllegalMoveError("game_not_found");
   if (game.status !== "active") throw new IllegalMoveError("not_active");
   if (game.currentTurnAgentId !== input.agentId) throw new NotYourTurnError();
-  if (!isLegalMove(game.boardState as number[][], input.column)) {
-    throw new IllegalMoveError("illegal_move");
-  }
 
-  // Determine which player number this agent is (1 = initiator, 2 = acceptor).
-  const playerNumber: Player = game.initiatorAgentId === input.agentId ? 1 : 2;
+  const adapter = getAdapter(game.gameType);
+  if (!adapter) throw new UnknownGameTypeError(game.gameType);
 
-  const nextBoard = applyToBoard(game.boardState as number[][], input.column, playerNumber);
-  const result = checkResult(nextBoard);
+  const validation = adapter.validateMovePayload(input.payload);
+  if (!validation.ok) throw new IllegalMoveError(validation.error);
+
+  const engine = buildEngine(adapter.game);
+  const currentState = game.state as State<unknown>;
+  const myPid = playerIdFor(game, input.agentId);
+  const { moveName, args } = adapter.toMoveAction(validation.move);
+  const nextState = engine.applyMove(currentState, myPid, moveName, args);
+  if (!nextState) throw new IllegalMoveError("illegal_move");
+
   const moveNumber = await nextMoveNumber(game.id);
+  const isConnect4 = adapter.id === "connect4";
+  const legacyBoard = isConnect4 ? boardFromConnect4State(nextState) : null;
+  const legacyColumn = isConnect4 ? toLegacyColumn(validation.move) : null;
 
-  // Insert move row.
   await db.insert(moves).values({
     gameId: game.id,
     agentId: input.agentId,
     moveNumber,
-    column: input.column,
-    boardStateAfter: nextBoard,
+    movePayload: input.payload as object,
+    stateAfter: nextState as unknown as object,
+    column: legacyColumn,
+    boardStateAfter: legacyBoard,
     thinkingMs: input.thinkingMs,
     x402PaymentId: input.x402PaymentId,
   });
 
-  let updatedGame: Game;
-  if (result.status === "ongoing") {
-    // Flip turn. For system games, opponent may be system-bot (NULL).
-    const nextTurn = nextTurnAgentId(game, input.agentId);
+  const over = engine.gameOver(nextState);
+  if (!over) {
+    const nextPid: PlayerID = (nextState.ctx?.currentPlayer as PlayerID) ?? (myPid === "0" ? "1" : "0");
+    const nextTurnAgentId = agentIdFor(game, nextPid);
     const [u] = await db
       .update(games)
       .set({
-        boardState: nextBoard,
-        currentTurnAgentId: nextTurn,
+        state: nextState as unknown as object,
+        ctx: (nextState.ctx ?? null) as unknown as object,
+        boardState: legacyBoard,
+        currentTurnAgentId: nextTurnAgentId,
         lastMoveAt: new Date(),
       })
       .where(eq(games.id, game.id))
       .returning();
-    updatedGame = u;
 
     await broadcastGame(game.id, realtimeEvent.MovePlayed, {
       gameId: game.id,
       moveNumber,
-      column: input.column,
-      boardStateAfter: nextBoard,
-      currentTurnAgentId: nextTurn,
+      movePayload: input.payload,
+      stateAfter: adapter.serializeForSpectator(nextState.G as never, "spectator", false),
+      currentTurnAgentId: nextTurnAgentId,
       tookMs: Date.now() - start,
     });
 
-    // If it's now the system-bot's turn, auto-play.
-    if (game.mode === "system" && nextTurn === null) {
-      updatedGame = await driveSystemBot(updatedGame);
+    // System-bot's turn? Drive the next move.
+    if (game.mode === "system" && nextTurnAgentId === null) {
+      return driveSystemBot(u);
     }
-    return updatedGame;
+    return u;
   }
 
-  // Game over — win or draw.
-  const winnerAgentId = result.status === "win" ? input.agentId : null;
-  updatedGame = await finalizeGame(game, nextBoard, winnerAgentId);
+  // Game over.
+  const winnerAgentId = over.winnerPlayerID ? agentIdFor(game, over.winnerPlayerID) : null;
+  const updated = await finalizeGame(game, nextState, winnerAgentId);
   await broadcastGame(game.id, realtimeEvent.MovePlayed, {
     gameId: game.id,
     moveNumber,
-    column: input.column,
-    boardStateAfter: nextBoard,
+    movePayload: input.payload,
+    stateAfter: adapter.serializeForSpectator(nextState.G as never, "spectator", true),
     currentTurnAgentId: null,
     tookMs: Date.now() - start,
   });
@@ -123,37 +148,60 @@ export async function applyMoveTransaction(input: {
     gameId: game.id,
     winnerAgentId,
     status: "completed",
-    line: result.status === "win" ? result.line : null,
   });
   await broadcastLobby(realtimeEvent.GameEnded, { id: game.id });
-  return updatedGame;
+  return updated;
 }
 
-/** Apply a system-bot move on its turn. Loops if multiple bot moves are needed. */
+/**
+ * Play the system bot's move on its turn. Loops in case the bot reduction
+ * leaves it as the next mover (shouldn't happen for any 2-player game with
+ * `turn.maxMoves: 1`, but the recursion is defensive).
+ */
 export async function driveSystemBot(game: Game): Promise<Game> {
-  // Bot is always player 2 in our convention (initiator is the human → player 1).
-  const board = game.boardState as number[][];
+  const adapter = getAdapter(game.gameType);
+  if (!adapter) throw new UnknownGameTypeError(game.gameType);
+
   const difficulty = (game.systemBotDifficulty as "easy" | "medium" | "hard") ?? "easy";
+  const bot = adapter.bots[difficulty];
+  const engine = buildEngine(adapter.game);
+
+  const currentState = game.state as State<unknown>;
+  const botPid: PlayerID = "1"; // bot is always the acceptor seat
   const start = Date.now();
-  const col = chooseMove(board, 2, difficulty);
-  const nextBoard = applyToBoard(board, col, 2);
-  const result = checkResult(nextBoard);
+  const botMove = bot.pickMove(currentState.G as never, botPid);
+  const { moveName, args } = adapter.toMoveAction(botMove);
+  const nextState = engine.applyMove(currentState, botPid, moveName, args);
+  if (!nextState) {
+    // Bot returned an illegal move: this is a bug in the bot. Forfeit the
+    // game to the human rather than crash the request.
+    throw new IllegalMoveError("system_bot_illegal_move");
+  }
+
   const moveNumber = await nextMoveNumber(game.id);
+  const isConnect4 = adapter.id === "connect4";
+  const legacyBoard = isConnect4 ? boardFromConnect4State(nextState) : null;
+  const legacyColumn = isConnect4 ? toLegacyColumn(botMove) : null;
 
   await db.insert(moves).values({
     gameId: game.id,
     agentId: null, // null = system bot
     moveNumber,
-    column: col,
-    boardStateAfter: nextBoard,
+    movePayload: { ...(typeof botMove === "object" ? botMove : { value: botMove }) },
+    stateAfter: nextState as unknown as object,
+    column: legacyColumn,
+    boardStateAfter: legacyBoard,
     thinkingMs: Date.now() - start,
   });
 
-  if (result.status === "ongoing") {
+  const over = engine.gameOver(nextState);
+  if (!over) {
     const [u] = await db
       .update(games)
       .set({
-        boardState: nextBoard,
+        state: nextState as unknown as object,
+        ctx: (nextState.ctx ?? null) as unknown as object,
+        boardState: legacyBoard,
         currentTurnAgentId: game.initiatorAgentId,
         lastMoveAt: new Date(),
       })
@@ -162,18 +210,18 @@ export async function driveSystemBot(game: Game): Promise<Game> {
     await broadcastGame(game.id, realtimeEvent.MovePlayed, {
       gameId: game.id,
       moveNumber,
-      column: col,
-      boardStateAfter: nextBoard,
+      movePayload: { value: botMove },
+      stateAfter: adapter.serializeForSpectator(nextState.G as never, "spectator", false),
       currentTurnAgentId: u.currentTurnAgentId,
       isBot: true,
     });
     return u;
   }
 
-  // Bot wins or draws. Winner is null on draw; for a bot win, winner is null
-  // (we can't reference a non-existent agent), but the human loses.
-  const winnerAgentId = result.status === "win" ? null : null;
-  return finalizeGame(game, nextBoard, winnerAgentId, /* botWonSystem */ result.status === "win");
+  // System-bot finished the game.
+  const botWon = over.winnerPlayerID === "1";
+  const winnerAgentId = over.winnerPlayerID === "0" ? game.initiatorAgentId : null;
+  return finalizeGame(game, nextState, winnerAgentId, botWon);
 }
 
 async function nextMoveNumber(gameId: string): Promise<number> {
@@ -184,36 +232,27 @@ async function nextMoveNumber(gameId: string): Promise<number> {
   return row[0]?.n ?? 0;
 }
 
-function nextTurnAgentId(game: Game, justMovedAgentId: string): string | null {
-  if (game.mode === "system") {
-    // Initiator just moved → bot's turn (null). Bot just moved → initiator.
-    return justMovedAgentId === game.initiatorAgentId ? null : game.initiatorAgentId;
-  }
-  return justMovedAgentId === game.initiatorAgentId
-    ? game.acceptorAgentId
-    : game.initiatorAgentId;
-}
-
 /**
- * Mark the game completed, update Elo (only for non-system games), and queue
- * a treasury flow for the platform fee.
- *
- * For system games we do NOT touch Elo; for paid games we mint a treasury
- * flow row for the 5% fee.
+ * Mark the game completed, update Elo (only for non-system games), queue a
+ * treasury flow for the platform fee on paid games.
  */
 export async function finalizeGame(
   game: Game,
-  finalBoard: number[][],
+  finalState: State<unknown>,
   winnerAgentId: string | null,
   systemBotWon = false,
 ): Promise<Game> {
   const now = new Date();
+  const adapter = getAdapter(game.gameType);
+  const isConnect4 = adapter?.id === "connect4";
+  const legacyBoard = isConnect4 ? boardFromConnect4State(finalState) : null;
 
-  // Update game row.
   const [updated] = await db
     .update(games)
     .set({
-      boardState: finalBoard,
+      state: finalState as unknown as object,
+      ctx: (finalState.ctx ?? null) as unknown as object,
+      boardState: legacyBoard,
       status: "completed",
       winnerAgentId,
       currentTurnAgentId: null,
@@ -223,7 +262,6 @@ export async function finalizeGame(
     .where(eq(games.id, game.id))
     .returning();
 
-  // Elo + W/L/D — only for free or paid games (system games don't affect Elo).
   if (game.mode !== "system" && game.initiatorAgentId && game.acceptorAgentId) {
     await applyEloOutcome({
       initiatorId: game.initiatorAgentId,
@@ -231,7 +269,6 @@ export async function finalizeGame(
       winnerId: winnerAgentId,
     });
   } else if (game.mode === "system" && game.initiatorAgentId) {
-    // System game: increment the human's W/L (no Elo change).
     const col = systemBotWon ? agents.losses : winnerAgentId === game.initiatorAgentId ? agents.wins : agents.draws;
     await db
       .update(agents)
@@ -239,7 +276,6 @@ export async function finalizeGame(
       .where(eq(agents.id, game.initiatorAgentId));
   }
 
-  // Treasury fee for paid games.
   if (game.mode === "paid" && game.platformFeeUsdc && game.platformFeeUsdc > 0) {
     await db.insert(treasuryFlows).values({
       gameId: game.id,
@@ -267,11 +303,7 @@ async function applyEloOutcome(input: {
   else if (input.winnerId === initiator.id) outcomeForInitiator = "win";
   else outcomeForInitiator = "loss";
 
-  const { ratingA, ratingB } = updateRatings(
-    initiator.elo,
-    acceptor.elo,
-    outcomeForInitiator,
-  );
+  const { ratingA, ratingB } = updateRatings(initiator.elo, acceptor.elo, outcomeForInitiator);
 
   await db
     .update(agents)
@@ -295,4 +327,18 @@ async function applyEloOutcome(input: {
           : { draws: dsql`${agents.draws} + 1` }),
     })
     .where(eq(agents.id, acceptor.id));
+}
+
+// ---------------------------------------------------------------------------
+// Connect-4-only legacy mirroring helpers. Removed when boardState/column are
+// dropped from the schema.
+// ---------------------------------------------------------------------------
+function boardFromConnect4State(state: State<unknown>): number[][] | null {
+  const g = state.G as { board?: number[][] } | undefined;
+  return g?.board ?? null;
+}
+
+function toLegacyColumn(move: unknown): number | null {
+  if (typeof move === "number" && Number.isInteger(move)) return move;
+  return null;
 }

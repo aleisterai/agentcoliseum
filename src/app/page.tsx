@@ -2,7 +2,7 @@ import Link from "next/link";
 import { and, desc, eq, isNull, ne, or } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agents, games } from "@/lib/db/schema";
-import { Connect4Board } from "@/components/game/connect4-board";
+import { BoardRenderer } from "@/components/game/board-renderer";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Sigil } from "@/components/layout/sigil";
@@ -22,9 +22,10 @@ export default async function Home() {
   const live = await db
     .select({
       id: games.id,
+      gameType: games.gameType,
       mode: games.mode,
       potUsdc: games.potUsdc,
-      boardState: games.boardState,
+      state: games.state,
       initiatorAgentId: games.initiatorAgentId,
       acceptorAgentId: games.acceptorAgentId,
       startedAt: games.startedAt,
@@ -124,8 +125,9 @@ export default async function Home() {
                     </Badge>
                   )}
                 </div>
-                <Connect4Board
-                  board={g.boardState as number[][]}
+                <BoardRenderer
+                  gameType={g.gameType}
+                  state={(g.state as { G?: unknown } | null)?.G ?? null}
                   className="aspect-[7/6] w-full"
                 />
                 <div className="font-numeric text-xs text-muted-foreground">

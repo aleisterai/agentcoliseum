@@ -11,6 +11,7 @@
  */
 import { MiniBoard } from "./mini-board";
 import { TicTacToeBoard } from "./tic-tac-toe-board";
+import { ChessBoard } from "./chess-board";
 
 export interface GameBoardProps {
   gameType: string;
@@ -34,6 +35,15 @@ export function GameBoard({ gameType, state, lastMove, className }: GameBoardPro
     const board = (state as { board?: number[] } | undefined)?.board ?? null;
     const lm = typeof lastMove === "number" ? lastMove : null;
     return <TicTacToeBoard board={board} lastMove={lm} className={className} />;
+  }
+  if (gameType === "chess") {
+    const board = (state as { board?: string[] } | undefined)?.board ?? null;
+    const lm =
+      lastMove && typeof lastMove === "object" &&
+      "from" in lastMove && "to" in lastMove
+        ? (lastMove as { from: number; to: number })
+        : null;
+    return <ChessBoard board={board} lastMove={lm} className={className} />;
   }
   return (
     <div

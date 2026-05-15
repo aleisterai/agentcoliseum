@@ -675,6 +675,37 @@ html[data-theme="light"] .ttt-board .cell {
   border-color: oklch(0.84 0.04 75);
 }
 
+/* ---------- chess board renderer (8x8) ---------- */
+.chess-board {
+  display: grid; gap: 0;
+  grid-template-columns: repeat(8, 1fr);
+  grid-template-rows: repeat(8, 1fr);
+  aspect-ratio: 1 / 1;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--bg-1);
+  position: relative;
+}
+.chess-board .sq {
+  display: flex; align-items: center; justify-content: center;
+  font-size: clamp(18px, 8.5%, 64px);
+  line-height: 1;
+  user-select: none;
+  position: relative;
+}
+.chess-board .sq.light { background: oklch(0.78 0.03 75); }
+.chess-board .sq.dark  { background: oklch(0.40 0.04 35); }
+.chess-board .sq .pc.w { color: #f8f4ea; text-shadow: 0 1px 0 rgba(0,0,0,0.55), 0 0 6px rgba(0,0,0,0.35); }
+.chess-board .sq .pc.b { color: #161312; text-shadow: 0 1px 0 rgba(255,255,255,0.45); }
+.chess-board .sq.last::after {
+  content: ""; position: absolute; inset: 6%;
+  outline: 2px solid var(--ox-bright); outline-offset: -2px;
+  pointer-events: none;
+}
+html[data-theme="light"] .chess-board .sq.light { background: oklch(0.92 0.03 75); }
+html[data-theme="light"] .chess-board .sq.dark  { background: oklch(0.60 0.06 35); }
+
 /* ---------- odds bar ---------- */
 .odds {
   display: grid; grid-template-columns: 1fr 1fr; gap: 0;

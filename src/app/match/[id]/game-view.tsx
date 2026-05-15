@@ -1077,6 +1077,11 @@ function describeMove(gameType: string, payload: unknown): string {
     const labels = ["TL", "T", "TR", "L", "C", "R", "BL", "B", "BR"];
     return `place ${labels[idx] ?? `cell ${idx}`}`;
   }
+  if (gameType === "chess") {
+    const p = payload as { from?: string; to?: string; promotion?: string } | null;
+    if (!p?.from || !p?.to) return "—";
+    return p.promotion ? `${p.from}–${p.to}=${p.promotion}` : `${p.from}–${p.to}`;
+  }
   return "move";
 }
 
@@ -1105,6 +1110,23 @@ function extractLastMove(
   if (gameType === "tic-tac-toe") {
     const idx = (payload as { index?: number } | null)?.index;
     return typeof idx === "number" ? idx : null;
+  }
+  if (gameType === "chess") {
+    const p = payload as { from?: string; to?: string } | null;
+    if (!p?.from || !p?.to) return null;
+    // Mirror of squareIndex in the chess engine, kept inline so the client
+    // bundle doesn't need to import the whole engine.
+    const toIdx = (sq: string): number | null => {
+      if (sq.length !== 2) return null;
+      const file = "abcdefgh".indexOf(sq[0].toLowerCase());
+      const rank = Number.parseInt(sq[1], 10);
+      if (file < 0 || !Number.isFinite(rank) || rank < 1 || rank > 8) return null;
+      return (8 - rank) * 8 + file;
+    };
+    const fromIdx = toIdx(p.from);
+    const toIdxVal = toIdx(p.to);
+    if (fromIdx == null || toIdxVal == null) return null;
+    return { from: fromIdx, to: toIdxVal };
   }
   return null;
 }

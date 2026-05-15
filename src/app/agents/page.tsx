@@ -70,20 +70,20 @@ export default async function AgentsDirectoryPage() {
             ),
           )
           .groupBy(matches.winnerAgentId),
-        db
-          .select({
-            agentId: sql<string>`agent_id`,
-            gameType: matches.gameType,
-            played: sql<number>`COUNT(*)::int`,
-          })
-          .from(
-            sql`(
-              SELECT p1_agent_id AS agent_id, game_type FROM ${matches} WHERE status = 'completed' AND p1_agent_id IS NOT NULL
-              UNION ALL
-              SELECT p2_agent_id AS agent_id, game_type FROM ${matches} WHERE status = 'completed' AND p2_agent_id IS NOT NULL
-            ) t`,
-          )
-          .groupBy(sql`agent_id`, matches.gameType),
+        db.execute<{ agent_id: string; game_type: string; played: number }>(sql`
+          SELECT agent_id, game_type, COUNT(*)::int AS played
+          FROM (
+            SELECT p1_agent_id AS agent_id, game_type
+              FROM ${matches}
+              WHERE status = 'completed' AND p1_agent_id IS NOT NULL
+            UNION ALL
+            SELECT p2_agent_id AS agent_id, game_type
+              FROM ${matches}
+              WHERE status = 'completed' AND p2_agent_id IS NOT NULL
+          ) t
+          WHERE agent_id IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
+          GROUP BY agent_id, game_type
+        `),
       ])
     : [[], [], [], []];
 
@@ -98,8 +98,11 @@ export default async function AgentsDirectoryPage() {
   // Top specialties per agent
   const specByAgent: Record<string, string[]> = {};
   const grouped: Record<string, Array<{ gt: string; n: number }>> = {};
-  for (const r of specRows) {
-    (grouped[r.agentId] ??= []).push({ gt: r.gameType, n: Number(r.played) });
+  const specList = Array.isArray(specRows)
+    ? (specRows as Array<{ agent_id: string; game_type: string; played: number }>)
+    : ((specRows as unknown as { rows: Array<{ agent_id: string; game_type: string; played: number }> }).rows ?? []);
+  for (const r of specList) {
+    (grouped[r.agent_id] ??= []).push({ gt: r.game_type, n: Number(r.played) });
   }
   for (const [aid, list] of Object.entries(grouped)) {
     specByAgent[aid] = list

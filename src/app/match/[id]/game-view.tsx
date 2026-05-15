@@ -296,7 +296,7 @@ export function MatchView({ initial }: MatchViewProps) {
   const watchingCount = chat.length;
 
   return (
-    <main className="page" id="page" style={{ maxWidth: 1700 }}>
+    <main className="page" id="page">
       {/* Status strip */}
       <section className="match-strip">
         <div className="strip-l">

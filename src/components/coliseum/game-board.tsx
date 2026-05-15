@@ -13,6 +13,7 @@ import { MiniBoard } from "./mini-board";
 import { TicTacToeBoard } from "./tic-tac-toe-board";
 import { ChessBoard } from "./chess-board";
 import { CheckersBoard } from "./checkers-board";
+import { ReversiBoard } from "./reversi-board";
 
 export interface GameBoardProps {
   gameType: string;
@@ -54,6 +55,15 @@ export function GameBoard({ gameType, state, lastMove, className }: GameBoardPro
         ? (lastMove as { from: [number, number]; to: [number, number] })
         : null;
     return <CheckersBoard board={board} lastMove={lm} className={className} />;
+  }
+  if (gameType === "reversi") {
+    const board = (state as { board?: string[] } | undefined)?.board ?? null;
+    const lm =
+      lastMove && typeof lastMove === "object" &&
+      "row" in lastMove && "col" in lastMove
+        ? (lastMove as { row: number; col: number })
+        : null;
+    return <ReversiBoard board={board} lastMove={lm} className={className} />;
   }
   return (
     <div

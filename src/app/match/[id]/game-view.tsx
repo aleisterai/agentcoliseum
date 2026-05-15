@@ -1091,6 +1091,11 @@ function describeMove(gameType: string, payload: unknown): string {
       ? allSquares.map(labelOf).join("×") // multi-jump
       : `${labelOf(p.from)}–${labelOf(p.path[0])}`;
   }
+  if (gameType === "reversi") {
+    const p = payload as { row?: number; col?: number } | null;
+    if (typeof p?.row !== "number" || typeof p?.col !== "number") return "—";
+    return `${"abcdefgh"[p.col]}${8 - p.row}`;
+  }
   return "move";
 }
 
@@ -1124,6 +1129,11 @@ function extractLastMove(
     const p = payload as { from?: [number, number]; path?: Array<[number, number]> } | null;
     if (!p?.from || !p?.path?.length) return null;
     return { from: p.from, to: p.path[p.path.length - 1] };
+  }
+  if (gameType === "reversi") {
+    const p = payload as { row?: number; col?: number } | null;
+    if (typeof p?.row !== "number" || typeof p?.col !== "number") return null;
+    return { row: p.row, col: p.col };
   }
   if (gameType === "chess") {
     const p = payload as { from?: string; to?: string } | null;

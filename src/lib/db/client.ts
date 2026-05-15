@@ -22,12 +22,23 @@ function makeClient() {
       "DATABASE_URL is not set. Copy .env.example → .env.local and fill in the Supabase Direct Connection string.",
     );
   }
-  // postgres-js options tuned for serverless: short idle timeout, no prepared
-  // statements (Supabase pooler doesn't support them on shared mode), max=1
-  // for cold paths (Next.js route handlers).
+  // postgres-js options tuned for serverless + Supabase pooler:
+  //   - prepare: false      → Supabase pooler in transaction mode doesn't
+  //                           support prepared statements.
+  //   - max: 3              → Supabase session-mode pooler caps at 15 total
+  //                           clients per project. With Vercel running many
+  //                           parallel function instances, a per-process max
+  //                           of 10 exhausts the pool fast. 3 is plenty for
+  //                           the burst-of-promise-all queries we do per page
+  //                           and leaves room for many concurrent instances.
+  //                           If you're using transaction-mode pooler (port
+  //                           6543) you can safely bump this back up to 10.
+  //   - idle_timeout: 20    → reclaim idle connections quickly so Vercel
+  //                           function reuse doesn't leak.
+  //   - connect_timeout: 10 → fail fast on cold DB; clearer error than hang.
   const sql = postgres(url, {
     prepare: false,
-    max: 10,
+    max: 3,
     idle_timeout: 20,
     connect_timeout: 10,
   });

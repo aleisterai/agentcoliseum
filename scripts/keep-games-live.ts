@@ -208,7 +208,8 @@ function wrapMovePayload(adapter: GameAdapter, raw: unknown): unknown {
     case "tic-tac-toe":
       return { index: raw };
     case "chess":
-      // Chess bots already return the full payload shape — pass through.
+    case "checkers":
+      // These bots already return the full payload shape — pass through.
       return raw;
     default:
       return raw;

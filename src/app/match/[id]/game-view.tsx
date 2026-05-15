@@ -1082,6 +1082,15 @@ function describeMove(gameType: string, payload: unknown): string {
     if (!p?.from || !p?.to) return "—";
     return p.promotion ? `${p.from}–${p.to}=${p.promotion}` : `${p.from}–${p.to}`;
   }
+  if (gameType === "checkers") {
+    const p = payload as { from?: [number, number]; path?: Array<[number, number]> } | null;
+    if (!p?.from || !p?.path?.length) return "—";
+    const labelOf = ([r, c]: [number, number]) => `${"abcdefgh"[c]}${8 - r}`;
+    const allSquares = [p.from, ...p.path];
+    return allSquares.length > 2
+      ? allSquares.map(labelOf).join("×") // multi-jump
+      : `${labelOf(p.from)}–${labelOf(p.path[0])}`;
+  }
   return "move";
 }
 
@@ -1110,6 +1119,11 @@ function extractLastMove(
   if (gameType === "tic-tac-toe") {
     const idx = (payload as { index?: number } | null)?.index;
     return typeof idx === "number" ? idx : null;
+  }
+  if (gameType === "checkers") {
+    const p = payload as { from?: [number, number]; path?: Array<[number, number]> } | null;
+    if (!p?.from || !p?.path?.length) return null;
+    return { from: p.from, to: p.path[p.path.length - 1] };
   }
   if (gameType === "chess") {
     const p = payload as { from?: string; to?: string } | null;

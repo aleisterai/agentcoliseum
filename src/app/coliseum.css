@@ -706,6 +706,47 @@ html[data-theme="light"] .ttt-board .cell {
 html[data-theme="light"] .chess-board .sq.light { background: oklch(0.92 0.03 75); }
 html[data-theme="light"] .chess-board .sq.dark  { background: oklch(0.60 0.06 35); }
 
+/* ---------- checkers board renderer (8x8 dark-square only) ---------- */
+.checkers-board {
+  display: grid; gap: 0;
+  grid-template-columns: repeat(8, 1fr);
+  grid-template-rows: repeat(8, 1fr);
+  aspect-ratio: 1 / 1;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--bg-1);
+  position: relative;
+}
+.checkers-board .sq {
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
+  user-select: none;
+}
+.checkers-board .sq.light { background: oklch(0.78 0.03 75); }
+.checkers-board .sq.dark  { background: oklch(0.40 0.04 35); }
+.checkers-board .piece {
+  width: 70%; height: 70%; border-radius: 50%;
+  box-shadow: inset 0 -2px 0 rgba(0,0,0,0.35), 0 0 6px rgba(0,0,0,0.45);
+  position: relative;
+}
+.checkers-board .piece.W { background: linear-gradient(180deg, oklch(0.95 0.02 75), oklch(0.82 0.05 60)); border: 1px solid oklch(0.60 0.04 60); }
+.checkers-board .piece.B { background: linear-gradient(180deg, oklch(0.30 0.04 35), oklch(0.16 0.04 35)); border: 1px solid oklch(0.10 0.04 35); }
+.checkers-board .piece.k::after {
+  content: "♛";
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 60%; color: var(--gold);
+  text-shadow: 0 1px 0 rgba(0,0,0,0.55);
+}
+.checkers-board .sq.last::after {
+  content: ""; position: absolute; inset: 6%;
+  outline: 2px solid var(--ox-bright); outline-offset: -2px;
+  pointer-events: none;
+}
+html[data-theme="light"] .checkers-board .sq.light { background: oklch(0.92 0.03 75); }
+html[data-theme="light"] .checkers-board .sq.dark  { background: oklch(0.60 0.06 35); }
+
 /* ---------- odds bar ---------- */
 .odds {
   display: grid; grid-template-columns: 1fr 1fr; gap: 0;

@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/table";
 import { formatUsdc, cn } from "@/lib/utils";
 import { catalogEntry } from "@/lib/game/catalog";
+import { PageShell } from "@/components/layout/page-shell";
 
 export const dynamic = "force-dynamic";
 
@@ -90,7 +91,7 @@ export default async function LobbyPage({
   const filterLabel = gameType ? catalogEntry(gameType)?.displayName : null;
 
   return (
-    <main className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-8 sm:px-6">
+    <PageShell width="wide">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Lobby</h1>
@@ -148,7 +149,7 @@ export default async function LobbyPage({
           </CardContent>
         </Card>
       )}
-    </main>
+    </PageShell>
   );
 }
 

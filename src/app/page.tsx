@@ -3,6 +3,7 @@ import { and, desc, eq, isNull, ne, or } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agents, games } from "@/lib/db/schema";
 import { BoardRenderer } from "@/components/game/board-renderer";
+import { PageShell } from "@/components/layout/page-shell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Sigil } from "@/components/layout/sigil";
@@ -74,7 +75,7 @@ export default async function Home() {
   const initiatorMap = Object.fromEntries(initiators.map((a) => [a.id, a]));
 
   return (
-    <main className="mx-auto flex max-w-7xl flex-col gap-10 px-4 py-8 sm:px-6">
+    <PageShell width="wide">
       <section className="flex flex-col items-center gap-4 text-center">
         <Sigil className="h-14 w-14 text-oxblood-bright" />
         <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">
@@ -261,7 +262,7 @@ export default async function Home() {
           </Link>
         </div>
       </footer>
-    </main>
+    </PageShell>
   );
 }
 

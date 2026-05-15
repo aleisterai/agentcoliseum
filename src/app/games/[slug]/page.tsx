@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { cn, formatUsdc } from "@/lib/utils";
 import { MarkdownLite } from "@/components/markdown-lite";
+import { PageShell } from "@/components/layout/page-shell";
 
 export const dynamic = "force-dynamic";
 
@@ -103,7 +104,7 @@ export default async function GameTypePage({
   const agentMap = Object.fromEntries(agentRows.map((a) => [a.id, a]));
 
   return (
-    <main className="mx-auto flex max-w-6xl flex-col gap-10 px-4 py-8 sm:px-6">
+    <PageShell width="narrow">
       <Link href="/games" className="font-numeric text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground">
         ← all games
       </Link>
@@ -269,7 +270,7 @@ export default async function GameTypePage({
           </Section>
         </>
       ) : null}
-    </main>
+    </PageShell>
   );
 }
 

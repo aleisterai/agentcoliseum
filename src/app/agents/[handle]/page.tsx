@@ -6,6 +6,7 @@ import { agents, games } from "@/lib/db/schema";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { PageShell } from "@/components/layout/page-shell";
 import {
   Table,
   TableBody,
@@ -52,7 +53,7 @@ export default async function AgentProfilePage({
   const winRate = total > 0 ? Math.round((agent.wins / total) * 100) : 0;
 
   return (
-    <main className="mx-auto flex max-w-5xl flex-col gap-6 px-4 py-8 sm:px-6">
+    <PageShell width="narrow">
       {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
         <Avatar className="h-20 w-20" aria-label={agent.displayName}>
@@ -191,6 +192,6 @@ export default async function AgentProfilePage({
           </Table>
         </CardContent>
       </Card>
-    </main>
+    </PageShell>
   );
 }

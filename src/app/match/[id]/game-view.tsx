@@ -10,6 +10,7 @@ import { SpectatorCount } from "@/components/game/spectator-count";
 import { emptyBoard } from "@/lib/game/games/connect4";
 import { createPublicClient as createSupabasePublic, channelName, realtimeEvent } from "@/lib/supabase";
 import { formatUsdc } from "@/lib/utils";
+import { PageShell } from "@/components/layout/page-shell";
 
 type Move = {
   moveNumber: number;
@@ -160,7 +161,9 @@ export function GameView({ initial }: GameViewProps) {
   }, [initial.initiator, initial.acceptor]);
 
   return (
-    <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-6 sm:px-6">
+    // Tighter rhythm than the default PageShell so the board, agent rails, and
+    // replay scrubber pack visually as one unit. !gap and !py override.
+    <PageShell width="wide" as="div" className="!gap-4 !py-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           {initial.status === "active" && (
@@ -230,7 +233,7 @@ export function GameView({ initial }: GameViewProps) {
         }}
         currentMoveIndex={liveMode ? moves.length - 1 : currentMoveIndex}
       />
-    </div>
+    </PageShell>
   );
 }
 

@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { FormError } from "@/components/ui/form-error";
 import { useToast } from "@/components/ui/use-toast";
 import { useTier } from "@/lib/hooks/use-tier";
+import { PageShell } from "@/components/layout/page-shell";
 import { slugifyHandle } from "@/lib/utils";
 
 export default function RegisterPage() {
@@ -98,16 +99,16 @@ export default function RegisterPage() {
 
   if (!ready) {
     return (
-      <main className="mx-auto flex max-w-2xl flex-col gap-4 px-4 py-12">
+      <PageShell width="narrow">
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-48 w-full" />
-      </main>
+      </PageShell>
     );
   }
 
   if (!authenticated || !address) {
     return (
-      <main className="mx-auto max-w-2xl px-4 py-12">
+      <PageShell width="narrow">
         <Card>
           <CardHeader>
             <CardTitle>Connect your wallet first</CardTitle>
@@ -118,13 +119,13 @@ export default function RegisterPage() {
             </p>
           </CardContent>
         </Card>
-      </main>
+      </PageShell>
     );
   }
 
   if (!canRegister) {
     return (
-      <main className="mx-auto max-w-2xl px-4 py-12">
+      <PageShell width="narrow">
         <Card>
           <CardHeader>
             <CardTitle>Hold 20M ALEISTER to register an agent</CardTitle>
@@ -141,13 +142,13 @@ export default function RegisterPage() {
             </div>
           </CardContent>
         </Card>
-      </main>
+      </PageShell>
     );
   }
 
   if (registered) {
     return (
-      <main className="mx-auto max-w-2xl px-4 py-12">
+      <PageShell width="narrow">
         <Card>
           <CardHeader>
             <CardTitle>Agent registered — save these keys</CardTitle>
@@ -173,12 +174,12 @@ export default function RegisterPage() {
             </Button>
           </CardContent>
         </Card>
-      </main>
+      </PageShell>
     );
   }
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-8">
+    <PageShell width="narrow">
       <Card>
         <CardHeader>
           <CardTitle>Register an agent</CardTitle>
@@ -247,6 +248,6 @@ export default function RegisterPage() {
           </form>
         </CardContent>
       </Card>
-    </main>
+    </PageShell>
   );
 }

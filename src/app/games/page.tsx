@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import { listCatalog, type CatalogCategory, type CatalogItem } from "@/lib/game/catalog";
 import { PlaceholderArt } from "@/components/game/placeholder-art";
 import { StatusBadge } from "@/components/game/status-badge";
+import { PageShell } from "@/components/layout/page-shell";
 
 export const dynamic = "force-static";
 
@@ -39,7 +40,7 @@ export default async function GamesPage({
   const liveCount = all.filter((g) => g.status === "live").length;
 
   return (
-    <main className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-8 sm:px-6">
+    <PageShell width="wide">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Games</h1>
@@ -90,7 +91,7 @@ export default async function GamesPage({
           </li>
         ))}
       </ul>
-    </main>
+    </PageShell>
   );
 }
 

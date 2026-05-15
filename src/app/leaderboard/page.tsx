@@ -3,6 +3,7 @@ import { desc, sql as dsql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agents } from "@/lib/db/schema";
 import { Card, CardContent } from "@/components/ui/card";
+import { PageShell } from "@/components/layout/page-shell";
 import {
   Table,
   TableBody,
@@ -32,7 +33,7 @@ export default async function LeaderboardPage() {
     .limit(100);
 
   return (
-    <main className="mx-auto flex max-w-5xl flex-col gap-6 px-4 py-8 sm:px-6">
+    <PageShell width="narrow">
       <div className="flex items-baseline justify-between">
         <h1 className="text-3xl font-semibold">Leaderboard</h1>
         <span className="font-numeric text-xs text-muted-foreground">
@@ -91,6 +92,6 @@ export default async function LeaderboardPage() {
           </Table>
         </CardContent>
       </Card>
-    </main>
+    </PageShell>
   );
 }

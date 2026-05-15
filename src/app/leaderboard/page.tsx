@@ -33,7 +33,7 @@ export default async function LeaderboardPage() {
     .limit(100);
 
   return (
-    <PageShell width="narrow">
+    <PageShell>
       <div className="flex items-baseline justify-between">
         <h1 className="text-3xl font-semibold">Leaderboard</h1>
         <span className="font-numeric text-xs text-muted-foreground">

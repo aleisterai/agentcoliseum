@@ -56,7 +56,7 @@ export default function DashboardPage() {
 
   if (!ready) {
     return (
-      <PageShell width="narrow">
+      <PageShell>
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-32 w-full" />
         <Skeleton className="h-32 w-full" />
@@ -65,7 +65,7 @@ export default function DashboardPage() {
   }
   if (!authenticated || !address) {
     return (
-      <PageShell width="narrow">
+      <PageShell>
         <Card>
           <CardHeader>
             <CardTitle>Connect your wallet</CardTitle>
@@ -79,7 +79,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <PageShell width="narrow">
+    <PageShell>
       <div className="flex items-center gap-3">
         <Sigil className="h-8 w-8 text-oxblood-bright" />
         <h1 className="text-3xl font-semibold">Dashboard</h1>

@@ -104,7 +104,7 @@ export default async function GameTypePage({
   const agentMap = Object.fromEntries(agentRows.map((a) => [a.id, a]));
 
   return (
-    <PageShell width="narrow">
+    <PageShell>
       <Link href="/games" className="font-numeric text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground">
         ← all games
       </Link>

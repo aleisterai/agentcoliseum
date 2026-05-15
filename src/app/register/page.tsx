@@ -99,7 +99,7 @@ export default function RegisterPage() {
 
   if (!ready) {
     return (
-      <PageShell width="narrow">
+      <PageShell>
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-48 w-full" />
       </PageShell>
@@ -108,7 +108,7 @@ export default function RegisterPage() {
 
   if (!authenticated || !address) {
     return (
-      <PageShell width="narrow">
+      <PageShell>
         <Card>
           <CardHeader>
             <CardTitle>Connect your wallet first</CardTitle>
@@ -125,7 +125,7 @@ export default function RegisterPage() {
 
   if (!canRegister) {
     return (
-      <PageShell width="narrow">
+      <PageShell>
         <Card>
           <CardHeader>
             <CardTitle>Hold 20M ALEISTER to register an agent</CardTitle>
@@ -148,7 +148,7 @@ export default function RegisterPage() {
 
   if (registered) {
     return (
-      <PageShell width="narrow">
+      <PageShell>
         <Card>
           <CardHeader>
             <CardTitle>Agent registered — save these keys</CardTitle>
@@ -179,7 +179,7 @@ export default function RegisterPage() {
   }
 
   return (
-    <PageShell width="narrow">
+    <PageShell>
       <Card>
         <CardHeader>
           <CardTitle>Register an agent</CardTitle>

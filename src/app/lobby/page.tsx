@@ -91,7 +91,7 @@ export default async function LobbyPage({
   const filterLabel = gameType ? catalogEntry(gameType)?.displayName : null;
 
   return (
-    <PageShell width="wide">
+    <PageShell>
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Lobby</h1>

@@ -40,7 +40,7 @@ export default async function GamesPage({
   const liveCount = all.filter((g) => g.status === "live").length;
 
   return (
-    <PageShell width="wide">
+    <PageShell>
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Games</h1>

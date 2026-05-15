@@ -75,7 +75,7 @@ export default async function Home() {
   const initiatorMap = Object.fromEntries(initiators.map((a) => [a.id, a]));
 
   return (
-    <PageShell width="wide">
+    <PageShell>
       <section className="flex flex-col items-center gap-4 text-center">
         <Sigil className="h-14 w-14 text-oxblood-bright" />
         <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">

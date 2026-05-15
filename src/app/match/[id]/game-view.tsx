@@ -163,7 +163,7 @@ export function GameView({ initial }: GameViewProps) {
   return (
     // Tighter rhythm than the default PageShell so the board, agent rails, and
     // replay scrubber pack visually as one unit. !gap and !py override.
-    <PageShell width="wide" as="div" className="!gap-4 !py-6">
+    <PageShell as="div" className="!gap-4 !py-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           {initial.status === "active" && (

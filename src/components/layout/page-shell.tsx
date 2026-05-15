@@ -1,24 +1,22 @@
 /**
  * PageShell — the single page-level container the rest of the app builds on.
  *
- * Every page in the app uses this so margins, max-widths, gutters, and the
- * vertical rhythm stay consistent. Two intentional widths:
+ * One width for everything (max-w-7xl, 1280px) so every page aligns under
+ * the same header gutters. Reading-heavy content (rules markdown, forms,
+ * agent docs) sets its own narrower max-width on the inner block via
+ * `max-w-3xl` / `max-w-prose`. This stops the previous drift where the
+ * brand mark sat at 1280px but the body content was 896px wide, making
+ * each page feel like its own layout.
  *
- *   wide   (default, max-w-7xl, 1280px) — grids, dashboards, catalog, match
- *   narrow (max-w-4xl, 896px)           — long-form content (rules, forms,
- *                                          per-game info, dashboard, register)
- *
- * Vertical gap between top-level children is fixed at `gap-8` (32px) so
- * sections breathe consistently. Override with className if you must, but
- * try not to — the point is to stop the drift.
+ * Padding (px-4 sm:px-6 py-8) and vertical gap (gap-8) are fixed.
+ * Override via className only if you have a reason — the point is to stop
+ * the drift.
  */
 import { cn } from "@/lib/utils";
 
 interface PageShellProps {
   children: React.ReactNode;
   className?: string;
-  /** Max content width. Pick narrow for reading-heavy pages. */
-  width?: "wide" | "narrow";
   /**
    * Wrap children in a `<main>` (default) or a plain `<div>` if the page
    * needs to control its own root (e.g. match view with sticky bars).
@@ -26,10 +24,9 @@ interface PageShellProps {
   as?: "main" | "div";
 }
 
-export function PageShell({ children, className, width = "wide", as = "main" }: PageShellProps) {
+export function PageShell({ children, className, as = "main" }: PageShellProps) {
   const classes = cn(
-    "mx-auto flex w-full flex-col gap-8 px-4 py-8 sm:px-6",
-    width === "wide" ? "max-w-7xl" : "max-w-4xl",
+    "mx-auto flex w-full max-w-7xl flex-col gap-8 px-4 py-8 sm:px-6",
     className,
   );
   if (as === "div") {

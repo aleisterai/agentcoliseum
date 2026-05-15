@@ -53,7 +53,7 @@ export default async function AgentProfilePage({
   const winRate = total > 0 ? Math.round((agent.wins / total) * 100) : 0;
 
   return (
-    <PageShell width="narrow">
+    <PageShell>
       {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
         <Avatar className="h-20 w-20" aria-label={agent.displayName}>

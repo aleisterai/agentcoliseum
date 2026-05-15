@@ -1,22 +1,17 @@
 /**
- * GET /api/cron/timeout-games   (runs every minute via vercel.json)
+ * GET /api/cron/match-tick   (runs every 10s via vercel.json)
  *
- * Sweeps active games whose currentTurnAgentId has not moved within the
- * per-game timeout (default 30s). Forfeits to the opponent. Same Elo +
- * treasury cascading as a normal win finalization.
+ * Sweeps active matches whose current-turn agent has run their per-agent
+ * clock to zero and forfeits them. System-mode matches whose bot is on the
+ * clock should never time out (sub-100ms move computation), but if they do,
+ * we forfeit them like any other.
  *
- * For system-bot games where the bot is on the clock (currentTurnAgentId is
- * null), we DRIVE the bot instead of forfeiting — the bot should never time
- * out in real life (its move computation is sub-100ms even at hard
- * difficulty), but if the inline cascade missed, this is the safety net.
+ * Renamed from `timeout-games` to `match-tick` conceptually; route path
+ * preserved so the existing vercel.json cron schedule keeps firing.
  */
 import { NextResponse } from "next/server";
-import { and, eq, isNotNull, lt, sql as dsql } from "drizzle-orm";
-import { db } from "@/lib/db/client";
-import { games } from "@/lib/db/schema";
-import { driveSystemBot, finalizeGame } from "@/lib/game/server-flow";
 import { jsonError } from "@/lib/http";
-import type { State } from "boardgame.io";
+import { enforceClockExpiry, findStaleMatches } from "@/lib/game/server-flow";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -31,49 +26,24 @@ function authorized(req: Request): boolean {
 export async function GET(req: Request) {
   if (!authorized(req)) return jsonError(401, "unauthorized", "Cron secret required");
 
-  // Find games where lastMoveAt is older than moveTimeoutSec and status is active.
-  const stale = await db
-    .select()
-    .from(games)
-    .where(
-      and(
-        eq(games.status, "active"),
-        isNotNull(games.lastMoveAt),
-        lt(games.lastMoveAt, dsql`now() - (${games.moveTimeoutSec} || ' seconds')::interval`),
-      ),
-    )
-    .limit(50);
-
+  const stale = await findStaleMatches();
   if (stale.length === 0) {
     return NextResponse.json({ ok: true, swept: 0 });
   }
 
-  const results: Array<{ id: string; action: "forfeit" | "bot_moved" | "error"; detail?: string }> = [];
-
-  for (const g of stale) {
+  const results: Array<{ id: string; outcome: "forfeit" | "none" | "error"; detail?: string }> = [];
+  for (const m of stale) {
     try {
-      if (g.mode === "system" && g.currentTurnAgentId === null) {
-        // It's the bot's turn — drive it instead of forfeiting.
-        await driveSystemBot(g);
-        results.push({ id: g.id, action: "bot_moved" });
-      } else {
-        // Forfeit the agent whose turn it is. The OPPONENT wins.
-        const opponentId =
-          g.currentTurnAgentId === g.initiatorAgentId
-            ? g.acceptorAgentId
-            : g.initiatorAgentId;
-        await finalizeGame(g, g.state as State<unknown>, opponentId);
-        results.push({ id: g.id, action: "forfeit" });
-      }
+      const updated = await enforceClockExpiry(m.id);
+      results.push({ id: m.id, outcome: updated ? "forfeit" : "none" });
     } catch (err) {
-      console.error(`[cron/timeout-games] ${g.id}`, err);
+      console.error(`[match-tick] ${m.id}`, err);
       results.push({
-        id: g.id,
-        action: "error",
+        id: m.id,
+        outcome: "error",
         detail: err instanceof Error ? err.message : String(err),
       });
     }
   }
-
   return NextResponse.json({ ok: true, swept: stale.length, results });
 }

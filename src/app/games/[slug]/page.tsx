@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, desc, eq, isNull, or } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { agents, games } from "@/lib/db/schema";
+import { agents, challenges, matches } from "@/lib/db/schema";
 import { catalogEntry } from "@/lib/game/catalog";
 import { getAdapter } from "@/lib/game/registry";
 import { PlaceholderArt } from "@/components/game/placeholder-art";
@@ -36,52 +36,46 @@ export default async function GameTypePage({
     ? await Promise.all([
         db
           .select({
-            id: games.id,
-            mode: games.mode,
-            stakeUsdc: games.stakeUsdc,
-            initiatorAgentId: games.initiatorAgentId,
-            createdAt: games.createdAt,
+            id: challenges.id,
+            mode: challenges.mode,
+            stakeUsdc: challenges.stakeUsdc,
+            initiatorAgentId: challenges.initiatorAgentId,
+            createdAt: challenges.postedAt,
           })
-          .from(games)
-          .where(
-            and(
-              eq(games.gameType, slug),
-              eq(games.status, "lobby"),
-              isNull(games.acceptorAgentId),
-            ),
-          )
-          .orderBy(desc(games.createdAt))
+          .from(challenges)
+          .where(and(eq(challenges.gameType, slug), eq(challenges.status, "posted")))
+          .orderBy(desc(challenges.postedAt))
           .limit(10),
         db
           .select({
-            id: games.id,
-            mode: games.mode,
-            stakeUsdc: games.stakeUsdc,
-            potUsdc: games.potUsdc,
-            initiatorAgentId: games.initiatorAgentId,
-            acceptorAgentId: games.acceptorAgentId,
-            currentTurnAgentId: games.currentTurnAgentId,
-            lastMoveAt: games.lastMoveAt,
-            startedAt: games.startedAt,
+            id: matches.id,
+            mode: matches.mode,
+            stakeUsdc: matches.stakeUsdc,
+            potUsdc: matches.potUsdc,
+            initiatorAgentId: matches.p1AgentId,
+            acceptorAgentId: matches.p2AgentId,
+            currentTurnAgentId: matches.currentTurnAgentId,
+            lastMoveAt: matches.lastMoveAt,
+            startedAt: matches.startedAt,
           })
-          .from(games)
-          .where(and(eq(games.gameType, slug), eq(games.status, "active")))
-          .orderBy(desc(games.lastMoveAt))
+          .from(matches)
+          .where(and(eq(matches.gameType, slug), eq(matches.status, "active")))
+          .orderBy(desc(matches.lastMoveAt))
           .limit(8),
         db
           .select({
-            id: games.id,
-            mode: games.mode,
-            stakeUsdc: games.stakeUsdc,
-            potUsdc: games.potUsdc,
-            initiatorAgentId: games.initiatorAgentId,
-            acceptorAgentId: games.acceptorAgentId,
-            winnerAgentId: games.winnerAgentId,
-            completedAt: games.completedAt,
+            id: matches.id,
+            mode: matches.mode,
+            stakeUsdc: matches.stakeUsdc,
+            potUsdc: matches.potUsdc,
+            initiatorAgentId: matches.p1AgentId,
+            acceptorAgentId: matches.p2AgentId,
+            winnerAgentId: matches.winnerAgentId,
+            completedAt: matches.completedAt,
           })
-          .from(games)
-          .where(and(eq(games.gameType, slug), eq(games.status, "completed")))
-          .orderBy(desc(games.completedAt))
+          .from(matches)
+          .where(and(eq(matches.gameType, slug), eq(matches.status, "completed")))
+          .orderBy(desc(matches.completedAt))
           .limit(8),
       ])
     : [[], [], []];

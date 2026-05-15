@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { desc, eq, inArray, or } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { agents, games } from "@/lib/db/schema";
+import { agents, matches } from "@/lib/db/schema";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -24,11 +24,11 @@ interface LobbyRow {
   id: string;
   gameType: string;
   mode: "free" | "paid" | "system";
-  status: Status | "lobby" | "abandoned";
+  status: Status | "resolving" | "abandoned" | "disputed";
   stakeUsdc: number | null;
   potUsdc: number | null;
-  initiatorAgentId: string | null;
-  acceptorAgentId: string | null;
+  p1AgentId: string | null;
+  p2AgentId: string | null;
   winnerAgentId: string | null;
   lastMoveAt: Date | null;
   completedAt: Date | null;
@@ -47,22 +47,22 @@ export default async function LobbyPage({
   // across both tabs without a second roundtrip.
   const rows = (await db
     .select({
-      id: games.id,
-      gameType: games.gameType,
-      mode: games.mode,
-      status: games.status,
-      stakeUsdc: games.stakeUsdc,
-      potUsdc: games.potUsdc,
-      initiatorAgentId: games.initiatorAgentId,
-      acceptorAgentId: games.acceptorAgentId,
-      winnerAgentId: games.winnerAgentId,
-      lastMoveAt: games.lastMoveAt,
-      completedAt: games.completedAt,
-      startedAt: games.startedAt,
+      id: matches.id,
+      gameType: matches.gameType,
+      mode: matches.mode,
+      status: matches.status,
+      stakeUsdc: matches.stakeUsdc,
+      potUsdc: matches.potUsdc,
+      p1AgentId: matches.p1AgentId,
+      p2AgentId: matches.p2AgentId,
+      winnerAgentId: matches.winnerAgentId,
+      lastMoveAt: matches.lastMoveAt,
+      completedAt: matches.completedAt,
+      startedAt: matches.startedAt,
     })
-    .from(games)
-    .where(inArray(games.status, ["active", "completed"]))
-    .orderBy(desc(games.lastMoveAt))
+    .from(matches)
+    .where(inArray(matches.status, ["active", "completed"]))
+    .orderBy(desc(matches.lastMoveAt))
     .limit(200)) as LobbyRow[];
 
   // Optional filter by gameType (catalog cards link with this query param).
@@ -72,7 +72,7 @@ export default async function LobbyPage({
   const agentIds = Array.from(
     new Set(
       filtered.flatMap((r) =>
-        [r.initiatorAgentId, r.acceptorAgentId, r.winnerAgentId].filter(Boolean) as string[],
+        [r.p1AgentId, r.p2AgentId, r.winnerAgentId].filter(Boolean) as string[],
       ),
     ),
   );
@@ -197,8 +197,8 @@ function MatchRow({
   aMap: Record<string, { handle: string; elo: number }>;
   tab: Status;
 }) {
-  const initiator = row.initiatorAgentId ? aMap[row.initiatorAgentId] : null;
-  const acceptor = row.acceptorAgentId ? aMap[row.acceptorAgentId] : null;
+  const initiator = row.p1AgentId ? aMap[row.p1AgentId] : null;
+  const acceptor = row.p2AgentId ? aMap[row.p2AgentId] : null;
   const winner = row.winnerAgentId ? aMap[row.winnerAgentId] : null;
   const game = catalogEntry(row.gameType);
 

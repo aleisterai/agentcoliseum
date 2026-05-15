@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { and, desc, eq, or } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { agents, games } from "@/lib/db/schema";
+import { agents, matches } from "@/lib/db/schema";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -30,23 +30,19 @@ export default async function AgentProfilePage({
 
   const recent = await db
     .select({
-      id: games.id,
-      mode: games.mode,
-      status: games.status,
-      stakeUsdc: games.stakeUsdc,
-      winnerAgentId: games.winnerAgentId,
-      initiatorAgentId: games.initiatorAgentId,
-      acceptorAgentId: games.acceptorAgentId,
-      startedAt: games.startedAt,
-      completedAt: games.completedAt,
+      id: matches.id,
+      mode: matches.mode,
+      status: matches.status,
+      stakeUsdc: matches.stakeUsdc,
+      winnerAgentId: matches.winnerAgentId,
+      p1AgentId: matches.p1AgentId,
+      p2AgentId: matches.p2AgentId,
+      startedAt: matches.startedAt,
+      completedAt: matches.completedAt,
     })
-    .from(games)
-    .where(
-      and(
-        or(eq(games.initiatorAgentId, agent.id), eq(games.acceptorAgentId, agent.id)),
-      ),
-    )
-    .orderBy(desc(games.createdAt))
+    .from(matches)
+    .where(or(eq(matches.p1AgentId, agent.id), eq(matches.p2AgentId, agent.id)))
+    .orderBy(desc(matches.startedAt))
     .limit(20);
 
   const total = agent.wins + agent.losses + agent.draws;

@@ -1,12 +1,12 @@
 /**
  * GET /api/agents/[handle]
  *
- * Public agent profile. Returns identity + record + last 20 games.
+ * Public agent profile. Returns identity + record + last 20 matches.
  */
 import { NextResponse } from "next/server";
-import { and, desc, eq, or } from "drizzle-orm";
+import { desc, eq, or } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { agents, games } from "@/lib/db/schema";
+import { agents, matches } from "@/lib/db/schema";
 import { errorResponse, jsonError } from "@/lib/http";
 
 export const dynamic = "force-dynamic";
@@ -19,23 +19,21 @@ export async function GET(_req: Request, ctx: { params: Promise<{ handle: string
 
     const recent = await db
       .select({
-        id: games.id,
-        mode: games.mode,
-        status: games.status,
-        initiatorAgentId: games.initiatorAgentId,
-        acceptorAgentId: games.acceptorAgentId,
-        winnerAgentId: games.winnerAgentId,
-        stakeUsdc: games.stakeUsdc,
-        startedAt: games.startedAt,
-        completedAt: games.completedAt,
+        id: matches.id,
+        mode: matches.mode,
+        status: matches.status,
+        gameType: matches.gameType,
+        p1AgentId: matches.p1AgentId,
+        p2AgentId: matches.p2AgentId,
+        winnerAgentId: matches.winnerAgentId,
+        stakeUsdc: matches.stakeUsdc,
+        potUsdc: matches.potUsdc,
+        startedAt: matches.startedAt,
+        completedAt: matches.completedAt,
       })
-      .from(games)
-      .where(
-        and(
-          or(eq(games.initiatorAgentId, agent.id), eq(games.acceptorAgentId, agent.id)),
-        ),
-      )
-      .orderBy(desc(games.createdAt))
+      .from(matches)
+      .where(or(eq(matches.p1AgentId, agent.id), eq(matches.p2AgentId, agent.id)))
+      .orderBy(desc(matches.startedAt))
       .limit(20);
 
     return NextResponse.json({
@@ -52,7 +50,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ handle: string
       losses: agent.losses,
       draws: agent.draws,
       createdAt: agent.createdAt.toISOString(),
-      recentGames: recent.map((g) => ({
+      recentMatches: recent.map((g) => ({
         ...g,
         startedAt: g.startedAt?.toISOString() ?? null,
         completedAt: g.completedAt?.toISOString() ?? null,

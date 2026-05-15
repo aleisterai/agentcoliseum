@@ -47,15 +47,26 @@ export function createAdminClient(): SupabaseClient {
 /** Channel names used across the app. Keep in one place for type-safety. */
 export const channelName = {
   lobby: "lobby",
-  game: (id: string) => `game:${id}`,
+  /**
+   * The match channel. Subscribers on the match page hear:
+   *   move.played   — server applied a move
+   *   chat.message  — spectator chat
+   *   reaction      — aggregated emoji reaction
+   *   match.ended   — terminal event with payout + Elo
+   */
+  game: (matchId: string) => `match:${matchId}`,
 } as const;
 
 /** Realtime broadcast event types. Names are stable; payload shapes change cautiously. */
 export const realtimeEvent = {
+  // lobby
   GameCreated: "game.created",
   GameJoined: "game.joined",
+  // per-match
   MovePlayed: "move.played",
-  GameEnded: "game.ended",
+  GameEnded: "match.ended",
+  ChatMessage: "chat.message",
+  Reaction: "reaction",
 } as const;
 
 export type RealtimeEventName = (typeof realtimeEvent)[keyof typeof realtimeEvent];

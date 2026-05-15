@@ -1,25 +1,48 @@
 /**
- * Server-side game flow primitives, refactored to be game-agnostic.
+ * Server-side match orchestration, refactored for the Wave-0 lifecycle.
  *
- *   applyMoveTransaction()  — validates, applies via adapter+engine, persists,
- *                             broadcasts, and runs cascading effects (Elo,
- *                             treasury, system-bot reply).
- *   driveSystemBot()        — picks and applies the system bot's move using
- *                             the adapter's bot strategies.
- *   finalizeGame()          — marks completed, updates Elo, queues treasury.
+ *   postChallenge      — create a challenge row in the lobby
+ *   acceptChallenge    — atomic two-side accept; creates a match row
+ *   applyMove          — agent submits a move; updates match + writes
+ *                        match_moves; cascades to finalize on game over
+ *   driveSystemBot     — system-mode opponent picks + applies a move
+ *   enforceClockExpiry — called by the match-tick cron when a clock hits 0
+ *   finalizeMatch      — terminal flow: Elo + payout + treasury + transcript
+ *                        + head_to_head update + side-pool resolve
  *
- * Pure-rules helpers stay inside each adapter's `games/<id>/game.ts`. This
- * file holds the DB-bound orchestration only.
+ * Pure-rules helpers live in each adapter's `games/<id>/game.ts`. This file
+ * holds DB-bound orchestration only.
  */
 import "server-only";
-import { eq, sql as dsql } from "drizzle-orm";
+import { and, desc, eq, isNull, or, sql as dsql } from "drizzle-orm";
 import type { State } from "boardgame.io";
 import { db } from "@/lib/db/client";
-import { agents, games, moves, treasuryFlows, type Game } from "@/lib/db/schema";
+import {
+  agents,
+  challenges,
+  headToHead,
+  matches,
+  matchMoves,
+  matchTranscripts,
+  owners,
+  sidePools,
+  sidePoolStakes,
+  treasuryFlows,
+  type Match,
+} from "@/lib/db/schema";
 import { getAdapter } from "@/lib/game/registry";
 import { buildEngine } from "@/lib/game/engine";
-import { updateRatings, type Outcome } from "@/lib/game/elo";
+import { buildTranscript } from "@/lib/game/snapshot";
+import {
+  clockExpired,
+  decrementClock,
+  eloUpdate,
+  payoutSplit,
+  type ResultReason,
+} from "@/lib/game/lifecycle";
 import { broadcastGame, broadcastLobby, realtimeEvent } from "@/lib/realtime";
+
+/* ===== errors ===== */
 
 export class IllegalMoveError extends Error {
   constructor(message: string) {
@@ -29,7 +52,7 @@ export class IllegalMoveError extends Error {
 }
 export class NotYourTurnError extends Error {
   constructor() {
-    super("Not your turn");
+    super("not_your_turn");
     this.name = "NotYourTurnError";
   }
 }
@@ -39,306 +62,685 @@ export class UnknownGameTypeError extends Error {
     this.name = "UnknownGameTypeError";
   }
 }
-
-type PlayerID = "0" | "1";
-
-/** Map agent → player ID. Initiator is "0"; acceptor is "1". System bot is "1". */
-function playerIdFor(game: Game, agentId: string): PlayerID {
-  return game.initiatorAgentId === agentId ? "0" : "1";
+export class ChallengeRaceError extends Error {
+  constructor() {
+    super("challenge_already_accepted");
+    this.name = "ChallengeRaceError";
+  }
+}
+export class MatchNotFoundError extends Error {
+  constructor() {
+    super("match_not_found");
+    this.name = "MatchNotFoundError";
+  }
 }
 
-/** Inverse: given a player ID, return the agent ID (or null = system bot). */
-function agentIdFor(game: Game, pid: PlayerID): string | null {
-  if (pid === "0") return game.initiatorAgentId;
-  return game.acceptorAgentId; // null when system game
+/* ===== POST a challenge ===== */
+
+export interface PostChallengeInput {
+  gameType: string;
+  initiatorAgentId: string;
+  mode: "free" | "paid" | "system";
+  stakeUsdc?: number | null;
+  systemBotDifficulty?: "easy" | "medium" | "hard" | null;
+  opponentHandle?: string | null;
+  eloMin?: number | null;
+  eloMax?: number | null;
+  timeoutMin?: 30 | 60 | 180 | 1440;
 }
 
 /**
- * Apply an agent's move. Validates turn order and legality through the
- * adapter, persists the new state, broadcasts, and cascades end-of-game
- * side effects.
+ * For mode === "system": skip the challenge phase entirely. Create the match
+ * directly with p2_agent_id = null (means the platform bot). Returns
+ * { kind: "match", match }.
+ *
+ * For mode in ("free", "paid"): insert a challenges row. Returns
+ * { kind: "challenge", challenge }.
  */
-export async function applyMoveTransaction(input: {
-  gameId: string;
-  agentId: string;
-  payload: unknown;
-  thinkingMs: number;
-  x402PaymentId?: string;
-}): Promise<Game> {
-  const start = Date.now();
-  const game = await db.query.games.findFirst({ where: eq(games.id, input.gameId) });
-  if (!game) throw new IllegalMoveError("game_not_found");
-  if (game.status !== "active") throw new IllegalMoveError("not_active");
-  if (game.currentTurnAgentId !== input.agentId) throw new NotYourTurnError();
+export async function postChallenge(
+  input: PostChallengeInput,
+): Promise<
+  | { kind: "challenge"; challenge: typeof challenges.$inferSelect }
+  | { kind: "match"; match: Match }
+> {
+  const adapter = getAdapter(input.gameType);
+  if (!adapter) throw new UnknownGameTypeError(input.gameType);
 
-  const adapter = getAdapter(game.gameType);
-  if (!adapter) throw new UnknownGameTypeError(game.gameType);
-
-  const validation = adapter.validateMovePayload(input.payload);
-  if (!validation.ok) throw new IllegalMoveError(validation.error);
-
-  const engine = buildEngine(adapter.game);
-  const currentState = game.state as State<unknown>;
-  const myPid = playerIdFor(game, input.agentId);
-  const { moveName, args } = adapter.toMoveAction(validation.move);
-  const nextState = engine.applyMove(currentState, myPid, moveName, args);
-  if (!nextState) throw new IllegalMoveError("illegal_move");
-
-  const moveNumber = await nextMoveNumber(game.id);
-  const isConnect4 = adapter.id === "connect4";
-  const legacyBoard = isConnect4 ? boardFromConnect4State(nextState) : null;
-  const legacyColumn = isConnect4 ? toLegacyColumn(validation.move) : null;
-
-  await db.insert(moves).values({
-    gameId: game.id,
-    agentId: input.agentId,
-    moveNumber,
-    movePayload: input.payload as object,
-    stateAfter: nextState as unknown as object,
-    column: legacyColumn,
-    boardStateAfter: legacyBoard,
-    thinkingMs: input.thinkingMs,
-    x402PaymentId: input.x402PaymentId,
-  });
-
-  const over = engine.gameOver(nextState);
-  if (!over) {
-    const nextPid: PlayerID = (nextState.ctx?.currentPlayer as PlayerID) ?? (myPid === "0" ? "1" : "0");
-    const nextTurnAgentId = agentIdFor(game, nextPid);
-    const [u] = await db
-      .update(games)
-      .set({
-        state: nextState as unknown as object,
-        ctx: (nextState.ctx ?? null) as unknown as object,
-        boardState: legacyBoard,
-        currentTurnAgentId: nextTurnAgentId,
-        lastMoveAt: new Date(),
+  if (input.mode === "system") {
+    // System-mode: create the match immediately. Caller is responsible for
+    // tier check + x402; this fn doesn't enforce those.
+    const engine = buildEngine(adapter.game);
+    const initial = engine.initialState();
+    const [created] = await db
+      .insert(matches)
+      .values({
+        gameType: adapter.id,
+        mode: "system",
+        p1AgentId: input.initiatorAgentId,
+        p2AgentId: null,
+        systemBotDifficulty: input.systemBotDifficulty ?? "easy",
+        state: initial as unknown as object,
+        status: "active",
+        currentTurnPlayerId: "0",
+        currentTurnAgentId: input.initiatorAgentId,
+        turnStartedAt: new Date(),
+        p1MsLeft: adapter.clockBudgetMs,
+        p2MsLeft: adapter.clockBudgetMs,
+        clockBudgetMs: adapter.clockBudgetMs,
+        startedAt: new Date(),
       })
-      .where(eq(games.id, game.id))
       .returning();
-
-    await broadcastGame(game.id, realtimeEvent.MovePlayed, {
-      gameId: game.id,
-      moveNumber,
-      movePayload: input.payload,
-      stateAfter: adapter.serializeForSpectator(nextState.G as never, "spectator", false),
-      currentTurnAgentId: nextTurnAgentId,
-      tookMs: Date.now() - start,
-    });
-
-    // System-bot's turn? Drive the next move.
-    if (game.mode === "system" && nextTurnAgentId === null) {
-      return driveSystemBot(u);
-    }
-    return u;
+    return { kind: "match", match: created };
   }
 
-  // Game over.
-  const winnerAgentId = over.winnerPlayerID ? agentIdFor(game, over.winnerPlayerID) : null;
-  const updated = await finalizeGame(game, nextState, winnerAgentId);
-  await broadcastGame(game.id, realtimeEvent.MovePlayed, {
-    gameId: game.id,
+  // Free / paid: post a challenge into the lobby.
+  const timeoutMin = input.timeoutMin ?? 60;
+  const expiresAt = new Date(Date.now() + timeoutMin * 60 * 1000);
+  const stake = input.stakeUsdc ?? null;
+  const pot = input.mode === "paid" && stake ? stake * 2 : null;
+  const fee = pot ? Math.round(pot * 0.05) : null;
+
+  const [created] = await db
+    .insert(challenges)
+    .values({
+      gameType: adapter.id,
+      initiatorAgentId: input.initiatorAgentId,
+      mode: input.mode,
+      stakeUsdc: stake,
+      potUsdc: pot,
+      platformFeeUsdc: fee,
+      opponentHandle: input.opponentHandle ?? null,
+      eloMin: input.eloMin ?? null,
+      eloMax: input.eloMax ?? null,
+      timeoutMin,
+      status: "posted",
+      initiatorEscrowLockedAt: input.mode === "paid" ? new Date() : null,
+      expiresAt,
+    })
+    .returning();
+
+  await broadcastLobby(realtimeEvent.GameCreated, {
+    id: created.id,
+    gameType: adapter.id,
+    mode: input.mode,
+  });
+  return { kind: "challenge", challenge: created };
+}
+
+/* ===== ACCEPT a challenge ===== */
+
+export interface AcceptChallengeInput {
+  challengeId: string;
+  acceptorAgentId: string;
+}
+
+/**
+ * Atomic two-side accept. Uses `SELECT FOR UPDATE` semantics inside a
+ * transaction so simultaneous Accept clicks resolve to exactly one winner.
+ *
+ * Returns the newly-created match. The challenge row transitions to
+ * `escrowed` with the match id set.
+ */
+export async function acceptChallenge(input: AcceptChallengeInput): Promise<Match> {
+  return db.transaction(async (tx) => {
+    // Lock the challenge row.
+    const locked = await tx
+      .select()
+      .from(challenges)
+      .where(eq(challenges.id, input.challengeId))
+      .for("update")
+      .limit(1);
+    const challenge = locked[0];
+    if (!challenge) throw new IllegalMoveError("challenge_not_found");
+    if (challenge.status !== "posted") throw new ChallengeRaceError();
+    if (challenge.initiatorAgentId === input.acceptorAgentId) {
+      throw new IllegalMoveError("cannot_self_accept");
+    }
+
+    const adapter = getAdapter(challenge.gameType);
+    if (!adapter) throw new UnknownGameTypeError(challenge.gameType);
+
+    // Build initial state from the adapter's boardgame.io game.
+    const engine = buildEngine(adapter.game);
+    const initial = engine.initialState();
+
+    // Create the match.
+    const [match] = await tx
+      .insert(matches)
+      .values({
+        challengeId: challenge.id,
+        gameType: challenge.gameType,
+        mode: challenge.mode,
+        p1AgentId: challenge.initiatorAgentId,
+        p2AgentId: input.acceptorAgentId,
+        systemBotDifficulty: null,
+        stakeUsdc: challenge.stakeUsdc,
+        potUsdc: challenge.potUsdc,
+        platformFeeUsdc: challenge.platformFeeUsdc,
+        state: initial as unknown as object,
+        status: "active",
+        currentTurnPlayerId: "0",
+        currentTurnAgentId: challenge.initiatorAgentId, // p1 (initiator) goes first
+        turnStartedAt: new Date(),
+        p1MsLeft: adapter.clockBudgetMs,
+        p2MsLeft: adapter.clockBudgetMs,
+        clockBudgetMs: adapter.clockBudgetMs,
+        startedAt: new Date(),
+      })
+      .returning();
+
+    // Mark challenge as escrowed.
+    await tx
+      .update(challenges)
+      .set({
+        status: "escrowed",
+        acceptorAgentId: input.acceptorAgentId,
+        acceptorEscrowLockedAt: challenge.mode === "paid" ? new Date() : null,
+        matchedAt: new Date(),
+        matchId: match.id,
+      })
+      .where(eq(challenges.id, challenge.id));
+
+    return match;
+  });
+}
+
+/* ===== APPLY a move ===== */
+
+export interface ApplyMoveInput {
+  matchId: string;
+  agentId: string;
+  payload: unknown;
+  reasoning?: string | null;
+  evScore?: number | null;
+  thinkingMs: number;
+  x402PaymentId?: string | null;
+}
+
+/**
+ * Apply an agent's move. Handles clock decrement → forfeit on time,
+ * payload validation → forfeit on 2× invalid, state update, transcript-row
+ * insert, finalize-on-game-over.
+ */
+export async function applyMove(input: ApplyMoveInput): Promise<Match> {
+  const match = await db.query.matches.findFirst({ where: eq(matches.id, input.matchId) });
+  if (!match) throw new MatchNotFoundError();
+  if (match.status !== "active") throw new IllegalMoveError("not_active");
+  if (match.currentTurnAgentId !== input.agentId) throw new NotYourTurnError();
+
+  const adapter = getAdapter(match.gameType);
+  if (!adapter) throw new UnknownGameTypeError(match.gameType);
+
+  const now = new Date();
+
+  // Decrement the active clock first; forfeit if it hit zero.
+  const { p1MsLeft, p2MsLeft } = decrementClock({
+    p1MsLeft: match.p1MsLeft,
+    p2MsLeft: match.p2MsLeft,
+    turnStartedAt: match.turnStartedAt,
+    currentTurnPlayerId: match.currentTurnPlayerId,
+    now,
+  });
+  if (clockExpired({ p1MsLeft, p2MsLeft, currentTurnPlayerId: match.currentTurnPlayerId })) {
+    const winnerAgentId =
+      match.currentTurnPlayerId === "0" ? match.p2AgentId : match.p1AgentId;
+    return finalizeMatch({
+      matchId: match.id,
+      winnerAgentId,
+      resultReason: "time_forfeit",
+      finalP1Ms: p1MsLeft,
+      finalP2Ms: p2MsLeft,
+    });
+  }
+
+  // Validate payload via the adapter; on invalid, bump counter or forfeit.
+  const validation = adapter.validateMovePayload(input.payload);
+  if (!validation.ok) {
+    const myInvalidField = match.currentTurnPlayerId === "0" ? "p1InvalidCount" : "p2InvalidCount";
+    const newInvalidCount =
+      (match.currentTurnPlayerId === "0" ? match.p1InvalidCount : match.p2InvalidCount) + 1;
+    if (newInvalidCount >= 2) {
+      // 2 consecutive invalid → forfeit
+      const winnerAgentId =
+        match.currentTurnPlayerId === "0" ? match.p2AgentId : match.p1AgentId;
+      return finalizeMatch({
+        matchId: match.id,
+        winnerAgentId,
+        resultReason: "invalid_move_forfeit",
+        finalP1Ms: p1MsLeft,
+        finalP2Ms: p2MsLeft,
+      });
+    }
+    await db
+      .update(matches)
+      .set({
+        [myInvalidField]: newInvalidCount,
+        p1MsLeft,
+        p2MsLeft,
+      })
+      .where(eq(matches.id, match.id));
+    throw new IllegalMoveError(validation.error);
+  }
+
+  // Apply the move via the engine.
+  const engine = buildEngine(adapter.game);
+  const currentState = match.state as State<unknown>;
+  const myPid = match.currentTurnPlayerId;
+  const { moveName, args } = adapter.toMoveAction(validation.move);
+  const nextState = engine.applyMove(currentState, myPid, moveName, args);
+  if (!nextState) {
+    // boardgame.io rejected — treat like invalid.
+    throw new IllegalMoveError("engine_rejected");
+  }
+
+  const reasoning = (input.reasoning ?? "").slice(0, 1000) || null;
+  const moveNumber = match.moveCount;
+
+  // Insert the move row.
+  await db.insert(matchMoves).values({
+    matchId: match.id,
     moveNumber,
-    movePayload: input.payload,
-    stateAfter: adapter.serializeForSpectator(nextState.G as never, "spectator", true),
-    currentTurnAgentId: null,
-    tookMs: Date.now() - start,
+    agentId: input.agentId,
+    playerId: myPid,
+    payload: input.payload as object,
+    reasoning,
+    evScore: input.evScore ?? null,
+    stateAfter: nextState as unknown as object,
+    thinkingMs: Math.max(0, Math.min(adapter.clockBudgetMs, input.thinkingMs)),
+    x402PaymentId: input.x402PaymentId ?? null,
   });
-  await broadcastGame(game.id, realtimeEvent.GameEnded, {
-    gameId: game.id,
-    winnerAgentId,
-    status: "completed",
+
+  // Did the game just end?
+  const over = engine.gameOver(nextState);
+  if (over) {
+    const winnerAgentId = over.winnerPlayerID
+      ? over.winnerPlayerID === "0"
+        ? match.p1AgentId
+        : match.p2AgentId
+      : null;
+    return finalizeMatch({
+      matchId: match.id,
+      winnerAgentId,
+      resultReason: over.isDraw ? "draw" : "natural",
+      finalP1Ms: p1MsLeft,
+      finalP2Ms: p2MsLeft,
+      finalState: nextState,
+    });
+  }
+
+  // Game continues. Compute who's up next.
+  const nextPid: "0" | "1" =
+    (nextState.ctx?.currentPlayer as "0" | "1" | undefined) ?? (myPid === "0" ? "1" : "0");
+  const nextAgentId = nextPid === "0" ? match.p1AgentId : match.p2AgentId;
+
+  const [updated] = await db
+    .update(matches)
+    .set({
+      state: nextState as unknown as object,
+      currentTurnPlayerId: nextPid,
+      currentTurnAgentId: nextAgentId,
+      turnStartedAt: now,
+      p1MsLeft,
+      p2MsLeft,
+      [myPid === "0" ? "p1InvalidCount" : "p2InvalidCount"]: 0,
+      moveCount: moveNumber + 1,
+      lastMoveAt: now,
+    })
+    .where(eq(matches.id, match.id))
+    .returning();
+
+  // Broadcast the move on the match channel.
+  const view = adapter.serializeForSpectator(nextState.G as never, "spectator", false);
+  await broadcastGame(match.id, realtimeEvent.MovePlayed, {
+    matchId: match.id,
+    moveNumber,
+    payload: input.payload,
+    reasoning,
+    evScore: input.evScore ?? null,
+    publicState: view.publicState,
+    currentTurnAgentId: nextAgentId,
+    p1MsLeft,
+    p2MsLeft,
   });
-  await broadcastLobby(realtimeEvent.GameEnded, { id: game.id });
+
+  // System-mode opponent? Drive the bot.
+  if (match.mode === "system" && nextAgentId === null) {
+    return driveSystemBot(updated);
+  }
   return updated;
 }
 
-/**
- * Play the system bot's move on its turn. Loops in case the bot reduction
- * leaves it as the next mover (shouldn't happen for any 2-player game with
- * `turn.maxMoves: 1`, but the recursion is defensive).
- */
-export async function driveSystemBot(game: Game): Promise<Game> {
-  const adapter = getAdapter(game.gameType);
-  if (!adapter) throw new UnknownGameTypeError(game.gameType);
+/* ===== Drive the system bot ===== */
 
-  const difficulty = (game.systemBotDifficulty as "easy" | "medium" | "hard") ?? "easy";
+export async function driveSystemBot(match: Match): Promise<Match> {
+  const adapter = getAdapter(match.gameType);
+  if (!adapter) throw new UnknownGameTypeError(match.gameType);
+
+  const difficulty = (match.systemBotDifficulty as "easy" | "medium" | "hard") ?? "easy";
   const bot = adapter.bots[difficulty];
   const engine = buildEngine(adapter.game);
 
-  const currentState = game.state as State<unknown>;
-  const botPid: PlayerID = "1"; // bot is always the acceptor seat
-  const start = Date.now();
-  const botMove = bot.pickMove(currentState.G as never, botPid);
-  const { moveName, args } = adapter.toMoveAction(botMove);
+  const currentState = match.state as State<unknown>;
+  const botPid: "0" | "1" = "1"; // system bot is always p2
+  const now = new Date();
+  const start = now.getTime();
+
+  const move = bot.pickMove(currentState.G as never, botPid);
+  const { moveName, args } = adapter.toMoveAction(move);
   const nextState = engine.applyMove(currentState, botPid, moveName, args);
   if (!nextState) {
-    // Bot returned an illegal move: this is a bug in the bot. Forfeit the
-    // game to the human rather than crash the request.
-    throw new IllegalMoveError("system_bot_illegal_move");
+    // Bot returned illegal move (its own bug). Forfeit to the human.
+    return finalizeMatch({
+      matchId: match.id,
+      winnerAgentId: match.p1AgentId,
+      resultReason: "invalid_move_forfeit",
+      finalP1Ms: match.p1MsLeft,
+      finalP2Ms: match.p2MsLeft,
+    });
   }
 
-  const moveNumber = await nextMoveNumber(game.id);
-  const isConnect4 = adapter.id === "connect4";
-  const legacyBoard = isConnect4 ? boardFromConnect4State(nextState) : null;
-  const legacyColumn = isConnect4 ? toLegacyColumn(botMove) : null;
+  const moveNumber = match.moveCount;
+  const thinkingMs = Math.max(50, Date.now() - start);
 
-  await db.insert(moves).values({
-    gameId: game.id,
-    agentId: null, // null = system bot
+  await db.insert(matchMoves).values({
+    matchId: match.id,
     moveNumber,
-    movePayload: { ...(typeof botMove === "object" ? botMove : { value: botMove }) },
+    agentId: null,
+    playerId: botPid,
+    payload: { auto: true, raw: move } as object,
     stateAfter: nextState as unknown as object,
-    column: legacyColumn,
-    boardStateAfter: legacyBoard,
-    thinkingMs: Date.now() - start,
+    thinkingMs,
   });
 
   const over = engine.gameOver(nextState);
-  if (!over) {
-    const [u] = await db
-      .update(games)
-      .set({
-        state: nextState as unknown as object,
-        ctx: (nextState.ctx ?? null) as unknown as object,
-        boardState: legacyBoard,
-        currentTurnAgentId: game.initiatorAgentId,
-        lastMoveAt: new Date(),
-      })
-      .where(eq(games.id, game.id))
-      .returning();
-    await broadcastGame(game.id, realtimeEvent.MovePlayed, {
-      gameId: game.id,
-      moveNumber,
-      movePayload: { value: botMove },
-      stateAfter: adapter.serializeForSpectator(nextState.G as never, "spectator", false),
-      currentTurnAgentId: u.currentTurnAgentId,
-      isBot: true,
+  if (over) {
+    const winnerAgentId =
+      over.winnerPlayerID === "0" ? match.p1AgentId : null;
+    return finalizeMatch({
+      matchId: match.id,
+      winnerAgentId,
+      resultReason: over.isDraw ? "draw" : "natural",
+      finalP1Ms: match.p1MsLeft,
+      finalP2Ms: match.p2MsLeft,
+      finalState: nextState,
     });
-    return u;
   }
-
-  // System-bot finished the game.
-  const botWon = over.winnerPlayerID === "1";
-  const winnerAgentId = over.winnerPlayerID === "0" ? game.initiatorAgentId : null;
-  return finalizeGame(game, nextState, winnerAgentId, botWon);
-}
-
-async function nextMoveNumber(gameId: string): Promise<number> {
-  const row = await db
-    .select({ n: dsql<number>`count(*)::int` })
-    .from(moves)
-    .where(eq(moves.gameId, gameId));
-  return row[0]?.n ?? 0;
-}
-
-/**
- * Mark the game completed, update Elo (only for non-system games), queue a
- * treasury flow for the platform fee on paid games.
- */
-export async function finalizeGame(
-  game: Game,
-  finalState: State<unknown>,
-  winnerAgentId: string | null,
-  systemBotWon = false,
-): Promise<Game> {
-  const now = new Date();
-  const adapter = getAdapter(game.gameType);
-  const isConnect4 = adapter?.id === "connect4";
-  const legacyBoard = isConnect4 ? boardFromConnect4State(finalState) : null;
 
   const [updated] = await db
-    .update(games)
+    .update(matches)
     .set({
-      state: finalState as unknown as object,
-      ctx: (finalState.ctx ?? null) as unknown as object,
-      boardState: legacyBoard,
-      status: "completed",
-      winnerAgentId,
-      currentTurnAgentId: null,
+      state: nextState as unknown as object,
+      currentTurnPlayerId: "0",
+      currentTurnAgentId: match.p1AgentId,
+      turnStartedAt: now,
+      moveCount: moveNumber + 1,
       lastMoveAt: now,
-      completedAt: now,
     })
-    .where(eq(games.id, game.id))
+    .where(eq(matches.id, match.id))
     .returning();
 
-  if (game.mode !== "system" && game.initiatorAgentId && game.acceptorAgentId) {
-    await applyEloOutcome({
-      initiatorId: game.initiatorAgentId,
-      acceptorId: game.acceptorAgentId,
-      winnerId: winnerAgentId,
-    });
-  } else if (game.mode === "system" && game.initiatorAgentId) {
-    const col = systemBotWon ? agents.losses : winnerAgentId === game.initiatorAgentId ? agents.wins : agents.draws;
-    await db
-      .update(agents)
-      .set({ [(col as unknown as { name: string }).name]: dsql`${col} + 1` })
-      .where(eq(agents.id, game.initiatorAgentId));
-  }
-
-  if (game.mode === "paid" && game.platformFeeUsdc && game.platformFeeUsdc > 0) {
-    await db.insert(treasuryFlows).values({
-      gameId: game.id,
-      feeUsdc: game.platformFeeUsdc,
-      status: "pending",
-    });
-  }
-
+  await broadcastGame(match.id, realtimeEvent.MovePlayed, {
+    matchId: match.id,
+    moveNumber,
+    payload: { auto: true },
+    publicState: adapter.serializeForSpectator(nextState.G as never, "spectator", false)
+      .publicState,
+    currentTurnAgentId: match.p1AgentId,
+    isBot: true,
+  });
   return updated;
 }
 
-async function applyEloOutcome(input: {
-  initiatorId: string;
-  acceptorId: string;
-  winnerId: string | null;
-}) {
-  const [initiator, acceptor] = await Promise.all([
-    db.query.agents.findFirst({ where: eq(agents.id, input.initiatorId) }),
-    db.query.agents.findFirst({ where: eq(agents.id, input.acceptorId) }),
-  ]);
-  if (!initiator || !acceptor) return;
+/* ===== Enforce clock expiry (cron) ===== */
 
-  let outcomeForInitiator: Outcome;
-  if (input.winnerId === null) outcomeForInitiator = "draw";
-  else if (input.winnerId === initiator.id) outcomeForInitiator = "win";
-  else outcomeForInitiator = "loss";
-
-  const { ratingA, ratingB } = updateRatings(initiator.elo, acceptor.elo, outcomeForInitiator);
-
-  await db
-    .update(agents)
-    .set({
-      elo: ratingA,
-      ...(outcomeForInitiator === "win"
-        ? { wins: dsql`${agents.wins} + 1` }
-        : outcomeForInitiator === "loss"
-          ? { losses: dsql`${agents.losses} + 1` }
-          : { draws: dsql`${agents.draws} + 1` }),
-    })
-    .where(eq(agents.id, initiator.id));
-  await db
-    .update(agents)
-    .set({
-      elo: ratingB,
-      ...(outcomeForInitiator === "win"
-        ? { losses: dsql`${agents.losses} + 1` }
-        : outcomeForInitiator === "loss"
-          ? { wins: dsql`${agents.wins} + 1` }
-          : { draws: dsql`${agents.draws} + 1` }),
-    })
-    .where(eq(agents.id, acceptor.id));
+/**
+ * Called every ~10s by the match-tick cron. Scans active matches whose
+ * current-turn clock has run out and forfeits them.
+ */
+export async function enforceClockExpiry(matchId: string): Promise<Match | null> {
+  const match = await db.query.matches.findFirst({ where: eq(matches.id, matchId) });
+  if (!match || match.status !== "active") return null;
+  const now = new Date();
+  const { p1MsLeft, p2MsLeft } = decrementClock({
+    p1MsLeft: match.p1MsLeft,
+    p2MsLeft: match.p2MsLeft,
+    turnStartedAt: match.turnStartedAt,
+    currentTurnPlayerId: match.currentTurnPlayerId,
+    now,
+  });
+  if (!clockExpired({ p1MsLeft, p2MsLeft, currentTurnPlayerId: match.currentTurnPlayerId })) {
+    return null;
+  }
+  const winnerAgentId =
+    match.currentTurnPlayerId === "0" ? match.p2AgentId : match.p1AgentId;
+  return finalizeMatch({
+    matchId: match.id,
+    winnerAgentId,
+    resultReason: "time_forfeit",
+    finalP1Ms: p1MsLeft,
+    finalP2Ms: p2MsLeft,
+  });
 }
 
-// ---------------------------------------------------------------------------
-// Connect-4-only legacy mirroring helpers. Removed when boardState/column are
-// dropped from the schema.
-// ---------------------------------------------------------------------------
-function boardFromConnect4State(state: State<unknown>): number[][] | null {
-  const g = state.G as { board?: number[][] } | undefined;
-  return g?.board ?? null;
+/* ===== Finalize a match (terminal flow) ===== */
+
+interface FinalizeArgs {
+  matchId: string;
+  winnerAgentId: string | null;
+  resultReason: ResultReason;
+  finalP1Ms: number;
+  finalP2Ms: number;
+  /** Optional latest state — used if we already have it (avoid extra DB roundtrip). */
+  finalState?: State<unknown>;
 }
 
-function toLegacyColumn(move: unknown): number | null {
-  if (typeof move === "number" && Number.isInteger(move)) return move;
-  return null;
+export async function finalizeMatch(args: FinalizeArgs): Promise<Match> {
+  return db.transaction(async (tx) => {
+    const [match] = await tx
+      .select()
+      .from(matches)
+      .where(eq(matches.id, args.matchId))
+      .for("update")
+      .limit(1);
+    if (!match) throw new MatchNotFoundError();
+    if (match.status === "completed" || match.status === "abandoned") {
+      return match; // idempotent
+    }
+
+    const adapter = getAdapter(match.gameType);
+
+    // Compute Elo if both sides are real agents and the match wasn't system mode.
+    let p1Delta = 0;
+    let p2Delta = 0;
+    if (match.mode !== "system" && match.p1AgentId && match.p2AgentId) {
+      const [p1Agent, p2Agent] = await Promise.all([
+        tx.select().from(agents).where(eq(agents.id, match.p1AgentId)).limit(1),
+        tx.select().from(agents).where(eq(agents.id, match.p2AgentId)).limit(1),
+      ]);
+      const p1 = p1Agent[0];
+      const p2 = p2Agent[0];
+      if (p1 && p2) {
+        const outcome =
+          args.resultReason === "draw" || args.winnerAgentId === null
+            ? "draw"
+            : args.winnerAgentId === p1.id
+              ? "p1_win"
+              : "p2_win";
+        const updated = eloUpdate({ p1Elo: p1.elo, p2Elo: p2.elo, outcome });
+        p1Delta = updated.p1Delta;
+        p2Delta = updated.p2Delta;
+        // Update agent rows.
+        await tx
+          .update(agents)
+          .set({
+            elo: updated.p1Elo,
+            ...(outcome === "p1_win"
+              ? { wins: dsql`${agents.wins} + 1` }
+              : outcome === "p2_win"
+                ? { losses: dsql`${agents.losses} + 1` }
+                : { draws: dsql`${agents.draws} + 1` }),
+          })
+          .where(eq(agents.id, p1.id));
+        await tx
+          .update(agents)
+          .set({
+            elo: updated.p2Elo,
+            ...(outcome === "p2_win"
+              ? { wins: dsql`${agents.wins} + 1` }
+              : outcome === "p1_win"
+                ? { losses: dsql`${agents.losses} + 1` }
+                : { draws: dsql`${agents.draws} + 1` }),
+          })
+          .where(eq(agents.id, p2.id));
+      }
+      // Head-to-head aggregate (canonical order: smaller uuid string first).
+      const [aId, bId] =
+        p1.id < p2.id ? [p1.id, p2.id] : [p2.id, p1.id];
+      const aWins =
+        args.winnerAgentId === aId ? 1 : 0;
+      const bWins =
+        args.winnerAgentId === bId ? 1 : 0;
+      const draws = args.winnerAgentId === null && args.resultReason !== "abandoned" ? 1 : 0;
+      await tx
+        .insert(headToHead)
+        .values({
+          agentAId: aId,
+          agentBId: bId,
+          gameType: match.gameType,
+          aWins,
+          bWins,
+          draws,
+          lastPlayedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: [headToHead.agentAId, headToHead.agentBId, headToHead.gameType],
+          set: {
+            aWins: dsql`${headToHead.aWins} + ${aWins}`,
+            bWins: dsql`${headToHead.bWins} + ${bWins}`,
+            draws: dsql`${headToHead.draws} + ${draws}`,
+            lastPlayedAt: new Date(),
+          },
+        });
+    }
+
+    // Mark match completed.
+    const now = new Date();
+    const [updated] = await tx
+      .update(matches)
+      .set({
+        status: "completed",
+        winnerAgentId: args.winnerAgentId,
+        resultReason: args.resultReason,
+        currentTurnAgentId: null,
+        p1MsLeft: args.finalP1Ms,
+        p2MsLeft: args.finalP2Ms,
+        p1EloDelta: p1Delta,
+        p2EloDelta: p2Delta,
+        completedAt: now,
+        ...(args.finalState ? { state: args.finalState as unknown as object } : {}),
+      })
+      .where(eq(matches.id, match.id))
+      .returning();
+
+    // Treasury flow for paid matches.
+    if (match.mode === "paid" && match.potUsdc) {
+      const split = payoutSplit({
+        potUsdc: match.potUsdc,
+        isDraw: args.resultReason === "draw" || args.winnerAgentId === null,
+        stakeUsdc: match.stakeUsdc ?? 0,
+      });
+      await tx.insert(treasuryFlows).values({
+        matchId: match.id,
+        feeUsdc: split.treasury,
+        status: "pending",
+      });
+    }
+
+    // Build and write the transcript.
+    if (adapter) {
+      const movesForMatch = await tx
+        .select()
+        .from(matchMoves)
+        .where(eq(matchMoves.matchId, match.id))
+        .orderBy(matchMoves.moveNumber);
+      const initial = buildEngine(adapter.game).initialState();
+      const finalState =
+        (args.finalState ?? (updated.state as State<unknown>)) as State<unknown>;
+      const transcript = buildTranscript({
+        matchId: match.id,
+        adapter,
+        initialState: initial,
+        moves: movesForMatch.map((m) => ({
+          moveNumber: m.moveNumber,
+          agentId: m.agentId,
+          playerId: m.playerId,
+          payload: m.payload,
+          reasoning: m.reasoning,
+          evScore: m.evScore,
+          thinkingMs: m.thinkingMs,
+          x402PaymentId: m.x402PaymentId,
+          stateAfter: m.stateAfter as State<unknown>,
+          createdAt: m.createdAt,
+        })),
+        finalState,
+        resultReason: args.resultReason,
+        winnerAgentId: args.winnerAgentId,
+        startedAt: match.startedAt,
+        completedAt: now,
+      });
+      await tx
+        .insert(matchTranscripts)
+        .values({ matchId: match.id, payload: transcript as object })
+        .onConflictDoUpdate({
+          target: matchTranscripts.matchId,
+          set: { payload: transcript as object, createdAt: new Date() },
+        });
+    }
+
+    // Side pool resolution (post-MVP detail: pro-rata payouts on losing side
+    // stakes, 5% fee on losing side only). For now, mark the pool resolved.
+    await tx
+      .update(sidePools)
+      .set({ resolvedAt: now })
+      .where(eq(sidePools.matchId, match.id));
+
+    // Broadcast.
+    await broadcastGame(match.id, realtimeEvent.GameEnded, {
+      matchId: match.id,
+      winnerAgentId: args.winnerAgentId,
+      resultReason: args.resultReason,
+      p1EloDelta: p1Delta,
+      p2EloDelta: p2Delta,
+    });
+    await broadcastLobby(realtimeEvent.GameEnded, { id: match.id });
+
+    return updated;
+  });
+}
+
+/* ===== convenience ===== */
+
+/**
+ * Find matches whose clocks are likely to have expired. The match-tick cron
+ * uses this to bound the scan to "stale" turns rather than every active match.
+ *
+ * Returns matches whose `turn_started_at` is older than the side's remaining
+ * clock — i.e. the active agent has had at least their msLeft to think.
+ */
+export async function findStaleMatches(): Promise<Match[]> {
+  const rows = await db
+    .select()
+    .from(matches)
+    .where(
+      and(
+        eq(matches.status, "active"),
+        dsql`extract(epoch from (now() - ${matches.turnStartedAt})) * 1000 >= case
+              when ${matches.currentTurnPlayerId} = '0' then ${matches.p1MsLeft}
+              else ${matches.p2MsLeft}
+            end`,
+      ),
+    )
+    .orderBy(desc(matches.turnStartedAt))
+    .limit(50);
+  return rows;
 }

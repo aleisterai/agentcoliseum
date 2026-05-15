@@ -12,7 +12,7 @@
 import Link from "next/link";
 import { and, desc, eq, isNull, ne, or, sql as dsql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { agents, games } from "@/lib/db/schema";
+import { agents, challenges, matches } from "@/lib/db/schema";
 import { MiniBoard } from "@/components/coliseum/mini-board";
 import { Sparkline } from "@/components/coliseum/sparkline";
 import { catalogEntry, listCatalog } from "@/lib/game/catalog";
@@ -33,43 +33,43 @@ export default async function Home() {
   const [active, lobby, completed, leaderboard, totals] = await Promise.all([
     db
       .select({
-        id: games.id,
-        gameType: games.gameType,
-        mode: games.mode,
-        potUsdc: games.potUsdc,
-        state: games.state,
-        initiatorAgentId: games.initiatorAgentId,
-        acceptorAgentId: games.acceptorAgentId,
-        startedAt: games.startedAt,
-        lastMoveAt: games.lastMoveAt,
+        id: matches.id,
+        gameType: matches.gameType,
+        mode: matches.mode,
+        potUsdc: matches.potUsdc,
+        state: matches.state,
+        p1AgentId: matches.p1AgentId,
+        p2AgentId: matches.p2AgentId,
+        startedAt: matches.startedAt,
+        lastMoveAt: matches.lastMoveAt,
       })
-      .from(games)
-      .where(eq(games.status, "active"))
-      .orderBy(desc(games.lastMoveAt))
+      .from(matches)
+      .where(eq(matches.status, "active"))
+      .orderBy(desc(matches.lastMoveAt))
       .limit(8),
     db
       .select({
-        id: games.id,
-        gameType: games.gameType,
-        stakeUsdc: games.stakeUsdc,
-        initiatorAgentId: games.initiatorAgentId,
-        createdAt: games.createdAt,
+        id: challenges.id,
+        gameType: challenges.gameType,
+        stakeUsdc: challenges.stakeUsdc,
+        initiatorAgentId: challenges.initiatorAgentId,
+        postedAt: challenges.postedAt,
       })
-      .from(games)
-      .where(and(eq(games.status, "lobby"), isNull(games.acceptorAgentId)))
-      .orderBy(desc(games.createdAt))
+      .from(challenges)
+      .where(eq(challenges.status, "posted"))
+      .orderBy(desc(challenges.postedAt))
       .limit(8),
     db
       .select({
-        id: games.id,
-        gameType: games.gameType,
-        winnerAgentId: games.winnerAgentId,
-        potUsdc: games.potUsdc,
-        completedAt: games.completedAt,
+        id: matches.id,
+        gameType: matches.gameType,
+        winnerAgentId: matches.winnerAgentId,
+        potUsdc: matches.potUsdc,
+        completedAt: matches.completedAt,
       })
-      .from(games)
-      .where(eq(games.status, "completed"))
-      .orderBy(desc(games.completedAt))
+      .from(matches)
+      .where(eq(matches.status, "completed"))
+      .orderBy(desc(matches.completedAt))
       .limit(8),
     db
       .select({
@@ -87,20 +87,20 @@ export default async function Home() {
       .limit(8),
     db
       .select({
-        liveCount: dsql<number>`count(*) filter (where ${games.status} = 'active')::int`,
+        liveCount: dsql<number>`count(*) filter (where ${matches.status} = 'active')::int`,
         agentsTotal: dsql<number>`(select count(*)::int from ${agents})`,
-        biggestActivePot: dsql<number>`max(${games.potUsdc}) filter (where ${games.status} = 'active')::int`,
-        completedToday: dsql<number>`count(*) filter (where ${games.status} = 'completed' and ${games.completedAt} > now() - interval '24 hours')::int`,
-        volumeToday: dsql<number>`coalesce(sum(${games.potUsdc}) filter (where ${games.status} = 'completed' and ${games.completedAt} > now() - interval '24 hours'), 0)::int`,
+        biggestActivePot: dsql<number>`max(${matches.potUsdc}) filter (where ${matches.status} = 'active')::int`,
+        completedToday: dsql<number>`count(*) filter (where ${matches.status} = 'completed' and ${matches.completedAt} > now() - interval '24 hours')::int`,
+        volumeToday: dsql<number>`coalesce(sum(${matches.potUsdc}) filter (where ${matches.status} = 'completed' and ${matches.completedAt} > now() - interval '24 hours'), 0)::int`,
       })
-      .from(games)
+      .from(matches)
       .limit(1),
   ]);
 
   const agentIds = new Set<string>();
   for (const a of active) {
-    if (a.initiatorAgentId) agentIds.add(a.initiatorAgentId);
-    if (a.acceptorAgentId) agentIds.add(a.acceptorAgentId);
+    if (a.p1AgentId) agentIds.add(a.p1AgentId);
+    if (a.p2AgentId) agentIds.add(a.p2AgentId);
   }
   for (const l of lobby) if (l.initiatorAgentId) agentIds.add(l.initiatorAgentId);
   for (const c of completed) if (c.winnerAgentId) agentIds.add(c.winnerAgentId);
@@ -132,8 +132,8 @@ export default async function Home() {
     : 1200;
   const onlineEstimate = Math.max(1, leaderboard.length);
   const spotlight = active[0];
-  const spotP1 = spotlight?.initiatorAgentId ? aMap.get(spotlight.initiatorAgentId) : null;
-  const spotP2 = spotlight?.acceptorAgentId ? aMap.get(spotlight.acceptorAgentId) : null;
+  const spotP1 = spotlight?.p1AgentId ? aMap.get(spotlight.p1AgentId) : null;
+  const spotP2 = spotlight?.p2AgentId ? aMap.get(spotlight.p2AgentId) : null;
   const spotWin = computeP1Win(spotP1?.elo, spotP2?.elo);
 
   return (
@@ -338,8 +338,8 @@ export default async function Home() {
               </div>
             ) : (
               active.map((m) => {
-                const a = m.initiatorAgentId ? aMap.get(m.initiatorAgentId) : null;
-                const b = m.acceptorAgentId ? aMap.get(m.acceptorAgentId) : null;
+                const a = m.p1AgentId ? aMap.get(m.p1AgentId) : null;
+                const b = m.p2AgentId ? aMap.get(m.p2AgentId) : null;
                 return (
                   <Link key={m.id} className="side-row" href={`/match/${m.id}`}>
                     <span
@@ -385,8 +385,8 @@ export default async function Home() {
         </div>
         <div className="multiview">
           {active.slice(0, 4).map((m) => {
-            const a = m.initiatorAgentId ? aMap.get(m.initiatorAgentId) : null;
-            const b = m.acceptorAgentId ? aMap.get(m.acceptorAgentId) : null;
+            const a = m.p1AgentId ? aMap.get(m.p1AgentId) : null;
+            const b = m.p2AgentId ? aMap.get(m.p2AgentId) : null;
             const win = computeP1Win(a?.elo, b?.elo);
             return (
               <Link key={m.id} className="mv-card" href={`/match/${m.id}`}>

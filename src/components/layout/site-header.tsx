@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { TierBadge } from "@/components/agent/tier-badge";
 import { ConnectWalletButton } from "@/components/agent/connect-wallet-button";
+import { ThemeToggle } from "@/components/coliseum/theme-toggle";
 import { cn } from "@/lib/utils";
 
 const nav = [
@@ -96,8 +97,9 @@ export function SiteHeader() {
           </nav>
         </div>
 
-        {/* Right: wallet/tier. Tier badge hidden on small screens to save space. */}
+        {/* Right: theme toggle + wallet/tier. Tier badge hidden on small screens to save space. */}
         <div className="flex shrink-0 items-center gap-2">
+          <ThemeToggle />
           <div className="hidden sm:block">
             <TierBadge />
           </div>

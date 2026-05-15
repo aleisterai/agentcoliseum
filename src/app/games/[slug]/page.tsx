@@ -5,7 +5,7 @@ import { db } from "@/lib/db/client";
 import { agents, matches } from "@/lib/db/schema";
 import { catalogEntry } from "@/lib/game/catalog";
 import { getAdapter } from "@/lib/game/registry";
-import { MiniBoard } from "@/components/coliseum/mini-board";
+import { GameBoard } from "@/components/coliseum/game-board";
 import { RulesMarkdown } from "@/components/rules-markdown";
 import { GameDetailTabs } from "./tabs";
 
@@ -160,7 +160,7 @@ export default async function GameDetailPage({
       : [];
   const aMap = Object.fromEntries(playerRows.map((a) => [a.id, a]));
 
-  const previewBoard = (adapter?.previewState as { board?: number[][] } | undefined)?.board;
+  const previewState = adapter?.previewState ?? null;
 
   return (
     <main className="page" id="page">
@@ -171,7 +171,7 @@ export default async function GameDetailPage({
       {/* Hero */}
       <section className="game-hero">
         <div className="game-hero-l">
-          <MiniBoard board={previewBoard} />
+          <GameBoard gameType={entry.id} state={previewState} />
         </div>
         <div className="game-hero-r">
           <div className="row" style={{ gap: 8 }}>

@@ -4,7 +4,7 @@ import { db } from "@/lib/db/client";
 import { agents, matches } from "@/lib/db/schema";
 import { listCatalog, type CatalogCategory } from "@/lib/game/catalog";
 import { getAdapter } from "@/lib/game/registry";
-import { MiniBoard } from "@/components/coliseum/mini-board";
+import { GameBoard } from "@/components/coliseum/game-board";
 
 export const dynamic = "force-dynamic";
 
@@ -111,9 +111,7 @@ export default async function GamesPage({
       return vb - va;
     })[0] ?? live[0];
   const featuredAdapter = featured ? getAdapter(featured.id) : null;
-  const featuredPreview = featuredAdapter?.previewState as
-    | { board?: number[][] }
-    | undefined;
+  const featuredPreview = featuredAdapter?.previewState ?? null;
 
   const visible =
     active === "all" ? catalog : catalog.filter((g) => g.category === active);
@@ -160,7 +158,7 @@ export default async function GamesPage({
         <section className="featured-grid">
           <div className="panel featured-card">
             <div className="featured-board">
-              <MiniBoard board={featuredPreview?.board} />
+              <GameBoard gameType={featured.id} state={featuredPreview} />
             </div>
             <div className="featured-info">
               <div className="row" style={{ gap: 8 }}>
@@ -224,9 +222,7 @@ export default async function GamesPage({
         <section className="cat-grid">
           {visibleLive.map((g) => {
             const adapter = getAdapter(g.id);
-            const preview = adapter?.previewState as
-              | { board?: number[][] }
-              | undefined;
+            const preview = adapter?.previewState ?? null;
             const liveCt = liveMap[g.id] ?? 0;
             const vol = vol24Map[g.id] ?? 0;
             const avgP = volMap[g.id]?.avgPot
@@ -236,7 +232,7 @@ export default async function GamesPage({
             return (
               <Link key={g.id} href={`/games/${g.id}`} className="game-card">
                 <div className="game-card-board">
-                  <MiniBoard board={preview?.board} />
+                  <GameBoard gameType={g.id} state={preview} />
                 </div>
                 <div className="game-card-bd">
                   <div className="game-card-row">

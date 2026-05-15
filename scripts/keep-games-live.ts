@@ -205,6 +205,8 @@ function wrapMovePayload(adapter: GameAdapter, raw: unknown): unknown {
   switch (adapter.id) {
     case "connect4":
       return { column: raw };
+    case "tic-tac-toe":
+      return { index: raw };
     default:
       return raw;
   }

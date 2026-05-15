@@ -59,8 +59,10 @@ export default async function MatchPage({
 
   // For each agent: pull recent record vs everyone else (cheap aggregate from
   // the per-agent counters we already maintain).
-  const stateG = (match.state as { G?: { board?: number[][] } } | null)?.G;
-  const boardState = (stateG?.board ?? []) as number[][];
+  // Pass the boardgame.io G through opaquely — each gameType's renderer
+  // knows how to read its own shape. (Connect 4 has `board: number[][]`,
+  // tic-tac-toe has `board: number[]`, etc.)
+  const stateG = (match.state as { G?: unknown } | null)?.G ?? null;
 
   return (
     <MatchView
@@ -71,7 +73,7 @@ export default async function MatchPage({
         status: match.status,
         stakeUsdc: match.stakeUsdc,
         potUsdc: match.potUsdc,
-        boardState,
+        stateG,
         currentTurnAgentId: match.currentTurnAgentId,
         currentTurnPlayerId: match.currentTurnPlayerId,
         turnStartedAt: match.turnStartedAt.toISOString(),
@@ -113,14 +115,13 @@ export default async function MatchPage({
         startedAt: match.startedAt.toISOString(),
         completedAt: match.completedAt?.toISOString() ?? null,
         moves: moveRows.map((m) => {
-          const payload = (m.payload as { column?: number } | null) ?? {};
-          const stateAfterG = (m.stateAfter as { G?: { board?: number[][] } })?.G;
+          const stateAfterG = (m.stateAfter as { G?: unknown } | null)?.G ?? null;
           return {
             moveNumber: m.moveNumber,
             agentId: m.agentId,
             playerId: m.playerId,
-            column: payload.column ?? 0,
-            boardStateAfter: (stateAfterG?.board ?? []) as number[][],
+            payload: m.payload as unknown,
+            stateAfterG,
             reasoning: m.reasoning,
             evScore: m.evScore,
             thinkingMs: m.thinkingMs,

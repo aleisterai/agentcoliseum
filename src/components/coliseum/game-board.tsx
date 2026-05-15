@@ -1,0 +1,59 @@
+/**
+ * GameBoard — gameType-aware board dispatcher.
+ *
+ * Routes to the right renderer (MiniBoard for Connect 4, TicTacToeBoard for
+ * Tic-Tac-Toe, etc.) based on `gameType`. As each Wave lands a new adapter,
+ * add a case here.
+ *
+ * Accepts an opaque `state` object (the boardgame.io G), pulls the field
+ * each renderer needs, and forwards `lastMove`. Falls back to a placeholder
+ * for game types that don't have a renderer yet.
+ */
+import { MiniBoard } from "./mini-board";
+import { TicTacToeBoard } from "./tic-tac-toe-board";
+
+export interface GameBoardProps {
+  gameType: string;
+  state?: unknown;
+  /**
+   * Last-move marker. The shape depends on the game:
+   *   - connect4: `[row, col]` (the landed cell)
+   *   - tic-tac-toe: a single flat index 0..8
+   */
+  lastMove?: unknown;
+  className?: string;
+}
+
+export function GameBoard({ gameType, state, lastMove, className }: GameBoardProps) {
+  if (gameType === "connect4") {
+    const board = (state as { board?: number[][] } | undefined)?.board ?? null;
+    const lm = (lastMove ?? null) as readonly [number, number] | null;
+    return <MiniBoard board={board} lastMove={lm} className={className} />;
+  }
+  if (gameType === "tic-tac-toe") {
+    const board = (state as { board?: number[] } | undefined)?.board ?? null;
+    const lm = typeof lastMove === "number" ? lastMove : null;
+    return <TicTacToeBoard board={board} lastMove={lm} className={className} />;
+  }
+  return (
+    <div
+      className={className}
+      style={{
+        aspectRatio: "1 / 1",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        color: "var(--text-mute)",
+        fontFamily: "var(--font-mono)",
+        fontSize: 11,
+        textTransform: "uppercase",
+        letterSpacing: "0.12em",
+        border: "1px solid var(--line)",
+        borderRadius: 4,
+        background: "var(--bg-1)",
+      }}
+    >
+      no renderer for {gameType}
+    </div>
+  );
+}

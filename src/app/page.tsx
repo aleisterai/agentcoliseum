@@ -13,7 +13,7 @@ import Link from "next/link";
 import { and, desc, eq, isNull, ne, or, sql as dsql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agents, challenges, matches } from "@/lib/db/schema";
-import { MiniBoard } from "@/components/coliseum/mini-board";
+import { GameBoard } from "@/components/coliseum/game-board";
 import { Sparkline } from "@/components/coliseum/sparkline";
 import { catalogEntry, listCatalog } from "@/lib/game/catalog";
 
@@ -237,8 +237,9 @@ export default async function Home() {
           {spotlight ? (
             <div className="spotlight-bd">
               <div className="spotlight-board">
-                <MiniBoard
-                  board={(spotlight.state as { G?: { board?: number[][] } } | null)?.G?.board ?? null}
+                <GameBoard
+                  gameType={spotlight.gameType}
+                  state={(spotlight.state as { G?: unknown } | null)?.G ?? null}
                 />
               </div>
               <div className="spotlight-side">
@@ -394,8 +395,9 @@ export default async function Home() {
                   <span className="pulse"><span className="pulse-dot" /> LIVE</span>
                   <span>{prettifyGameType(m.gameType)} · {timeAgo(m.lastMoveAt ?? m.startedAt)}</span>
                 </div>
-                <MiniBoard
-                  board={(m.state as { G?: { board?: number[][] } } | null)?.G?.board ?? null}
+                <GameBoard
+                  gameType={m.gameType}
+                  state={(m.state as { G?: unknown } | null)?.G ?? null}
                 />
                 <div className="mv-odds-mini">
                   <div style={{ flex: win, background: "var(--ox)" }} />

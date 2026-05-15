@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { createPublicClient, channelName, realtimeEvent } from "@/lib/supabase";
-import { MiniBoard } from "@/components/coliseum/mini-board";
+import { GameBoard } from "@/components/coliseum/game-board";
 import { cn } from "@/lib/utils";
 
 /**
@@ -20,8 +20,10 @@ type Move = {
   moveNumber: number;
   agentId: string | null;
   playerId: "0" | "1";
-  column: number;
-  boardStateAfter: number[][];
+  /** Game-specific move payload (e.g. { column: 3 } or { index: 4 }). */
+  payload: unknown;
+  /** boardgame.io G after the move was applied. Shape is gameType-specific. */
+  stateAfterG: unknown;
   reasoning: string | null;
   evScore: number | null;
   thinkingMs: number;
@@ -50,7 +52,8 @@ export type MatchViewProps = {
     status: "active" | "resolving" | "completed" | "abandoned" | "disputed";
     stakeUsdc: number | null;
     potUsdc: number | null;
-    boardState: number[][];
+    /** Initial boardgame.io G — shape varies per gameType. */
+    stateG: unknown;
     currentTurnAgentId: string | null;
     currentTurnPlayerId: "0" | "1";
     turnStartedAt: string;
@@ -83,7 +86,7 @@ export function MatchView({ initial }: MatchViewProps) {
   const [moves, setMoves] = useState<Move[]>(initial.moves);
   const [chat, setChat] = useState(initial.chat);
   const [reactions, setReactions] = useState(initial.reactions);
-  const [boardState, setBoardState] = useState<number[][]>(initial.boardState);
+  const [stateG, setStateG] = useState<unknown>(initial.stateG);
   const [currentTurnPlayerId, setCurrentTurnPlayerId] = useState(initial.currentTurnPlayerId);
   const [status, setStatus] = useState(initial.status);
   const [p1MsLeft, setP1MsLeft] = useState(initial.p1MsLeft);
@@ -103,16 +106,24 @@ export function MatchView({ initial }: MatchViewProps) {
   const liveMoveIdx = moves.length - 1;
   const effectiveIdx = liveMode ? liveMoveIdx : scrubIndex;
 
-  const displayedBoard = useMemo(() => {
-    if (moves.length === 0 || effectiveIdx < 0) return initial.boardState;
-    return moves[effectiveIdx]?.boardStateAfter ?? boardState;
-  }, [effectiveIdx, moves, initial.boardState, boardState]);
+  /** The boardgame.io G to render right now. Opaque shape per gameType. */
+  const displayedStateG = useMemo(() => {
+    if (moves.length === 0 || effectiveIdx < 0) return stateG;
+    return moves[effectiveIdx]?.stateAfterG ?? stateG;
+  }, [effectiveIdx, moves, stateG]);
 
-  const lastMove = useMemo(() => {
+  /**
+   * Last-move marker, opaque per gameType. The GameBoard dispatcher unpacks
+   * it for the right renderer:
+   *   - connect4 → [row, col]
+   *   - tic-tac-toe → flat cell index 0..8
+   */
+  const lastMoveMarker = useMemo(() => {
     if (effectiveIdx < 0 || moves.length === 0) return null;
     const m = moves[effectiveIdx];
-    return m ? floorRow(m.boardStateAfter, m.column) : null;
-  }, [effectiveIdx, moves]);
+    if (!m) return null;
+    return extractLastMove(initial.gameType, m.payload, m.stateAfterG);
+  }, [effectiveIdx, moves, initial.gameType]);
 
   // 1Hz ticker for elapsed time + clocks
   useEffect(() => {
@@ -148,8 +159,8 @@ export function MatchView({ initial }: MatchViewProps) {
       ch.on("broadcast", { event: realtimeEvent.MovePlayed }, (e: { payload: unknown }) => {
         const p = e.payload as Partial<{
           moveNumber: number;
-          column: number;
-          boardStateAfter: number[][];
+          payload: unknown;
+          stateAfterG: unknown;
           currentTurnPlayerId: "0" | "1";
           turnStartedAt: string;
           p1MsLeft: number;
@@ -159,7 +170,7 @@ export function MatchView({ initial }: MatchViewProps) {
           thinkingMs: number;
           x402PaymentId: string | null;
         }>;
-        if (p.moveNumber == null || p.column == null || !p.boardStateAfter) return;
+        if (p.moveNumber == null || p.stateAfterG == null) return;
         const justMovedPid: "0" | "1" = p.currentTurnPlayerId === "0" ? "1" : "0";
         setMoves((prev) => {
           if (prev.some((x) => x.moveNumber === p.moveNumber)) return prev;
@@ -168,8 +179,8 @@ export function MatchView({ initial }: MatchViewProps) {
             agentId:
               justMovedPid === "0" ? initial.p1?.id ?? null : initial.p2?.id ?? null,
             playerId: justMovedPid,
-            column: p.column!,
-            boardStateAfter: p.boardStateAfter!,
+            payload: p.payload ?? null,
+            stateAfterG: p.stateAfterG ?? null,
             reasoning: p.reasoning ?? null,
             evScore: p.evScore ?? null,
             thinkingMs: p.thinkingMs ?? 0,
@@ -178,7 +189,7 @@ export function MatchView({ initial }: MatchViewProps) {
           };
           return [...prev, next];
         });
-        setBoardState(p.boardStateAfter);
+        setStateG(p.stateAfterG);
         if (p.currentTurnPlayerId) setCurrentTurnPlayerId(p.currentTurnPlayerId);
         if (p.turnStartedAt) setTurnStartedAt(p.turnStartedAt);
         if (p.p1MsLeft != null) setP1MsLeft(p.p1MsLeft);
@@ -240,7 +251,7 @@ export function MatchView({ initial }: MatchViewProps) {
       .map((m, i) => ({
         ts: new Date(m.createdAt).toLocaleTimeString("en-US", { hour12: false }),
         cur: i === 0,
-        move: `drop col ${m.column + 1}`,
+        move: describeMove(initial.gameType, m.payload),
         ev:
           m.evScore != null
             ? m.evScore >= 0
@@ -250,7 +261,7 @@ export function MatchView({ initial }: MatchViewProps) {
         evDown: m.evScore != null && m.evScore < 0,
         text: m.reasoning || "—",
       }));
-  }, [moves]);
+  }, [moves, initial.gameType]);
 
   async function sendChat() {
     const body = chatInput.trim();
@@ -411,7 +422,11 @@ export function MatchView({ initial }: MatchViewProps) {
             </div>
             <div className="board-stage">
               <div className="board-wrap">
-                <MiniBoard board={displayedBoard} lastMove={lastMove} />
+                <GameBoard
+                  gameType={initial.gameType}
+                  state={displayedStateG}
+                  lastMove={lastMoveMarker}
+                />
               </div>
             </div>
 
@@ -539,6 +554,7 @@ export function MatchView({ initial }: MatchViewProps) {
             <div className="panel-bd-flush">
               {logTab === "moves" && (
                 <MoveLog
+                  gameType={initial.gameType}
                   moves={moves}
                   p1={initial.p1}
                   p2={initial.p2}
@@ -551,7 +567,14 @@ export function MatchView({ initial }: MatchViewProps) {
                 />
               )}
               {logTab === "x402" && <X402Log moves={moves} />}
-              {logTab === "annot" && <AnnotLog moves={moves} p1={initial.p1} p2={initial.p2} />}
+              {logTab === "annot" && (
+                <AnnotLog
+                  gameType={initial.gameType}
+                  moves={moves}
+                  p1={initial.p1}
+                  p2={initial.p2}
+                />
+              )}
             </div>
           </div>
         </div>
@@ -825,12 +848,14 @@ function ScrubberTrack({
 }
 
 function MoveLog({
+  gameType,
   moves,
   p1,
   p2,
   currentIdx,
   onJump,
 }: {
+  gameType: string;
   moves: Move[];
   p1: Agent | null;
   p2: Agent | null;
@@ -871,7 +896,7 @@ function MoveLog({
             >
               @{who?.handle ?? (isP1 ? "p1" : "p2")}
             </div>
-            <div className="log-move">col {m.column + 1}</div>
+            <div className="log-move">{describeMove(gameType, m.payload)}</div>
             <div className="log-meta">{formatThink(m.thinkingMs)}</div>
             <div className={cn("log-pay", !m.x402PaymentId && "fail")}>
               {m.x402PaymentId ? "paid ✓" : "—"}
@@ -924,14 +949,17 @@ function X402Log({ moves }: { moves: Move[] }) {
 }
 
 function AnnotLog({
+  gameType,
   moves,
   p1,
   p2,
 }: {
+  gameType: string;
   moves: Move[];
   p1: Agent | null;
   p2: Agent | null;
 }) {
+  void gameType;
   const items = moves
     .filter((m) => m.reasoning || (m.evScore != null && Math.abs(m.evScore) >= 0.1))
     .slice()
@@ -1034,9 +1062,49 @@ function formatElapsed(
     .padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
 }
 
-function floorRow(board: number[][], col: number): [number, number] | null {
-  for (let r = 0; r < board.length; r++) {
-    if (board[r][col] !== 0) return [r, col];
+/**
+ * Per-gameType move-payload → human-readable label. The reasoning trace and
+ * move log call this for every move. New games extend the switch.
+ */
+function describeMove(gameType: string, payload: unknown): string {
+  if (gameType === "connect4") {
+    const col = (payload as { column?: number } | null)?.column;
+    return typeof col === "number" ? `drop col ${col + 1}` : "—";
+  }
+  if (gameType === "tic-tac-toe") {
+    const idx = (payload as { index?: number } | null)?.index;
+    if (typeof idx !== "number") return "—";
+    const labels = ["TL", "T", "TR", "L", "C", "R", "BL", "B", "BR"];
+    return `place ${labels[idx] ?? `cell ${idx}`}`;
+  }
+  return "move";
+}
+
+/**
+ * Per-gameType extractor for the "last move" marker the board renderer
+ * highlights. Reads from move payload + post-move state.
+ *
+ *   - connect4: returns `[row, col]` (we have to find which row the piece
+ *     landed in by walking down the column in stateAfterG.board).
+ *   - tic-tac-toe: returns the flat cell index directly from the payload.
+ */
+function extractLastMove(
+  gameType: string,
+  payload: unknown,
+  stateAfterG: unknown,
+): unknown {
+  if (gameType === "connect4") {
+    const col = (payload as { column?: number } | null)?.column;
+    const board = (stateAfterG as { board?: number[][] } | null)?.board;
+    if (typeof col !== "number" || !board) return null;
+    for (let r = 0; r < board.length; r++) {
+      if (board[r][col] !== 0) return [r, col] as const;
+    }
+    return null;
+  }
+  if (gameType === "tic-tac-toe") {
+    const idx = (payload as { index?: number } | null)?.index;
+    return typeof idx === "number" ? idx : null;
   }
   return null;
 }

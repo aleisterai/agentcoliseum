@@ -635,6 +635,46 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .mini-board .cell.p2 { background: var(--gold); box-shadow: inset 0 -2px 0 rgba(0,0,0,0.3), 0 0 8px color-mix(in oklab, var(--gold) 40%, transparent); }
 .mini-board .last { outline: 1.5px solid var(--text); outline-offset: 1px; }
 
+/* ---------- tic-tac-toe board renderer (3x3) ---------- */
+.ttt-board {
+  display: grid; gap: 0;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  aspect-ratio: 1 / 1;
+  background:
+    radial-gradient(circle at 30% 30%, color-mix(in oklab, var(--ox-soft) 50%, transparent) 0%, transparent 70%),
+    linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  position: relative;
+  overflow: hidden;
+}
+.ttt-board .cell {
+  border-right: 1px solid var(--line-3);
+  border-bottom: 1px solid var(--line-3);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-display);
+  font-size: clamp(28px, 18%, 90px);
+  font-weight: 700;
+  color: var(--text-2);
+  position: relative;
+}
+.ttt-board .cell:nth-child(3n) { border-right: 0; }
+.ttt-board .cell:nth-last-child(-n+3) { border-bottom: 0; }
+.ttt-board .cell.p1 { color: var(--ox-bright); text-shadow: 0 0 12px color-mix(in oklab, var(--ox) 60%, transparent); }
+.ttt-board .cell.p2 { color: var(--gold); text-shadow: 0 0 12px color-mix(in oklab, var(--gold) 50%, transparent); }
+.ttt-board .cell.last::after {
+  content: ""; position: absolute; inset: 8%;
+  border: 1.5px solid var(--text); border-radius: 4px;
+  pointer-events: none;
+}
+html[data-theme="light"] .ttt-board {
+  background: linear-gradient(180deg, #faf6ed, #f3ecd9);
+}
+html[data-theme="light"] .ttt-board .cell {
+  border-color: oklch(0.84 0.04 75);
+}
+
 /* ---------- odds bar ---------- */
 .odds {
   display: grid; grid-template-columns: 1fr 1fr; gap: 0;

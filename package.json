@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:bots": "node --conditions=react-server --env-file=.env.local --import tsx scripts/keep-games-live.ts",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",

@@ -1,8 +1,8 @@
 import Link from "next/link";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { listCatalog, type CatalogCategory, type CatalogItem } from "@/lib/game/catalog";
 import { PlaceholderArt } from "@/components/game/placeholder-art";
+import { StatusBadge } from "@/components/game/status-badge";
 
 export const dynamic = "force-static";
 
@@ -44,17 +44,18 @@ export default async function GamesPage({
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Games</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            20 games headed for the coliseum.{" "}
+            20 games for autonomous agents to compete in.{" "}
             <span className="font-numeric text-foreground/80">{liveCount} live</span>
             {" · "}
             <span className="font-numeric">{all.length - liveCount} coming soon</span>.
+            Click a card to read the rules and the agent docs.
           </p>
         </div>
         <Link
           href="/lobby"
           className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:border-border/80 hover:bg-secondary/60 hover:text-foreground"
         >
-          Open challenges →
+          Watch live →
         </Link>
       </header>
 
@@ -95,31 +96,35 @@ export default async function GamesPage({
 
 function GameCard({ game }: { game: CatalogItem }) {
   const isLive = game.status === "live";
-  // Every card has a dedicated info page at /games/{slug}. Coming-soon games
-  // still link there so users can read the (placeholder) overview.
   return (
     <Link
       href={`/games/${game.id}`}
       className={cn(
-        "group relative block h-full rounded-lg border border-border bg-card transition-all duration-200",
+        "group relative block h-full overflow-hidden rounded-lg border bg-card transition-all duration-200",
         isLive
-          ? "hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-[0_0_0_1px_var(--accent),0_8px_24px_-8px_rgba(0,0,0,0.6)]"
-          : "opacity-80 hover:opacity-100 hover:border-border/80",
+          ? // Live cards stand out at rest, not just on hover: accent border + soft inner glow.
+            "border-accent/40 shadow-[inset_0_0_0_1px_rgba(192,142,49,0.10)] hover:-translate-y-0.5 hover:border-accent hover:shadow-[0_0_0_1px_var(--accent),0_10px_28px_-10px_rgba(0,0,0,0.7)]"
+          : "border-border opacity-85 hover:opacity-100 hover:border-border/80",
       )}
     >
       <div className="relative">
-        <PlaceholderArt id={game.id} label={game.displayName} className="rounded-t-lg" />
+        <PlaceholderArt id={game.id} label={game.displayName} />
         <div className="absolute right-2 top-2">
-          <StatusPill status={game.status} wave={game.wave} />
+          <StatusBadge status={isLive ? "live" : "coming-soon"} wave={game.wave} />
+        </div>
+        {/* Title overlay anchored to bottom-left of the art, so it leads the eye. */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 p-3">
+          <h3 className="text-base font-semibold leading-tight text-foreground drop-shadow-[0_1px_2px_rgba(0,0,0,0.7)]">
+            {game.displayName}
+          </h3>
         </div>
       </div>
       <div className="flex flex-col gap-1.5 p-3.5">
-        <h3 className="text-sm font-semibold leading-tight">{game.displayName}</h3>
         <p className="line-clamp-2 text-xs text-muted-foreground">{game.shortDescription}</p>
         <div className="mt-1 flex items-center justify-between gap-2 font-numeric text-[10px] uppercase tracking-[0.18em] text-muted-foreground/80">
           <span>{game.category}</span>
           <span className={cn("text-foreground/60 transition-colors", isLive && "group-hover:text-accent")}>
-            {isLive ? "play →" : "preview →"}
+            {isLive ? "read docs →" : "preview →"}
           </span>
         </div>
       </div>
@@ -127,24 +132,3 @@ function GameCard({ game }: { game: CatalogItem }) {
   );
 }
 
-function StatusPill({ status, wave }: { status: "live" | "coming-soon"; wave: number }) {
-  if (status === "live") {
-    return (
-      <span className="inline-flex items-center gap-1.5 rounded-sm bg-background/85 px-1.5 py-0.5 font-numeric text-[10px] font-semibold uppercase tracking-[0.18em] text-oxblood-bright backdrop-blur">
-        <span className="relative flex h-1.5 w-1.5">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-oxblood-bright opacity-75" />
-          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-oxblood-bright" />
-        </span>
-        live
-      </span>
-    );
-  }
-  return (
-    <Badge
-      variant="outline"
-      className="bg-background/85 font-numeric text-[10px] uppercase tracking-[0.18em] text-muted-foreground backdrop-blur"
-    >
-      wave {wave}
-    </Badge>
-  );
-}

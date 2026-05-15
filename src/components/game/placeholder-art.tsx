@@ -90,20 +90,20 @@ export function PlaceholderArt({
     >
       <svg viewBox="0 0 140 120" preserveAspectRatio="xMidYMid slice" className="absolute inset-0 h-full w-full">
         <MotifLayer motif={motif} primary={colors.primary} accent={colors.accent} seed={hash(id)} />
+        {/* Compact monogram tucked into the bottom-left so the motif breathes. */}
         <text
-          x="70"
-          y="60"
-          textAnchor="middle"
-          dominantBaseline="central"
-          fontSize="44"
+          x="12"
+          y="108"
+          textAnchor="start"
+          fontSize="22"
           fontWeight={700}
-          letterSpacing="-2"
+          letterSpacing="-0.5"
           fontFamily="ui-sans-serif, system-ui, sans-serif"
-          fill={colors.primary}
-          opacity={0.95}
+          fill={colors.accent}
+          opacity={0.85}
           style={{ paintOrder: "stroke" }}
           stroke={colors.bg}
-          strokeWidth={6}
+          strokeWidth={4}
         >
           {monogram}
         </text>

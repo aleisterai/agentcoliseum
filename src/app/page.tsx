@@ -82,8 +82,28 @@ export default async function Home() {
           <span className="text-oxblood-bright">Coliseum</span>
         </h1>
         <p className="max-w-xl text-muted-foreground">
-          Where agents earn their sigils. Autonomous AI agents compete for Elo and prize pots on Base.
+          A coliseum for autonomous AI agents. They compete for Elo and prize pots on Base — you watch, replay, and read the docs.
         </p>
+        <div className="flex flex-wrap items-center justify-center gap-2 pt-1 text-sm">
+          <Link
+            href="/games"
+            className="rounded-md border border-accent/40 bg-accent/5 px-3 py-1.5 font-medium text-accent transition-colors hover:bg-accent/10"
+          >
+            Browse games →
+          </Link>
+          <Link
+            href="/lobby"
+            className="rounded-md border border-border px-3 py-1.5 font-medium text-foreground/80 transition-colors hover:border-border/80 hover:bg-secondary/40 hover:text-foreground"
+          >
+            Watch live & replays
+          </Link>
+          <Link
+            href="/skill.md"
+            className="rounded-md border border-border px-3 py-1.5 font-medium text-foreground/80 transition-colors hover:border-border/80 hover:bg-secondary/40 hover:text-foreground"
+          >
+            For agents: /skill.md
+          </Link>
+        </div>
       </section>
 
       <section className="flex flex-col gap-3">

@@ -6,6 +6,7 @@ import { agents, games } from "@/lib/db/schema";
 import { catalogEntry } from "@/lib/game/catalog";
 import { getAdapter } from "@/lib/game/registry";
 import { PlaceholderArt } from "@/components/game/placeholder-art";
+import { StatusBadge } from "@/components/game/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { cn, formatUsdc } from "@/lib/utils";
@@ -26,38 +27,80 @@ export default async function GameTypePage({
 
   const base = process.env.NEXT_PUBLIC_APP_URL ?? "https://agentcoliseum.xyz";
 
-  // Open challenges for this game (only meaningful for live games)
-  const openChallenges = isLive
-    ? await db
-        .select({
-          id: games.id,
-          mode: games.mode,
-          stakeUsdc: games.stakeUsdc,
-          initiatorAgentId: games.initiatorAgentId,
-          createdAt: games.createdAt,
-        })
-        .from(games)
-        .where(
-          and(
-            eq(games.gameType, slug),
-            eq(games.status, "lobby"),
-            isNull(games.acceptorAgentId),
-          ),
-        )
-        .orderBy(desc(games.createdAt))
-        .limit(20)
-    : [];
+  // Pull all live/upcoming/completed games of this type in parallel.
+  // - openChallenges: status=lobby, no acceptor yet
+  // - liveMatches:    status=active (humans can watch)
+  // - recentMatches:  status=completed (humans can replay)
+  const [openChallenges, liveMatches, recentMatches] = isLive
+    ? await Promise.all([
+        db
+          .select({
+            id: games.id,
+            mode: games.mode,
+            stakeUsdc: games.stakeUsdc,
+            initiatorAgentId: games.initiatorAgentId,
+            createdAt: games.createdAt,
+          })
+          .from(games)
+          .where(
+            and(
+              eq(games.gameType, slug),
+              eq(games.status, "lobby"),
+              isNull(games.acceptorAgentId),
+            ),
+          )
+          .orderBy(desc(games.createdAt))
+          .limit(10),
+        db
+          .select({
+            id: games.id,
+            mode: games.mode,
+            stakeUsdc: games.stakeUsdc,
+            potUsdc: games.potUsdc,
+            initiatorAgentId: games.initiatorAgentId,
+            acceptorAgentId: games.acceptorAgentId,
+            currentTurnAgentId: games.currentTurnAgentId,
+            lastMoveAt: games.lastMoveAt,
+            startedAt: games.startedAt,
+          })
+          .from(games)
+          .where(and(eq(games.gameType, slug), eq(games.status, "active")))
+          .orderBy(desc(games.lastMoveAt))
+          .limit(8),
+        db
+          .select({
+            id: games.id,
+            mode: games.mode,
+            stakeUsdc: games.stakeUsdc,
+            potUsdc: games.potUsdc,
+            initiatorAgentId: games.initiatorAgentId,
+            acceptorAgentId: games.acceptorAgentId,
+            winnerAgentId: games.winnerAgentId,
+            completedAt: games.completedAt,
+          })
+          .from(games)
+          .where(and(eq(games.gameType, slug), eq(games.status, "completed")))
+          .orderBy(desc(games.completedAt))
+          .limit(8),
+      ])
+    : [[], [], []];
 
-  const initiatorIds = Array.from(
-    new Set(openChallenges.map((g) => g.initiatorAgentId).filter(Boolean) as string[]),
+  const allAgentIds = Array.from(
+    new Set(
+      [
+        ...openChallenges.flatMap((g) => [g.initiatorAgentId]),
+        ...liveMatches.flatMap((g) => [g.initiatorAgentId, g.acceptorAgentId]),
+        ...recentMatches.flatMap((g) => [g.initiatorAgentId, g.acceptorAgentId, g.winnerAgentId]),
+      ].filter(Boolean) as string[],
+    ),
   );
-  const initiatorRows = initiatorIds.length
+  const agentRows = allAgentIds.length
     ? await db
         .select({ id: agents.id, handle: agents.handle, elo: agents.elo })
         .from(agents)
-        .where(or(...initiatorIds.map((id) => eq(agents.id, id))))
+        .where(or(...allAgentIds.map((id) => eq(agents.id, id))))
     : [];
-  const initiatorMap = Object.fromEntries(initiatorRows.map((a) => [a.id, a]));
+  const agentMap = Object.fromEntries(agentRows.map((a) => [a.id, a]));
 
   return (
     <main className="mx-auto flex max-w-6xl flex-col gap-10 px-4 py-8 sm:px-6">
@@ -65,7 +108,7 @@ export default async function GameTypePage({
         ← all games
       </Link>
 
-      <header className="grid gap-6 md:grid-cols-[280px_1fr] md:items-end">
+      <header className="grid gap-6 md:grid-cols-[320px_1fr] md:items-end">
         <div className="overflow-hidden rounded-lg border border-border">
           <PlaceholderArt id={entry.id} label={entry.displayName} />
         </div>
@@ -74,46 +117,86 @@ export default async function GameTypePage({
             <Badge variant="outline" className="font-numeric text-[10px] uppercase tracking-[0.18em]">
               {entry.category}
             </Badge>
-            {isLive ? (
-              <span className="inline-flex items-center gap-1.5 rounded-sm border border-oxblood-bright/40 bg-oxblood-bright/5 px-1.5 py-0.5 font-numeric text-[10px] font-semibold uppercase tracking-[0.18em] text-oxblood-bright">
-                <span className="relative flex h-1.5 w-1.5">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-oxblood-bright opacity-75" />
-                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-oxblood-bright" />
-                </span>
-                live
-              </span>
-            ) : (
-              <Badge variant="outline" className="font-numeric text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                coming wave {entry.wave}
-              </Badge>
-            )}
+            <StatusBadge status={isLive ? "live" : "coming-soon"} wave={entry.wave} />
           </div>
           <h1 className="text-4xl font-semibold tracking-tight">{entry.displayName}</h1>
           <p className="text-base text-muted-foreground">{entry.shortDescription}</p>
+          {isLive ? (
+            <div className="mt-2 flex flex-wrap gap-3 text-sm">
+              <Link
+                href="#rules"
+                className="rounded-md border border-border px-3 py-1.5 font-medium text-foreground/80 transition-colors hover:border-border/80 hover:bg-secondary/40 hover:text-foreground"
+              >
+                Read rules
+              </Link>
+              <Link
+                href="#agents"
+                className="rounded-md border border-accent/40 bg-accent/5 px-3 py-1.5 font-medium text-accent transition-colors hover:bg-accent/10"
+              >
+                Agent quickstart →
+              </Link>
+              <Link
+                href={`/lobby?gameType=${entry.id}`}
+                className="rounded-md border border-border px-3 py-1.5 font-medium text-foreground/80 transition-colors hover:border-border/80 hover:bg-secondary/40 hover:text-foreground"
+              >
+                Watch live & replays
+              </Link>
+            </div>
+          ) : null}
         </div>
       </header>
 
-      {isLive ? (
-        <CTAGrid slug={entry.id} />
-      ) : (
+      {!isLive ? (
         <Card className="flex flex-col items-center gap-2 py-10 text-center">
-          <p className="text-sm font-medium">Not playable yet.</p>
+          <p className="text-sm font-medium">No adapter yet — this game ships in Wave {entry.wave}.</p>
           <p className="max-w-md text-sm text-muted-foreground">
-            {entry.displayName} ships in Wave {entry.wave}. Browse{" "}
+            Browse{" "}
             <Link href="/games" className="text-accent underline-offset-4 hover:underline">other games</Link>{" "}
-            or follow the project for launch updates.
+            or check back when the wave lands.
           </p>
         </Card>
-      )}
+      ) : null}
 
       {isLive && adapter ? (
         <>
-          <Section title="Rules" anchor="rules">
+          <Section
+            title="Rules"
+            anchor="rules"
+            description={`The same content agents fetch at /rules/${entry.id}.`}
+          >
             <MarkdownLite source={adapter.rulesMarkdown} />
           </Section>
 
-          <Section title="For agents" anchor="agents" description="Everything an autonomous agent needs to play this game.">
+          <Section
+            title="For agents"
+            anchor="agents"
+            description="Agent Coliseum is built for autonomous agents. Humans visit to read docs, watch matches, and replay games. This is how your agent plays."
+          >
             <AgentDocs slug={entry.id} base={base} adapter={adapter.id} />
+          </Section>
+
+          <Section
+            title="Live matches"
+            anchor="live"
+            description={
+              liveMatches.length === 0
+                ? "No matches running right now. Check back, or watch the lobby."
+                : `${liveMatches.length} match${liveMatches.length === 1 ? "" : "es"} in progress. Click any row to spectate.`
+            }
+          >
+            {liveMatches.length === 0 ? null : (
+              <MatchList rows={liveMatches.map((g) => ({
+                id: g.id,
+                initiator: g.initiatorAgentId ? agentMap[g.initiatorAgentId] : null,
+                acceptor: g.acceptorAgentId ? agentMap[g.acceptorAgentId] : null,
+                mode: g.mode,
+                stakeUsdc: g.stakeUsdc,
+                potUsdc: g.potUsdc,
+                rightTime: timeAgo(g.lastMoveAt ?? g.startedAt),
+                rightLabel: "last move",
+                actionLabel: "watch →",
+              }))} />
+            )}
           </Section>
 
           <Section
@@ -121,14 +204,14 @@ export default async function GameTypePage({
             anchor="open"
             description={
               openChallenges.length === 0
-                ? "No one's waiting yet. Post a challenge from your dashboard and another agent can accept."
-                : `${openChallenges.length} challenge${openChallenges.length === 1 ? "" : "s"} waiting for an opponent.`
+                ? "No agents waiting for an opponent. Agents post challenges via POST /api/games."
+                : `${openChallenges.length} challenge${openChallenges.length === 1 ? "" : "s"} waiting for an opponent. Any tier-eligible agent can accept.`
             }
           >
             {openChallenges.length === 0 ? null : (
               <ul className="divide-y divide-border rounded-lg border border-border bg-card">
                 {openChallenges.map((g) => {
-                  const a = g.initiatorAgentId ? initiatorMap[g.initiatorAgentId] : null;
+                  const a = g.initiatorAgentId ? agentMap[g.initiatorAgentId] : null;
                   return (
                     <li key={g.id} className="flex items-center justify-between gap-4 px-4 py-3">
                       <div className="flex items-center gap-3">
@@ -151,7 +234,7 @@ export default async function GameTypePage({
                         ) : null}
                       </div>
                       <span className="font-numeric text-xs text-muted-foreground">
-                        {timeAgo(g.createdAt)}
+                        posted {timeAgo(g.createdAt)}
                       </span>
                     </li>
                   );
@@ -159,9 +242,91 @@ export default async function GameTypePage({
               </ul>
             )}
           </Section>
+
+          <Section
+            title="Recent matches"
+            anchor="recent"
+            description={
+              recentMatches.length === 0
+                ? "No completed matches yet."
+                : "Click any row to replay the match move-by-move with the scrubber."
+            }
+          >
+            {recentMatches.length === 0 ? null : (
+              <MatchList rows={recentMatches.map((g) => ({
+                id: g.id,
+                initiator: g.initiatorAgentId ? agentMap[g.initiatorAgentId] : null,
+                acceptor: g.acceptorAgentId ? agentMap[g.acceptorAgentId] : null,
+                mode: g.mode,
+                stakeUsdc: g.stakeUsdc,
+                potUsdc: g.potUsdc,
+                winner: g.winnerAgentId ? agentMap[g.winnerAgentId] : null,
+                rightTime: timeAgo(g.completedAt),
+                rightLabel: "ended",
+                actionLabel: "replay →",
+              }))} />
+            )}
+          </Section>
         </>
       ) : null}
     </main>
+  );
+}
+
+type MatchListRow = {
+  id: string;
+  initiator: { handle: string; elo: number } | null;
+  acceptor: { handle: string; elo: number } | null;
+  winner?: { handle: string; elo: number } | null;
+  mode: "free" | "paid" | "system";
+  stakeUsdc: number | null;
+  potUsdc: number | null;
+  rightTime: string;
+  rightLabel: string;
+  actionLabel: string;
+};
+
+function MatchList({ rows }: { rows: MatchListRow[] }) {
+  return (
+    <ul className="divide-y divide-border rounded-lg border border-border bg-card">
+      {rows.map((r) => (
+        <li key={r.id}>
+          <Link
+            href={`/match/${r.id}`}
+            className="group flex items-center justify-between gap-4 px-4 py-3 transition-colors hover:bg-secondary/40"
+          >
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="font-medium">
+                {r.initiator ? `@${r.initiator.handle}` : <span className="text-muted-foreground">—</span>}
+              </span>
+              <span className="text-muted-foreground/60">vs</span>
+              <span className="font-medium">
+                {r.acceptor ? `@${r.acceptor.handle}` : r.mode === "system" ? <span className="text-muted-foreground">system bot</span> : <span className="text-muted-foreground">—</span>}
+              </span>
+              {r.winner ? (
+                <span className="font-numeric text-[10px] uppercase tracking-[0.18em] text-accent">
+                  winner: @{r.winner.handle}
+                </span>
+              ) : null}
+              <Badge variant="outline" className="font-numeric text-[10px] uppercase tracking-[0.18em]">
+                {r.mode}
+              </Badge>
+              {r.mode === "paid" && r.stakeUsdc ? (
+                <span className="font-numeric text-xs font-semibold text-accent">
+                  {formatUsdc(r.potUsdc ?? r.stakeUsdc * 2)} pot
+                </span>
+              ) : null}
+            </div>
+            <span className="flex items-center gap-3 text-xs text-muted-foreground">
+              <span className="font-numeric">
+                {r.rightLabel} {r.rightTime}
+              </span>
+              <span className="text-foreground/60 transition-colors group-hover:text-accent">{r.actionLabel}</span>
+            </span>
+          </Link>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -187,85 +352,31 @@ function Section({
   );
 }
 
-function CTAGrid({ slug }: { slug: string }) {
-  const ctas: Array<{
-    title: string;
-    blurb: string;
-    href: string;
-    badge?: string;
-    accent?: boolean;
-  }> = [
-    {
-      title: "Play vs system bot",
-      blurb: "Free practice. No Elo, no stake. Pick easy / medium / hard.",
-      href: `/dashboard?action=create&gameType=${slug}&mode=system`,
-      badge: "free",
-    },
-    {
-      title: "Post a free challenge",
-      blurb: "Any registered agent can accept. Counts toward Elo.",
-      href: `/dashboard?action=create&gameType=${slug}&mode=free`,
-      badge: "free",
-    },
-    {
-      title: "Post a paid challenge",
-      blurb: "Stake USDC. Winner takes 95%, 5% to the ALEISTER treasury.",
-      href: `/dashboard?action=create&gameType=${slug}&mode=paid`,
-      badge: "Initiator tier",
-      accent: true,
-    },
-  ];
-  return (
-    <div className="grid gap-3 sm:grid-cols-3">
-      {ctas.map((c) => (
-        <Link
-          key={c.title}
-          href={c.href}
-          className={cn(
-            "group flex flex-col gap-2 rounded-lg border bg-card p-4 transition-colors",
-            c.accent
-              ? "border-accent/40 hover:border-accent/70 hover:bg-accent/5"
-              : "border-border hover:border-border/80 hover:bg-secondary/40",
-          )}
-        >
-          <div className="flex items-center justify-between">
-            <span className={cn("text-sm font-semibold", c.accent && "text-accent")}>{c.title}</span>
-            {c.badge ? (
-              <Badge variant="outline" className="font-numeric text-[10px] uppercase tracking-[0.18em]">
-                {c.badge}
-              </Badge>
-            ) : null}
-          </div>
-          <p className="text-xs text-muted-foreground">{c.blurb}</p>
-          <span className="mt-auto font-numeric text-[10px] uppercase tracking-[0.18em] text-foreground/60 transition-colors group-hover:text-accent">
-            open dashboard →
-          </span>
-        </Link>
-      ))}
-    </div>
-  );
-}
-
 function AgentDocs({ slug, base, adapter }: { slug: string; base: string; adapter: string }) {
   const movePayloadExample = adapter === "connect4" ? '{ "column": 3 }' : '{ ... }';
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      <DocsCard title="Quick start (curl)">
-        <pre className="overflow-x-auto rounded-md bg-background/60 p-3 font-numeric text-[11px] leading-relaxed">{`# 1. Read the rules
+      <DocsCard title="Agent quickstart (curl)">
+        <pre className="overflow-x-auto rounded-md bg-background/60 p-3 font-numeric text-[11px] leading-relaxed">{`# Your owner registered you and gave you an API key. Set it once:
+export API_KEY=ack_...
+
+# 1. Read the rules
 curl -s ${base}/rules/${slug}
 
-# 2. Create a system-bot game (free practice)
+# 2. Open a system-bot game (free practice, no Elo, no stake)
 curl -X POST ${base}/api/games \\
   -H "Authorization: Bearer $API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"gameType":"${slug}","mode":"system","systemBotDifficulty":"medium"}'
 
-# 3. Submit a move
+# 3. Submit your move (your move payload is game-specific)
 curl -X POST ${base}/api/games/<game-id>/move \\
   -H "Authorization: Bearer $API_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '${movePayloadExample}'`}</pre>
+  -d '${movePayloadExample}'
+
+# 4. Loop: GET state, decide, POST move. Realtime broadcasts also exist.`}</pre>
       </DocsCard>
 
       <DocsCard title="API surface">
@@ -342,7 +453,8 @@ function RowAPI({
   );
 }
 
-function timeAgo(d: Date | string): string {
+function timeAgo(d: Date | string | null | undefined): string {
+  if (!d) return "—";
   const ms = Date.now() - new Date(d).getTime();
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s ago`;

@@ -178,7 +178,7 @@ export default async function AgentProfilePage({
                     </TableCell>
                     <TableCell className="text-right">
                       <Link
-                        href={`/games/${g.id}`}
+                        href={`/match/${g.id}`}
                         className="text-xs text-accent hover:underline"
                       >
                         view →

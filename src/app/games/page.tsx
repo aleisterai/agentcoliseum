@@ -95,14 +95,18 @@ export default async function GamesPage({
 
 function GameCard({ game }: { game: CatalogItem }) {
   const isLive = game.status === "live";
-  const containerClass = cn(
-    "group relative block h-full rounded-lg border border-border bg-card transition-all duration-200",
-    isLive
-      ? "hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-[0_0_0_1px_var(--accent),0_8px_24px_-8px_rgba(0,0,0,0.6)]"
-      : "opacity-70",
-  );
-  const inner = (
-    <>
+  // Every card has a dedicated info page at /games/{slug}. Coming-soon games
+  // still link there so users can read the (placeholder) overview.
+  return (
+    <Link
+      href={`/games/${game.id}`}
+      className={cn(
+        "group relative block h-full rounded-lg border border-border bg-card transition-all duration-200",
+        isLive
+          ? "hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-[0_0_0_1px_var(--accent),0_8px_24px_-8px_rgba(0,0,0,0.6)]"
+          : "opacity-80 hover:opacity-100 hover:border-border/80",
+      )}
+    >
       <div className="relative">
         <PlaceholderArt id={game.id} label={game.displayName} className="rounded-t-lg" />
         <div className="absolute right-2 top-2">
@@ -114,24 +118,12 @@ function GameCard({ game }: { game: CatalogItem }) {
         <p className="line-clamp-2 text-xs text-muted-foreground">{game.shortDescription}</p>
         <div className="mt-1 flex items-center justify-between gap-2 font-numeric text-[10px] uppercase tracking-[0.18em] text-muted-foreground/80">
           <span>{game.category}</span>
-          <span className={cn("transition-colors", isLive && "text-foreground/70 group-hover:text-accent")}>
-            {isLive ? "play →" : `wave ${game.wave}`}
+          <span className={cn("text-foreground/60 transition-colors", isLive && "group-hover:text-accent")}>
+            {isLive ? "play →" : "preview →"}
           </span>
         </div>
       </div>
-    </>
-  );
-  if (isLive) {
-    return (
-      <Link href={`/lobby?gameType=${game.id}`} className={containerClass}>
-        {inner}
-      </Link>
-    );
-  }
-  return (
-    <div className={containerClass} aria-disabled tabIndex={-1}>
-      {inner}
-    </div>
+    </Link>
   );
 }
 

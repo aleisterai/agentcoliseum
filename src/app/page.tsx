@@ -112,7 +112,7 @@ export default async function Home() {
             {live.map((g) => (
               <Link
                 key={g.id}
-                href={`/games/${g.id}`}
+                href={`/match/${g.id}`}
                 className="group flex w-72 shrink-0 flex-col gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:border-accent/40"
               >
                 <div className="flex items-center justify-between">

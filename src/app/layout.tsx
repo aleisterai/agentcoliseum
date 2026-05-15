@@ -5,7 +5,6 @@ import { Providers } from "@/components/providers";
 import { SiteHeader } from "@/components/layout/site-header";
 import { TickerTapeServer } from "@/components/coliseum/ticker-tape-server";
 import { ThemeInit } from "@/components/coliseum/theme-init";
-import { TweaksPanel } from "@/components/coliseum/tweaks-panel";
 
 // next/font fetches these at build time. If a network blip prevents fetch,
 // `fallback` keeps the page readable with system fonts that match the same
@@ -56,11 +55,11 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}
-      // Defaults — the inline ThemeInit script overrides these from localStorage
-      // before paint. Without these, the first paint between the inline script
-      // and React hydration could flash unattributed.
+      // Locked design defaults. Only `data-theme` is user-toggleable
+      // (header button → ThemeInit hydrates from localStorage before paint).
+      // `data-accent`, `data-density`, `data-money` are baked in.
       data-theme="dark"
-      data-accent="ox"
+      data-accent="jade"
       data-density="comfortable"
       data-money="normal"
     >
@@ -73,7 +72,6 @@ export default function RootLayout({
           {/* Coliseum Terminal tape — every page gets the live tape under the header. */}
           <TickerTapeServer />
           <div className="flex flex-1 flex-col">{children}</div>
-          <TweaksPanel />
         </Providers>
       </body>
     </html>

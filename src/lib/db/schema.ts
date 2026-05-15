@@ -1,15 +1,24 @@
 /**
  * Agent Coliseum — Drizzle schema (Postgres / Supabase).
  *
- * Single source of truth for our DB shape. Run `pnpm db:generate` to produce
- * a SQL migration, `pnpm db:push` to apply it (or push via the Supabase MCP
- * during development).
+ * Single source of truth for the DB shape. Run `pnpm db:generate` to produce
+ * a SQL migration, `pnpm db:push` to apply it (or apply directly via the
+ * Supabase MCP during development).
+ *
+ * Lifecycle model (Wave 0):
+ *   challenges  → posted / matching / escrowed / abandoned (lobby orders)
+ *   matches     → active / resolving / completed / abandoned / disputed
+ *   match_moves → every move, with reasoning + ev + state snapshot
+ *   match_transcripts → finalized replay payload (one row per completed match)
+ *   head_to_head → per-(pair, game) aggregates
+ *   side_pools / side_pool_stakes → spectator betting
+ *   match_chat / match_reactions → spectator chat + reactions
  *
  * Conventions:
- * - All ids are UUID v7-ish (random for MVP) → uuid() defaultRandom().
- * - Money in USDC is stored as integer **6-decimal units** (e.g. $1.00 → 1_000_000).
- * - Token balances (ALEISTER, etc.) are NOT stored here — read live from chain.
- * - Timestamps use timestamptz (timestamp + {withTimezone:true}).
+ *   - All ids are UUID v7-ish (random for MVP) → uuid() defaultRandom().
+ *   - Money in USDC is stored as integer 6-decimal units ($1.00 → 1_000_000).
+ *   - Token balances (ALEISTER, etc.) are NOT stored here — read live from chain.
+ *   - Timestamps use timestamptz (timestamp + {withTimezone:true}).
  */
 import { sql } from "drizzle-orm";
 import {
@@ -18,25 +27,19 @@ import {
   uuid,
   text,
   integer,
+  real,
   timestamp,
   jsonb,
   index,
+  primaryKey,
   uniqueIndex,
+  check,
 } from "drizzle-orm/pg-core";
 
 // -----------------------------------------------------------------------------
 // Enums
 // -----------------------------------------------------------------------------
 
-// games.game_type used to be a pgEnum, now it's open text so adding a new game
-// adapter doesn't require a DB migration. Validation happens at the API layer
-// via the game registry (src/lib/game/registry.ts).
-export const gameStatusEnum = pgEnum("game_status", [
-  "lobby",
-  "active",
-  "completed",
-  "abandoned",
-]);
 export const gameModeEnum = pgEnum("game_mode", ["free", "paid", "system"]);
 export const tierEnum = pgEnum("tier", ["none", "play", "initiator"]);
 export const systemBotDifficultyEnum = pgEnum("system_bot_difficulty", [
@@ -51,6 +54,31 @@ export const treasuryFlowStatusEnum = pgEnum("treasury_flow_status", [
   "failed",
 ]);
 
+// Lifecycle enums introduced in Wave 0.
+export const challengeStatusEnum = pgEnum("challenge_status", [
+  "posted",
+  "matching",
+  "escrowed",
+  "abandoned",
+]);
+export const matchStatusEnum = pgEnum("match_status", [
+  "active",
+  "resolving",
+  "completed",
+  "abandoned",
+  "disputed",
+]);
+export const resultReasonEnum = pgEnum("result_reason", [
+  "natural",
+  "time_forfeit",
+  "invalid_move_forfeit",
+  "resign",
+  "draw",
+  "abandoned",
+]);
+export const sideEnum = pgEnum("side_t", ["p1", "p2"]);
+export const playerIdEnum = pgEnum("player_id_t", ["0", "1"]);
+
 // -----------------------------------------------------------------------------
 // owners — humans connecting wallets. One row per unique wallet address.
 // -----------------------------------------------------------------------------
@@ -61,13 +89,11 @@ export const owners = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     walletAddress: text("wallet_address").notNull().unique(),
     privyUserId: text("privy_user_id").unique(),
-    apiKey: text("api_key").notNull().unique(), // one API key per owner; used by their agents
+    apiKey: text("api_key").notNull().unique(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => [
-    index("owners_wallet_lower_idx").on(sql`lower(${table.walletAddress})`),
-  ],
+  (table) => [index("owners_wallet_lower_idx").on(sql`lower(${table.walletAddress})`)],
 ).enableRLS();
 
 // -----------------------------------------------------------------------------
@@ -81,16 +107,13 @@ export const agents = pgTable(
     ownerId: uuid("owner_id")
       .references(() => owners.id, { onDelete: "cascade" })
       .notNull(),
-    handle: text("handle").notNull().unique(), // url-safe slug, e.g. "aleister-bot"
+    handle: text("handle").notNull().unique(),
     displayName: text("display_name").notNull(),
     bio: text("bio"),
     avatarUrl: text("avatar_url"),
-    tokenCa: text("token_ca"), // optional: agent's own token CA on Base
+    tokenCa: text("token_ca"),
     website: text("website"),
     socials: jsonb("socials").$type<{ x?: string; github?: string; farcaster?: string }>(),
-    // NOTE: spec says "hashed in production; plain ok for MVP". For now we
-    // store the raw token but the lookup helpers should always treat it as
-    // sensitive. Pre-hash before production hardening.
     apiKey: text("api_key").notNull().unique(),
     elo: integer("elo").default(1200).notNull(),
     wins: integer("wins").default(0).notNull(),
@@ -105,115 +128,277 @@ export const agents = pgTable(
 ).enableRLS();
 
 // -----------------------------------------------------------------------------
-// games — one row per game (lobby, active, or finished).
+// challenges — lobby orders. One per "I want to play" post. Transitions:
+//   posted (in the book)
+//   → matching (someone clicked Accept, both have 30s to lock escrow)
+//   → escrowed (both stakes locked, a match row is created)
+//   → abandoned (timeout, refused, etc.)
 // -----------------------------------------------------------------------------
 
-export const games = pgTable(
-  "games",
+export const challenges = pgTable(
+  "challenges",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    gameType: text("game_type").default("connect4").notNull(),
+    gameType: text("game_type").notNull(),
+    initiatorAgentId: uuid("initiator_agent_id")
+      .references(() => agents.id, { onDelete: "cascade" })
+      .notNull(),
     mode: gameModeEnum("mode").notNull(),
-    status: gameStatusEnum("status").default("lobby").notNull(),
-
-    initiatorAgentId: uuid("initiator_agent_id").references(() => agents.id, {
-      onDelete: "set null",
-    }),
-    acceptorAgentId: uuid("acceptor_agent_id").references(() => agents.id, {
-      onDelete: "set null",
-    }),
-    systemBotDifficulty: systemBotDifficultyEnum("system_bot_difficulty"),
-
-    // money: integer 6-decimal USDC units, nullable for free games
     stakeUsdc: integer("stake_usdc"),
     potUsdc: integer("pot_usdc"),
     platformFeeUsdc: integer("platform_fee_usdc"),
+    systemBotDifficulty: systemBotDifficultyEnum("system_bot_difficulty"),
+    opponentHandle: text("opponent_handle"),
+    eloMin: integer("elo_min"),
+    eloMax: integer("elo_max"),
+    timeoutMin: integer("timeout_min").default(60).notNull(),
+    status: challengeStatusEnum("status").default("posted").notNull(),
+    initiatorEscrowLockedAt: timestamp("initiator_escrow_locked_at", { withTimezone: true }),
+    acceptorAgentId: uuid("acceptor_agent_id").references(() => agents.id, {
+      onDelete: "set null",
+    }),
+    acceptorEscrowLockedAt: timestamp("acceptor_escrow_locked_at", { withTimezone: true }),
+    matchedAt: timestamp("matched_at", { withTimezone: true }),
+    postedAt: timestamp("posted_at", { withTimezone: true }).defaultNow().notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    abandonedAt: timestamp("abandoned_at", { withTimezone: true }),
+    abandonedReason: text("abandoned_reason"),
+    matchId: uuid("match_id"),
+  },
+  (table) => [
+    index("challenges_status_idx").on(table.status),
+    index("challenges_game_type_idx").on(table.gameType),
+    index("challenges_posted_at_idx").on(table.postedAt),
+    index("challenges_initiator_idx").on(table.initiatorAgentId),
+  ],
+).enableRLS();
 
-    /**
-     * Polymorphic game state. Shape is opaque at the DB layer — each game's
-     * adapter knows how to read it (e.g. Connect 4 stores `{ board, lastMove }`,
-     * Chess stores `{ fen, history }`, Battleship stores per-player ship maps).
-     */
+// -----------------------------------------------------------------------------
+// matches — actual playing/completed matches.
+// -----------------------------------------------------------------------------
+
+export const matches = pgTable(
+  "matches",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    challengeId: uuid("challenge_id").references(() => challenges.id, {
+      onDelete: "set null",
+    }),
+    gameType: text("game_type").notNull(),
+    mode: gameModeEnum("mode").notNull(),
+    p1AgentId: uuid("p1_agent_id").references(() => agents.id, { onDelete: "set null" }),
+    p2AgentId: uuid("p2_agent_id").references(() => agents.id, { onDelete: "set null" }),
+    systemBotDifficulty: systemBotDifficultyEnum("system_bot_difficulty"),
+
+    // Money
+    stakeUsdc: integer("stake_usdc"),
+    potUsdc: integer("pot_usdc"),
+    platformFeeUsdc: integer("platform_fee_usdc"),
+    payoutTxHash: text("payout_tx_hash"),
+    payoutAt: timestamp("payout_at", { withTimezone: true }),
+
+    // State (full boardgame.io State<TG>: { G, ctx, plugins, ... })
     state: jsonb("state").notNull(),
-    /** boardgame.io ctx snapshot (turn, currentPlayer, phase, gameover, etc). */
-    ctx: jsonb("ctx"),
-    /**
-     * Legacy. Connect-4-only. Newly-created Connect 4 games still mirror their
-     * board here for one release so existing API consumers don't break, but
-     * non-Connect-4 games leave it null. Drop after the rest of the stack
-     * reads exclusively from `state`.
-     */
-    boardState: jsonb("board_state").$type<number[][]>(),
+    status: matchStatusEnum("status").default("active").notNull(),
+    currentTurnPlayerId: playerIdEnum("current_turn_player_id").default("0").notNull(),
     currentTurnAgentId: uuid("current_turn_agent_id").references(() => agents.id, {
       onDelete: "set null",
     }),
-    // null = system-bot's turn (only meaningful when mode='system')
+    turnStartedAt: timestamp("turn_started_at", { withTimezone: true }).defaultNow().notNull(),
+
+    // Per-agent clocks (ms remaining at start of the current turn)
+    p1MsLeft: integer("p1_ms_left").notNull(),
+    p2MsLeft: integer("p2_ms_left").notNull(),
+    clockBudgetMs: integer("clock_budget_ms").notNull(),
+
+    // Invalid-move forfeit tracking
+    p1InvalidCount: integer("p1_invalid_count").default(0).notNull(),
+    p2InvalidCount: integer("p2_invalid_count").default(0).notNull(),
+
+    moveCount: integer("move_count").default(0).notNull(),
+
+    // Outcome
     winnerAgentId: uuid("winner_agent_id").references(() => agents.id, {
       onDelete: "set null",
     }),
+    resultReason: resultReasonEnum("result_reason"),
+    p1EloDelta: integer("p1_elo_delta"),
+    p2EloDelta: integer("p2_elo_delta"),
 
-    moveTimeoutSec: integer("move_timeout_sec").default(30).notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
     lastMoveAt: timestamp("last_move_at", { withTimezone: true }),
-
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
+    abandonedAt: timestamp("abandoned_at", { withTimezone: true }),
   },
   (table) => [
-    index("games_status_idx").on(table.status),
-    index("games_mode_idx").on(table.mode),
-    index("games_initiator_idx").on(table.initiatorAgentId),
-    index("games_acceptor_idx").on(table.acceptorAgentId),
-    index("games_current_turn_idx").on(table.currentTurnAgentId),
-    index("games_created_idx").on(table.createdAt),
+    index("matches_status_idx").on(table.status),
+    index("matches_game_type_idx").on(table.gameType),
+    index("matches_started_idx").on(table.startedAt),
+    index("matches_p1_idx").on(table.p1AgentId),
+    index("matches_p2_idx").on(table.p2AgentId),
+    index("matches_current_turn_idx").on(table.currentTurnAgentId),
   ],
 ).enableRLS();
 
 // -----------------------------------------------------------------------------
-// moves — append-only log of every move in every game. Drives replay.
+// match_moves — every move with reasoning, ev, and full state snapshot.
+// Drives the move log, the reasoning trace panels, and replay scrubbing.
 // -----------------------------------------------------------------------------
 
-export const moves = pgTable(
-  "moves",
+export const matchMoves = pgTable(
+  "match_moves",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    gameId: uuid("game_id")
-      .references(() => games.id, { onDelete: "cascade" })
+    matchId: uuid("match_id")
+      .references(() => matches.id, { onDelete: "cascade" })
       .notNull(),
-    agentId: uuid("agent_id").references(() => agents.id, { onDelete: "set null" }), // null = system-bot
-    moveNumber: integer("move_number").notNull(), // 0-indexed within the game
-    /**
-     * The validated move payload, opaque to the DB. Adapter-defined shape
-     * (e.g. Connect 4: `{ column: 3 }`, Chess: `{ from: "e2", to: "e4" }`).
-     */
-    movePayload: jsonb("move_payload").notNull(),
-    /** Full post-move state snapshot. Drives replay scrubbing. */
+    moveNumber: integer("move_number").notNull(),
+    agentId: uuid("agent_id").references(() => agents.id, { onDelete: "set null" }),
+    playerId: playerIdEnum("player_id").notNull(),
+    payload: jsonb("payload").notNull(),
+    reasoning: text("reasoning"),
+    evScore: real("ev_score"),
     stateAfter: jsonb("state_after").notNull(),
-    /** Legacy Connect-4-only. Mirrored by Connect 4 for one release; null elsewhere. */
-    column: integer("column"),
-    boardStateAfter: jsonb("board_state_after").$type<number[][]>(),
-    thinkingMs: integer("thinking_ms").notNull(), // time the agent took
-    x402PaymentId: text("x402_payment_id"), // tx hash or facilitator payment ref
+    thinkingMs: integer("thinking_ms").notNull(),
+    x402PaymentId: text("x402_payment_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
+  (table) => [uniqueIndex("match_moves_uq").on(table.matchId, table.moveNumber)],
+).enableRLS();
+
+// -----------------------------------------------------------------------------
+// match_transcripts — single-row replay payload written on finalization.
+// Avoids replaying moves on every scrub.
+// -----------------------------------------------------------------------------
+
+export const matchTranscripts = pgTable(
+  "match_transcripts",
+  {
+    matchId: uuid("match_id")
+      .references(() => matches.id, { onDelete: "cascade" })
+      .primaryKey(),
+    /** Canonical payload: array of moves with state snapshots + revealed hidden info. */
+    payload: jsonb("payload").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+).enableRLS();
+
+// -----------------------------------------------------------------------------
+// head_to_head — aggregate per-pair-per-game stats. Canonical ordering:
+// agent_a_id < agent_b_id (text-wise) so we never double-count.
+// -----------------------------------------------------------------------------
+
+export const headToHead = pgTable(
+  "head_to_head",
+  {
+    agentAId: uuid("agent_a_id")
+      .references(() => agents.id, { onDelete: "cascade" })
+      .notNull(),
+    agentBId: uuid("agent_b_id")
+      .references(() => agents.id, { onDelete: "cascade" })
+      .notNull(),
+    gameType: text("game_type").notNull(),
+    aWins: integer("a_wins").default(0).notNull(),
+    bWins: integer("b_wins").default(0).notNull(),
+    draws: integer("draws").default(0).notNull(),
+    lastPlayedAt: timestamp("last_played_at", { withTimezone: true }).defaultNow().notNull(),
+  },
   (table) => [
-    uniqueIndex("moves_game_move_idx").on(table.gameId, table.moveNumber),
-    index("moves_game_created_idx").on(table.gameId, table.createdAt),
+    primaryKey({ columns: [table.agentAId, table.agentBId, table.gameType] }),
+    check("agents_canonical_order", sql`${table.agentAId} < ${table.agentBId}`),
+    index("head_to_head_b_idx").on(table.agentBId),
   ],
 ).enableRLS();
 
 // -----------------------------------------------------------------------------
-// treasury_flows — every 5% fee skim. Worker swaps these to ALEISTER and
-// sends to the treasury wallet on Aerodrome.
+// side_pools — spectator betting on a match. One row per match, lazily.
+// -----------------------------------------------------------------------------
+
+export const sidePools = pgTable(
+  "side_pools",
+  {
+    matchId: uuid("match_id")
+      .references(() => matches.id, { onDelete: "cascade" })
+      .primaryKey(),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    p1TotalUsdc: integer("p1_total_usdc").default(0).notNull(),
+    p2TotalUsdc: integer("p2_total_usdc").default(0).notNull(),
+    totalStakers: integer("total_stakers").default(0).notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+).enableRLS();
+
+export const sidePoolStakes = pgTable(
+  "side_pool_stakes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    matchId: uuid("match_id")
+      .references(() => matches.id, { onDelete: "cascade" })
+      .notNull(),
+    stakerOwnerId: uuid("staker_owner_id")
+      .references(() => owners.id, { onDelete: "cascade" })
+      .notNull(),
+    side: sideEnum("side").notNull(),
+    amountUsdc: integer("amount_usdc").notNull(),
+    payoutUsdc: integer("payout_usdc"),
+    payoutTxHash: text("payout_tx_hash"),
+    placedAt: timestamp("placed_at", { withTimezone: true }).defaultNow().notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("side_pool_stakes_match_idx").on(table.matchId),
+    index("side_pool_stakes_staker_idx").on(table.stakerOwnerId),
+  ],
+).enableRLS();
+
+// -----------------------------------------------------------------------------
+// match_chat / match_reactions — spectator interaction layer.
+// -----------------------------------------------------------------------------
+
+export const matchChat = pgTable(
+  "match_chat",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    matchId: uuid("match_id")
+      .references(() => matches.id, { onDelete: "cascade" })
+      .notNull(),
+    speakerOwnerId: uuid("speaker_owner_id").references(() => owners.id, {
+      onDelete: "set null",
+    }),
+    /** For non-connected viewers: a hashed session token so we can rate-limit/mod. */
+    anonymousToken: text("anonymous_token"),
+    body: text("body").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index("match_chat_match_idx").on(table.matchId, table.createdAt)],
+).enableRLS();
+
+export const matchReactions = pgTable(
+  "match_reactions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    matchId: uuid("match_id")
+      .references(() => matches.id, { onDelete: "cascade" })
+      .notNull(),
+    emoji: text("emoji").notNull(),
+    count: integer("count").default(1).notNull(),
+    windowStart: timestamp("window_start", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index("match_reactions_match_idx").on(table.matchId, table.windowStart)],
+).enableRLS();
+
+// -----------------------------------------------------------------------------
+// treasury_flows — every 5% fee skim. Cron swaps these to ALEISTER and sends
+// to the treasury wallet on Aerodrome.
 // -----------------------------------------------------------------------------
 
 export const treasuryFlows = pgTable(
   "treasury_flows",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    gameId: uuid("game_id").references(() => games.id, { onDelete: "set null" }),
-    feeUsdc: integer("fee_usdc").notNull(),         // 6-decimal USDC units in
-    aleisterOut: text("aleister_out"),              // string-encoded bigint (18 decimals)
+    matchId: uuid("match_id").references(() => matches.id, { onDelete: "set null" }),
+    feeUsdc: integer("fee_usdc").notNull(),
+    aleisterOut: text("aleister_out"),
     swapTxHash: text("swap_tx_hash"),
     treasuryTxHash: text("treasury_tx_hash"),
     status: treasuryFlowStatusEnum("status").default("pending").notNull(),
@@ -229,15 +414,14 @@ export const treasuryFlows = pgTable(
 ).enableRLS();
 
 // -----------------------------------------------------------------------------
-// tier_cache — 60-second TTL cache of on-chain ALEISTER balance reads,
-// used to avoid hammering Alchemy on every API request.
+// tier_cache — 60-second TTL cache of on-chain ALEISTER balance reads.
 // -----------------------------------------------------------------------------
 
 export const tierCache = pgTable(
   "tier_cache",
   {
     walletAddress: text("wallet_address").primaryKey(),
-    balanceWei: text("balance_wei").notNull(), // bigint as string (ALEISTER has 18 decimals)
+    balanceWei: text("balance_wei").notNull(),
     tier: tierEnum("tier").notNull(),
     cachedAt: timestamp("cached_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -245,17 +429,25 @@ export const tierCache = pgTable(
 ).enableRLS();
 
 // -----------------------------------------------------------------------------
-// Inferred row types — useful for API handlers and frontend.
+// Inferred row types
 // -----------------------------------------------------------------------------
 
 export type Owner = typeof owners.$inferSelect;
 export type NewOwner = typeof owners.$inferInsert;
 export type Agent = typeof agents.$inferSelect;
 export type NewAgent = typeof agents.$inferInsert;
-export type Game = typeof games.$inferSelect;
-export type NewGame = typeof games.$inferInsert;
-export type Move = typeof moves.$inferSelect;
-export type NewMove = typeof moves.$inferInsert;
+export type Challenge = typeof challenges.$inferSelect;
+export type NewChallenge = typeof challenges.$inferInsert;
+export type Match = typeof matches.$inferSelect;
+export type NewMatch = typeof matches.$inferInsert;
+export type MatchMove = typeof matchMoves.$inferSelect;
+export type NewMatchMove = typeof matchMoves.$inferInsert;
+export type MatchTranscript = typeof matchTranscripts.$inferSelect;
+export type HeadToHead = typeof headToHead.$inferSelect;
+export type SidePool = typeof sidePools.$inferSelect;
+export type SidePoolStake = typeof sidePoolStakes.$inferSelect;
+export type MatchChat = typeof matchChat.$inferSelect;
+export type MatchReaction = typeof matchReactions.$inferSelect;
 export type TreasuryFlow = typeof treasuryFlows.$inferSelect;
 export type NewTreasuryFlow = typeof treasuryFlows.$inferInsert;
 export type TierCacheRow = typeof tierCache.$inferSelect;

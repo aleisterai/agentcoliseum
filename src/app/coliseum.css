@@ -472,6 +472,31 @@ html[data-theme="light"] .theme-toggle .i-moon { display: none; }
   content: "◆"; font-size: 8px; opacity: 0.6;
 }
 html[data-money="subtle"] .money::before { content: ""; }
+/*
+ * Inside stat-grid cells, `.val.money` is meant to be GOLD-COLORED TEXT —
+ * not a pill. The .money base class adds a border + diamond prefix +
+ * padding, which collides with the cell layout (especially for "—"
+ * empty states where you get a floating outlined dash). Flatten back to
+ * plain colored text in those contexts.
+ */
+.featured-stats .val.money,
+.game-stats .val.money,
+.profile-stats .val.money,
+.stat-grid .val.money,
+.wallet-stat .val.money,
+.ag-stats .val.money {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.featured-stats .val.money::before,
+.game-stats .val.money::before,
+.profile-stats .val.money::before,
+.stat-grid .val.money::before,
+.wallet-stat .val.money::before,
+.ag-stats .val.money::before {
+  content: "";
+}
 
 /* ---------- tables ---------- */
 table.t { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -896,22 +921,52 @@ html[data-theme="light"] .reversi-board .sq { border-color: oklch(0.46 0.10 160)
   .hdr-right .btn-connect { display: none; }
 }
 @media (max-width: 720px) {
-  :root { --pad-x: 14px; }
-  .page { gap: 16px; padding: 14px var(--pad-x); }
-  .ftr { padding: 16px 14px; flex-direction: column; align-items: flex-start; gap: 10px; }
-  .panel-hd { padding: 10px 12px; min-height: 36px; flex-wrap: wrap; gap: 6px; }
+  /*
+   * Mobile padding. The density rules `html[data-density="..."]` have
+   * specificity 0,1,1 which beats a plain `:root` override (0,1,0) — so
+   * to actually narrow the gutters on mobile we redefine --pad-x at the
+   * same specificity-level selector. Same trick for the y-axis.
+   *
+   * 12px each side gives us ~351px of usable content on a 375px iPhone
+   * (94% screen-width usage) vs. the 327px (87%) we had before.
+   */
+  html[data-density="compact"],
+  html[data-density="comfortable"],
+  html[data-density="cinematic"] {
+    --pad-x: 12px;
+    --pad-y: 16px;
+  }
+  .page { gap: 14px; }
+  .ftr { padding: 16px 12px; flex-direction: column; align-items: flex-start; gap: 10px; }
+  .panel-hd { padding: 8px 12px; min-height: 32px; flex-wrap: wrap; gap: 6px; }
   .panel-bd { padding: 12px; }
   table.t thead th { padding: 6px 10px; font-size: 9.5px; letter-spacing: 0.10em; }
   table.t tbody td { padding: 0 10px; height: 36px; }
   .filters { padding: 10px 12px; gap: 10px; }
   .ticker { height: 28px; }
   .ticker-label { padding: 0 10px; font-size: 9.5px; }
-  .ticker-track { gap: 22px; font-size: 11.5px; }
+  .ticker-track { gap: 22px; font-size: 11.5px; padding-left: 18px; }
   .title-tab { padding: 6px 10px; font-size: 10.5px; }
   .seg-pill button { padding: 5px 8px; font-size: 10.5px; }
   .scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  .btn { min-height: 36px; }
-  .btn.sm { min-height: 32px; }
+  /*
+   * Tap targets: WCAG 2.1 Level AAA = 44×44px. We don't hit that on
+   * everything (would balloon the UI), but no interactive control
+   * should be under 36px on mobile.
+   */
+  .btn { min-height: 38px; padding: 8px 12px; }
+  .btn.sm { min-height: 32px; padding: 6px 10px; }
+  .reactbtn { min-height: 28px; padding: 4px 10px; }
+
+  /* KPI cards: shrink padding + value font so the strip isn't a tower */
+  .kpi { padding: 10px 12px; }
+  .kpi-lbl { font-size: 9.5px; letter-spacing: 0.12em; }
+  .kpi-val { font-size: 18px; }
+  .kpi-sub { font-size: 10.5px; }
+  .dash-kpi { padding: 10px 12px; }
+  .dash-kpi-lbl { font-size: 9.5px; letter-spacing: 0.12em; }
+  .dash-kpi-val { font-size: 18px; }
+  .dash-kpi-sub { font-size: 10.5px; }
 
   /* mobile-friendly stat grids — collapse multi-col to 2-col */
   .kpis,
@@ -940,15 +995,57 @@ html[data-theme="light"] .reversi-board .sq { border-color: oklch(0.46 0.10 160)
   .kpis > div:nth-child(2n) { border-right: 0 !important; }
 
   /* page titles smaller */
-  .page-title { font-size: 28px !important; }
+  .page-title { font-size: 24px !important; line-height: 1.15; }
+  .page-sub { font-size: 13px; }
 
   /* title strip wraps cleanly */
   .title-strip { gap: 12px; }
-  .title-actions { width: 100%; }
-  .title-actions .title-tabs { flex: 1; }
+  .title-actions { width: 100%; flex-wrap: wrap; gap: 8px; }
+  .title-actions .title-tabs { flex: 1; min-width: 0; overflow-x: auto; }
 
-  /* tweaks panel doesn't crowd the screen */
-  .tweaks { right: 8px; bottom: 8px; left: 8px; width: auto; }
+  /*
+   * Stat-grid cells: tighter padding so 6-/5-stat blocks don't dominate.
+   * `!important` because some of these base rules are defined LATER in the
+   * file (page-specific blocks) at the same specificity, so the cascade
+   * order would otherwise win against us.
+   */
+  .stat-grid > div,
+  .featured-stats > div,
+  .game-stats > div,
+  .profile-stats > div,
+  .ag-stats > div,
+  .game-card-foot > div { padding: 8px 10px !important; }
+  .featured-stats .val, .game-stats .val, .profile-stats .val { font-size: 14px !important; }
+  .featured-stats .lbl, .game-stats .lbl, .profile-stats .lbl,
+  .stat-grid .lbl, .ag-stats .lbl { font-size: 9px !important; }
+
+  /* Featured / game-detail buttons: stack vertically rather than wrap mid-word */
+  .game-hero-r .row, .featured-info .row { width: 100%; }
+  .game-hero-r .row .btn, .featured-info .row .btn { flex: 1 1 calc(50% - 4px); min-width: 0; }
+
+  /* Hero board doesn't dominate */
+  .game-hero { padding: 0 !important; gap: 14px !important; }
+  .game-hero-l { padding: 14px !important; }
+  .featured-card { min-height: auto !important; }
+  .featured-info { padding: 18px !important; }
+  .featured-name { font-size: 26px !important; }
+
+  /* Match grid: tighten rails */
+  .agent-card-hd { padding: 12px; }
+  .agent-card-bd { padding: 10px; gap: 10px; }
+  .stat-grid { gap: 0; }
+
+  /* Lobby / order-book: tighter table cells */
+  .post-row { padding: 12px; gap: 10px; }
+  .post-field { min-width: calc(50% - 5px); }
+  .post-actions { width: 100%; flex-direction: column; align-items: stretch; gap: 8px; }
+  .post-summary { width: 100%; flex-wrap: wrap; }
+
+  /* Mini-board / chess-board / others: smaller font sizes for piece glyphs */
+  .chess-board .sq { font-size: clamp(16px, 9%, 36px); }
+
+  /* Catalog grid: single column on phone (already auto-fill but force min-0) */
+  .cat-grid, .ag-grid { grid-template-columns: 1fr !important; gap: 12px; }
 }
 
 /* responsive header */

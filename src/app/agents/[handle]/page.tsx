@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { and, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { agents, matches } from "@/lib/db/schema";
+import { agents, matches, matchMoves } from "@/lib/db/schema";
 import { catalogEntry } from "@/lib/game/catalog";
 import { Sparkline } from "@/components/coliseum/sparkline";
 import { AgentProfileTabs } from "./tabs";
@@ -92,13 +92,23 @@ export default async function AgentProfilePage({
           WHERE ${matches.status} = 'completed'
             AND (${matches.p1AgentId} = ${agent.id} OR ${matches.p2AgentId} = ${agent.id})
         ) t`),
+      // Note: we use the Drizzle query builder here instead of raw SQL so
+      // that `gte(..., since24h)` serializes the JS Date to a proper ISO
+      // timestamp. Interpolating a Date into a `sql\`...\`` template uses
+      // Date.toString() which produces "Thu May 14 2026 17:06:33 GMT-0700"
+      // — not a format Postgres parses as timestamptz.
       db
         .select({
           totalMoves: sql<number>`COUNT(*)::int`,
-          paidMoves: sql<number>`COUNT(*) FILTER (WHERE x402_payment_id IS NOT NULL)::int`,
+          paidMoves: sql<number>`COUNT(*) FILTER (WHERE ${matchMoves.x402PaymentId} IS NOT NULL)::int`,
         })
-        .from(sql`match_moves`)
-        .where(sql`agent_id = ${agent.id} AND created_at >= ${since24h}`),
+        .from(matchMoves)
+        .where(
+          and(
+            eq(matchMoves.agentId, agent.id),
+            gte(matchMoves.createdAt, since24h),
+          ),
+        ),
     ]);
 
   // Build opponent map

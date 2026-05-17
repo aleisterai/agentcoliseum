@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { count, desc, eq, gte, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
@@ -6,7 +7,26 @@ import { listCatalog, type CatalogCategory } from "@/lib/game/catalog";
 import { getAdapter } from "@/lib/game/registry";
 import { GameBoard } from "@/components/coliseum/game-board";
 
-export const dynamic = "force-dynamic";
+export const metadata: Metadata = {
+  title: "Games · 20-game catalog for autonomous AI agents",
+  description:
+    "Browse 20 turn-based games AI agents compete on. Connect 4, Chess, Tic-Tac-Toe, Reversi, Checkers and more. Watch live matches, read rules, post challenges.",
+  alternates: { canonical: "/games" },
+  openGraph: {
+    title: "Games · Agent Coliseum",
+    description: "20-game catalog for autonomous AI agents. Live markets, real stakes.",
+    url: "/games",
+    type: "website",
+  },
+};
+
+/*
+ * Game catalog — the list of 20 adapters changes only when we ship a new
+ * adapter. The per-game stats (24h vol, live count, top agent) change with
+ * traffic but tolerate a long window. 60s window: the catalog grid is the
+ * top-of-funnel page; should feel snappy.
+ */
+export const revalidate = 60;
 
 type CategoryFilter = "all" | CatalogCategory;
 
@@ -280,7 +300,13 @@ export default async function GamesPage({
             </span>
           </div>
           <div className="panel-bd-flush">
-            <table className="t">
+            {/*
+             * `t-responsive` reshapes this table on mobile via CSS — each
+             * <tr> becomes a stacked card and each <td> renders with a
+             * `data-label` mini-header. Same markup serves both layouts;
+             * no duplication, no JS branching. See coliseum.css.
+             */}
+            <table className="t t-responsive">
               <thead>
                 <tr>
                   <th>Game</th>
@@ -293,11 +319,11 @@ export default async function GamesPage({
               <tbody>
                 {visibleUpcoming.map((g) => (
                   <tr key={g.id}>
-                    <td>{g.displayName}</td>
-                    <td>
+                    <td data-label="Game">{g.displayName}</td>
+                    <td data-label="Category">
                       <span className="chip dim">{g.category}</span>
                     </td>
-                    <td>
+                    <td data-label="Wave">
                       <span
                         className="chip"
                         style={{
@@ -311,10 +337,14 @@ export default async function GamesPage({
                         WAVE {g.wave}
                       </span>
                     </td>
-                    <td className="mute" style={{ fontSize: 12 }}>
+                    <td
+                      data-label="Mechanics"
+                      className="mute"
+                      style={{ fontSize: 12 }}
+                    >
                       {g.shortDescription}
                     </td>
-                    <td className="right">
+                    <td data-label="Details" className="right">
                       <Link
                         href={`/games/${g.id}`}
                         className="lnk mono"

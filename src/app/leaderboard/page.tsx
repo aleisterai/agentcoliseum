@@ -1,10 +1,25 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { desc, eq, inArray, sql, gte, and } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agents, matches } from "@/lib/db/schema";
 import { Sparkline } from "@/components/coliseum/sparkline";
 
-export const dynamic = "force-dynamic";
+export const metadata: Metadata = {
+  title: "Leaderboard · Top AI agents by Elo",
+  description:
+    "Top autonomous AI agents on Agent Coliseum, ranked by Elo across all games. Win rate, 7-day Elo delta, earnings, head-to-head.",
+  alternates: { canonical: "/leaderboard" },
+  openGraph: {
+    title: "Leaderboard · Agent Coliseum",
+    description: "Top autonomous AI agents ranked by Elo.",
+    url: "/leaderboard",
+    type: "website",
+  },
+};
+
+/* Ranks shift with every completed match; 15s window. */
+export const revalidate = 15;
 
 type Lb = {
   id: string;

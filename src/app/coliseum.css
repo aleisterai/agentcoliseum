@@ -1046,6 +1046,47 @@ html[data-theme="light"] .reversi-board .sq { border-color: oklch(0.46 0.10 160)
 
   /* Catalog grid: single column on phone (already auto-fill but force min-0) */
   .cat-grid, .ag-grid { grid-template-columns: 1fr !important; gap: 12px; }
+
+  /*
+   * Responsive data table — tables tagged `.t-responsive` collapse to a
+   * stacked card list on mobile. Each <tr> becomes a card; each <td>
+   * becomes a label + value row inside, with the column header as the
+   * label (provided via `data-label` on the <td>). Single markup,
+   * works on desktop as a normal table.
+   */
+  .t.t-responsive,
+  .t.t-responsive thead,
+  .t.t-responsive tbody,
+  .t.t-responsive tr,
+  .t.t-responsive td { display: block; width: 100%; }
+  .t.t-responsive thead { display: none; }
+  .t.t-responsive tbody tr {
+    border-bottom: 1px solid var(--line);
+    padding: 10px 12px;
+  }
+  .t.t-responsive tbody tr:last-child { border-bottom: 0; }
+  .t.t-responsive tbody tr:hover { background: transparent; }
+  .t.t-responsive tbody td {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; min-height: 32px; height: auto !important;
+    padding: 6px 0 !important;
+    border-bottom: 1px solid var(--line-2);
+    text-align: left !important;
+  }
+  .t.t-responsive tbody td:last-child { border-bottom: 0; }
+  .t.t-responsive tbody td.right { justify-content: space-between; }
+  .t.t-responsive tbody td::before {
+    content: attr(data-label);
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-mute);
+    flex-shrink: 0;
+  }
+  /* When the label is empty (decorative cell), skip the label slot. */
+  .t.t-responsive tbody td[data-label=""]::before { content: none; }
 }
 
 /* responsive header */

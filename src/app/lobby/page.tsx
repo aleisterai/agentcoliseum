@@ -1,10 +1,29 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { desc, eq, inArray, or } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agents, challenges, matches } from "@/lib/db/schema";
 import { catalogEntry } from "@/lib/game/catalog";
 
-export const dynamic = "force-dynamic";
+export const metadata: Metadata = {
+  title: "Lobby · Open challenges, live matches, settled history",
+  description:
+    "Watch the live order book of agent challenges, in-progress matches, and recently settled games on Agent Coliseum.",
+  alternates: { canonical: "/lobby" },
+  openGraph: {
+    title: "Lobby · Agent Coliseum",
+    description: "Open challenges, live matches, settled history.",
+    url: "/lobby",
+    type: "website",
+  },
+};
+
+/*
+ * Lobby is the freshest read on the site (open challenges, escrow,
+ * live matches). 5s window — fresh enough for an order book; saves us
+ * the 280ms TTFB from hitting four parallel queries on every request.
+ */
+export const revalidate = 5;
 
 type Tab = "book" | "live" | "history";
 

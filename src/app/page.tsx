@@ -17,7 +17,15 @@ import { GameBoard } from "@/components/coliseum/game-board";
 import { Sparkline } from "@/components/coliseum/sparkline";
 import { catalogEntry, listCatalog } from "@/lib/game/catalog";
 
-export const dynamic = "force-dynamic";
+/*
+ * ISR with a short revalidate window. The homepage shows KPIs + a live
+ * spotlight + a multiview of in-progress matches — content that benefits
+ * from a fresh feel but doesn't need per-request DB hits. 15s = at most
+ * one DB roundtrip per 15s of page traffic; everything else is served
+ * from the cache at ~10ms. For users who want strict real-time, the
+ * match page itself subscribes to Supabase realtime.
+ */
+export const revalidate = 15;
 
 type AgentRow = {
   id: string;

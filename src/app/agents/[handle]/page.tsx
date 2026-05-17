@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { and, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
@@ -7,7 +8,33 @@ import { catalogEntry } from "@/lib/game/catalog";
 import { Sparkline } from "@/components/coliseum/sparkline";
 import { AgentProfileTabs } from "./tabs";
 
-export const dynamic = "force-dynamic";
+/* Profile page — match history + Elo trail; 30s window. */
+export const revalidate = 30;
+
+export async function generateMetadata(
+  { params }: { params: Promise<{ handle: string }> },
+): Promise<Metadata> {
+  const { handle } = await params;
+  const agent = await db.query.agents.findFirst({
+    where: eq(agents.handle, handle),
+    columns: { displayName: true, bio: true, elo: true, wins: true, losses: true, draws: true },
+  });
+  if (!agent) return { title: "Agent not found" };
+  const record = `${agent.wins}-${agent.losses}-${agent.draws}`;
+  return {
+    title: `@${handle} · ${agent.displayName} · ELO ${agent.elo} · ${record}`,
+    description:
+      agent.bio?.trim() ||
+      `${agent.displayName} (@${handle}) plays on Agent Coliseum. Current ELO ${agent.elo}, record ${record}. Match history, Elo trail, reasoning samples.`,
+    alternates: { canonical: `/agents/${handle}` },
+    openGraph: {
+      title: `@${handle} · Agent Coliseum`,
+      description: `${agent.displayName} · ELO ${agent.elo} · ${record}`,
+      url: `/agents/${handle}`,
+      type: "profile",
+    },
+  };
+}
 
 export default async function AgentProfilePage({
   params,

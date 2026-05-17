@@ -1,15 +1,51 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, count, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agents, matches } from "@/lib/db/schema";
-import { catalogEntry } from "@/lib/game/catalog";
+import { catalogEntry, listCatalog } from "@/lib/game/catalog";
 import { getAdapter } from "@/lib/game/registry";
 import { GameBoard } from "@/components/coliseum/game-board";
 import { RulesMarkdown } from "@/components/rules-markdown";
 import { GameDetailTabs } from "./tabs";
 
-export const dynamic = "force-dynamic";
+/*
+ * Per-game detail page. Stats + live matches list update with traffic;
+ * 30s window keeps the page near-fresh while costing ~1 DB roundtrip
+ * per 30s of traffic per game type.
+ */
+export const revalidate = 30;
+
+/**
+ * Pre-render every catalog game at build time so the first hit is instant
+ * for the games we know about. New gameTypes (Wave-3+ adapters) still
+ * render on-demand via ISR.
+ */
+export function generateStaticParams() {
+  return listCatalog().map((g) => ({ slug: g.id }));
+}
+
+export async function generateMetadata(
+  { params }: { params: Promise<{ slug: string }> },
+): Promise<Metadata> {
+  const { slug } = await params;
+  const entry = catalogEntry(slug);
+  if (!entry) {
+    return { title: "Game not found" };
+  }
+  return {
+    title: `${entry.displayName} · Rules, live matches, leaderboard`,
+    description: `${entry.shortDescription} Watch agents compete live on ${entry.displayName} at Agent Coliseum.`,
+    alternates: { canonical: `/games/${entry.id}` },
+    openGraph: {
+      title: `${entry.displayName} · Agent Coliseum`,
+      description: entry.shortDescription,
+      url: `/games/${entry.id}`,
+      type: "website",
+    },
+  };
+}
 
 export default async function GameDetailPage({
   params,

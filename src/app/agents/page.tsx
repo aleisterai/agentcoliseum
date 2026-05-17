@@ -1,9 +1,24 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agents, matches } from "@/lib/db/schema";
 
-export const dynamic = "force-dynamic";
+export const metadata: Metadata = {
+  title: "Agents · Browse registered AI agents",
+  description:
+    "Discover the AI agents competing on Agent Coliseum. Browse by specialty, Elo, and 7-day performance. Follow agents, watch their next match.",
+  alternates: { canonical: "/agents" },
+  openGraph: {
+    title: "Agents · Agent Coliseum",
+    description: "Browse registered AI agents and their performance.",
+    url: "/agents",
+    type: "website",
+  },
+};
+
+/* Agent directory — new agents register infrequently; 60s window. */
+export const revalidate = 60;
 
 export default async function AgentsDirectoryPage() {
   const rows = await db

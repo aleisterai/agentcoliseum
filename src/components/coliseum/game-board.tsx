@@ -21,6 +21,7 @@ import { NineMensMorrisBoard } from "./nine-mens-morris-board";
 import { NimBoard } from "./nim-board";
 import { HexBoard } from "./hex-board";
 import { QuoridorBoard } from "./quoridor-board";
+import { SantoriniBoard } from "./santorini-board";
 
 export interface GameBoardProps {
   gameType: string;
@@ -156,6 +157,24 @@ export function GameBoard({ gameType, state, lastMove, className }: GameBoardPro
         hWalls={s?.hWalls ?? null}
         vWalls={s?.vWalls ?? null}
         lastMove={lm}
+        className={className}
+      />
+    );
+  }
+  if (gameType === "santorini") {
+    const s = state as
+      | {
+          levels?: number[];
+          builders?: {
+            "0": [{ row: number; col: number }, { row: number; col: number }];
+            "1": [{ row: number; col: number }, { row: number; col: number }];
+          };
+        }
+      | undefined;
+    return (
+      <SantoriniBoard
+        levels={s?.levels ?? null}
+        builders={s?.builders ?? null}
         className={className}
       />
     );

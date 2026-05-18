@@ -1138,6 +1138,15 @@ function describeMove(gameType: string, payload: unknown): string {
     if (p?.kind === "wall" && p.wall) return `wall ${p.wall.type}(${p.wall.row}, ${p.wall.col})`;
     return "—";
   }
+  if (gameType === "santorini") {
+    const p = payload as {
+      builder?: number;
+      to?: { row?: number; col?: number };
+      build?: { row?: number; col?: number };
+    } | null;
+    if (!p?.to || !p?.build) return "—";
+    return `B${p.builder} → (${p.to.row}, ${p.to.col}) ↑(${p.build.row}, ${p.build.col})`;
+  }
   return "move";
 }
 
@@ -1235,6 +1244,11 @@ function extractLastMove(
     // Pass the move through as the lastMove marker — the renderer
     // understands both shapes (pawn / wall).
     return payload;
+  }
+  if (gameType === "santorini") {
+    // Renderer doesn't currently use lastMove — return null to skip the
+    // highlight. (Adding move-arrow visualization is a future polish.)
+    return null;
   }
   return null;
 }

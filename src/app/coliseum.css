@@ -1023,6 +1023,26 @@ html[data-theme="dark"] .hex-board .cell { fill: oklch(0.40 0.03 75); stroke: ok
 html[data-theme="dark"] .hex-board .cell.R { fill: var(--ox-bright); }
 html[data-theme="dark"] .hex-board .cell.B { fill: oklch(0.65 0.18 240); }
 
+/* ---------- quoridor board renderer ---------- */
+.quoridor-board {
+  aspect-ratio: 1 / 1;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: oklch(0.92 0.02 75);
+  padding: 4%;
+  position: relative;
+}
+.quoridor-board svg { display: block; width: 100%; height: 100%; }
+.quoridor-board .cell { fill: oklch(0.86 0.03 75); stroke: oklch(0.62 0.06 60); stroke-width: 0.1; }
+.quoridor-board .pawn { stroke-width: 0.1; }
+.quoridor-board .pawn.p0 { fill: var(--ox-bright); stroke: oklch(0.20 0.05 30); }
+.quoridor-board .pawn.p1 { fill: oklch(0.55 0.16 240); stroke: oklch(0.20 0.10 240); }
+.quoridor-board .wall { fill: oklch(0.30 0.06 60); }
+.quoridor-board .wall.last { fill: var(--gold); }
+html[data-theme="dark"] .quoridor-board { background: oklch(0.22 0.03 75); }
+html[data-theme="dark"] .quoridor-board .cell { fill: oklch(0.40 0.03 75); stroke: oklch(0.30 0.04 60); }
+html[data-theme="dark"] .quoridor-board .wall { fill: oklch(0.75 0.04 75); }
+
 /* ---------- odds bar ---------- */
 .odds {
   display: grid; grid-template-columns: 1fr 1fr; gap: 0;

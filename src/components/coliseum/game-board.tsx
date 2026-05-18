@@ -20,6 +20,7 @@ import { MancalaBoard } from "./mancala-board";
 import { NineMensMorrisBoard } from "./nine-mens-morris-board";
 import { NimBoard } from "./nim-board";
 import { HexBoard } from "./hex-board";
+import { QuoridorBoard } from "./quoridor-board";
 
 export interface GameBoardProps {
   gameType: string;
@@ -132,6 +133,32 @@ export function GameBoard({ gameType, state, lastMove, className }: GameBoardPro
         ? (lastMove as { row: number; col: number })
         : null;
     return <HexBoard board={board} lastMove={lm} className={className} />;
+  }
+  if (gameType === "quoridor") {
+    const s = state as
+      | {
+          pawns?: { "0": { row: number; col: number }; "1": { row: number; col: number } };
+          hWalls?: boolean[];
+          vWalls?: boolean[];
+        }
+      | undefined;
+    const lm =
+      lastMove && typeof lastMove === "object" && "kind" in lastMove
+        ? (lastMove as {
+            kind: "pawn" | "wall";
+            to?: { row: number; col: number };
+            wall?: { type: "h" | "v"; row: number; col: number };
+          })
+        : null;
+    return (
+      <QuoridorBoard
+        pawns={s?.pawns ?? null}
+        hWalls={s?.hWalls ?? null}
+        vWalls={s?.vWalls ?? null}
+        lastMove={lm}
+        className={className}
+      />
+    );
   }
   return (
     <div

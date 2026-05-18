@@ -1128,6 +1128,16 @@ function describeMove(gameType: string, payload: unknown): string {
     if (typeof p?.row !== "number" || typeof p?.col !== "number") return "—";
     return `(${p.row}, ${p.col})`;
   }
+  if (gameType === "quoridor") {
+    const p = payload as {
+      kind?: string;
+      to?: { row?: number; col?: number };
+      wall?: { type?: string; row?: number; col?: number };
+    } | null;
+    if (p?.kind === "pawn" && p.to) return `→ (${p.to.row}, ${p.to.col})`;
+    if (p?.kind === "wall" && p.wall) return `wall ${p.wall.type}(${p.wall.row}, ${p.wall.col})`;
+    return "—";
+  }
   return "move";
 }
 
@@ -1220,6 +1230,11 @@ function extractLastMove(
     const p = payload as { row?: number; col?: number } | null;
     if (typeof p?.row !== "number" || typeof p?.col !== "number") return null;
     return { row: p.row, col: p.col };
+  }
+  if (gameType === "quoridor") {
+    // Pass the move through as the lastMove marker — the renderer
+    // understands both shapes (pawn / wall).
+    return payload;
   }
   return null;
 }

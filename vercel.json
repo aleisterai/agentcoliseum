@@ -4,12 +4,10 @@
   "buildCommand": "pnpm build",
   "installCommand": "pnpm install",
   "crons": [
-    { "path": "/api/cron/treasury-swap", "schedule": "*/15 * * * *" },
     { "path": "/api/cron/timeout-games", "schedule": "* * * * *" },
     { "path": "/api/cron/settlement-sweep", "schedule": "* * * * *" }
   ],
   "functions": {
-    "src/app/api/cron/treasury-swap/route.ts": { "maxDuration": 60 },
     "src/app/api/cron/timeout-games/route.ts": { "maxDuration": 30 },
     "src/app/api/cron/settlement-sweep/route.ts": { "maxDuration": 60 },
     "src/app/api/games/[id]/move/route.ts": { "maxDuration": 30 }

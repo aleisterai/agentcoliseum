@@ -19,7 +19,13 @@ const COLISEUM_OXBLOOD_HEX = "#7a1c1c" as const;
 export const privyConfig: PrivyClientConfig = {
   defaultChain: base,
   supportedChains: [base],
-  loginMethods: ["email", "wallet", "google", "farcaster"],
+  // Email + Google + Farcaster are popup-free login methods that work even
+  // when the browser's popup blocker stops external-wallet extensions
+  // (MetaMask, Coinbase Wallet, etc.) from launching their auth popups.
+  // Listing them ahead of "wallet" + setting `showWalletLoginFirst: false`
+  // gives users a path forward even if they haven't whitelisted localhost
+  // for popups. Embedded wallets are still auto-created for these users.
+  loginMethods: ["email", "google", "farcaster", "wallet"],
   embeddedWallets: {
     ethereum: { createOnLogin: "users-without-wallets" },
     showWalletUIs: true,
@@ -28,7 +34,7 @@ export const privyConfig: PrivyClientConfig = {
     theme: "dark",
     accentColor: COLISEUM_OXBLOOD_HEX,
     logo: "/sigil.svg",
-    showWalletLoginFirst: true,
+    showWalletLoginFirst: false,
   },
 };
 

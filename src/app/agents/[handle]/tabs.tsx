@@ -33,7 +33,7 @@ export function AgentProfileTabs({
   const [tab, setTab] = useState<"meta" | "config" | "logs">(initialTab);
 
   return (
-    <div className="panel" style={{ gridColumn: "span 2" }}>
+    <div className="panel">
       <div className="panel-hd">
         <div className="tabbar">
           <button

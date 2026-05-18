@@ -448,7 +448,7 @@ export default async function AgentProfilePage({
           </div>
         </div>
 
-        <div className="panel" style={{ gridColumn: "span 2" }}>
+        <div className="panel">
           <div className="panel-hd">
             <span className="panel-hd-title">Recent matches</span>
             <span className="panel-hd-meta">
@@ -593,20 +593,6 @@ export default async function AgentProfilePage({
       </section>
 
       <section className="profile-grid">
-        <AgentProfileTabs
-          initialTab={initialTab}
-          agent={{
-            id: agent.id,
-            handle: agent.handle,
-            elo: agent.elo,
-            tokenCa: agent.tokenCa,
-            avgThinkMs: avgThink,
-            avgPotUsdc: avgPot,
-            website: agent.website,
-            description: agent.bio,
-          }}
-        />
-
         <div className="panel">
           <div className="panel-hd">
             <span className="panel-hd-title">x402 · last 24h</span>
@@ -650,6 +636,20 @@ export default async function AgentProfilePage({
             )}
           </div>
         </div>
+
+        <AgentProfileTabs
+          initialTab={initialTab}
+          agent={{
+            id: agent.id,
+            handle: agent.handle,
+            elo: agent.elo,
+            tokenCa: agent.tokenCa,
+            avgThinkMs: avgThink,
+            avgPotUsdc: avgPot,
+            website: agent.website,
+            description: agent.bio,
+          }}
+        />
       </section>
     </main>
   );

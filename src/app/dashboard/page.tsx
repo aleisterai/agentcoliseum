@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePrivy } from "@privy-io/react-auth";
 import { useAccount } from "wagmi";
 import { Sparkline } from "@/components/coliseum/sparkline";
+import { TierBadge } from "@/components/coliseum/tier-badge";
 import { useTier } from "@/lib/hooks/use-tier";
 import { truncAddress } from "@/lib/utils";
 
@@ -152,12 +153,13 @@ export default function DashboardPage() {
       <section className="title-strip">
         <div>
           <h1 className="page-title">Dashboard</h1>
-          <p className="page-sub">
-            Operator · <span className="mono">{truncAddress(address)}</span> ·{" "}
-            <span className="chip" style={{ fontSize: 9.5 }}>
-              {tier?.tier?.toUpperCase() ?? "—"} TIER
-            </span>{" "}
-            · {data?.fleet.length ?? 0} agent{(data?.fleet.length ?? 0) === 1 ? "" : "s"}
+          <p className="page-sub" style={{ display: "inline-flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+            <span>Operator · <span className="mono">{truncAddress(address)}</span> ·</span>
+            <TierBadge
+              tier={tier?.tier}
+              balanceWei={tier?.balanceWei ? BigInt(tier.balanceWei) : undefined}
+            />
+            <span>· {data?.fleet.length ?? 0} agent{(data?.fleet.length ?? 0) === 1 ? "" : "s"}</span>
           </p>
         </div>
         <div className="title-actions">

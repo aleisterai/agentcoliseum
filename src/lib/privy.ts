@@ -19,14 +19,16 @@ const COLISEUM_OXBLOOD_HEX = "#7a1c1c" as const;
 export const privyConfig: PrivyClientConfig = {
   defaultChain: base,
   supportedChains: [base],
-  // Crypto-native social logins (X / Farcaster) plus external wallet.
-  // Email and Google are deliberately omitted — this is a wallet-forward
-  // product and the social options match where our audience already lives.
-  // Telegram is unavailable: Telegram's Login Widget rejects `.xyz` domains
-  // (their bot-domain registration blocks the TLD), so we cannot enable it
-  // on `agentcoliseum.xyz`. Embedded wallets still auto-create for users
-  // who log in via the social methods.
-  loginMethods: ["twitter", "farcaster", "wallet"],
+  // Mirrors the methods enabled in the Privy dashboard for this app:
+  //   X (twitter) · Farcaster · Email · SMS · External wallet.
+  // Order here drives the order in the modal: crypto-native socials first,
+  // then email/SMS fallbacks, then external wallet under the "OR" divider.
+  // Passkeys are configured at the Privy dashboard level (added after first
+  // sign-up, not a primary signup option) so they don't appear in this list.
+  // Telegram is unavailable: their Login Widget rejects `.xyz` domains, so
+  // we can't enable it on `agentcoliseum.xyz`.
+  // Embedded wallets still auto-create for users who pick any social path.
+  loginMethods: ["twitter", "farcaster", "email", "sms", "wallet"],
   embeddedWallets: {
     ethereum: { createOnLogin: "users-without-wallets" },
     showWalletUIs: true,

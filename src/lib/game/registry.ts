@@ -12,6 +12,7 @@ import { nimAdapter } from "./games/nim";
 import { hexAdapter } from "./games/hex";
 import { quoridorAdapter } from "./games/quoridor";
 import { santoriniAdapter } from "./games/santorini";
+import { takAdapter } from "./games/tak";
 
 // The registry holds adapters whose state/move types differ per game. Use a
 // permissive element type so we can mix them in one array; consumers cast to
@@ -32,6 +33,7 @@ export const ADAPTERS: AnyAdapter[] = [
   hexAdapter as unknown as AnyAdapter,
   quoridorAdapter as unknown as AnyAdapter,
   santoriniAdapter as unknown as AnyAdapter,
+  takAdapter as unknown as AnyAdapter,
 ];
 
 export const REGISTRY: Record<string, AnyAdapter> = Object.fromEntries(

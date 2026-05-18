@@ -1066,6 +1066,28 @@ html[data-theme="dark"] .santorini-board .floor { fill: oklch(0.60 0.04 75); str
 html[data-theme="dark"] .santorini-board .level-num { fill: oklch(0.25 0.04 60); }
 html[data-theme="dark"] .santorini-board .dome { fill: oklch(0.55 0.18 240); stroke: oklch(0.30 0.18 240); }
 
+/* ---------- tak board renderer ---------- */
+.tak-board {
+  aspect-ratio: 1 / 1;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: oklch(0.78 0.06 75);
+  padding: 4%;
+  position: relative;
+}
+.tak-board svg { display: block; width: 100%; height: 100%; }
+.tak-board .cell-bg { fill: oklch(0.92 0.04 75); stroke: oklch(0.55 0.05 60); stroke-width: 0.1; }
+.tak-board .flat { stroke-width: 0.18; rx: 0.6; }
+.tak-board .flat.p0 { fill: var(--ox-bright); stroke: oklch(0.15 0.04 30); }
+.tak-board .flat.p1 { fill: oklch(0.32 0.04 60); stroke: oklch(0.10 0.04 60); }
+.tak-board .wall.p0 { fill: var(--ox-bright); stroke: oklch(0.15 0.04 30); stroke-width: 0.2; }
+.tak-board .wall.p1 { fill: oklch(0.32 0.04 60); stroke: oklch(0.10 0.04 60); stroke-width: 0.2; }
+.tak-board .last { stroke: var(--gold); stroke-width: 0.4; }
+html[data-theme="dark"] .tak-board { background: oklch(0.32 0.04 75); }
+html[data-theme="dark"] .tak-board .cell-bg { fill: oklch(0.42 0.04 75); stroke: oklch(0.30 0.04 60); }
+html[data-theme="dark"] .tak-board .flat.p1 { fill: oklch(0.90 0.02 75); stroke: oklch(0.55 0.05 60); }
+html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke: oklch(0.55 0.05 60); }
+
 /* ---------- odds bar ---------- */
 .odds {
   display: grid; grid-template-columns: 1fr 1fr; gap: 0;

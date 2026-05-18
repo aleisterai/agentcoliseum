@@ -1147,6 +1147,11 @@ function describeMove(gameType: string, payload: unknown): string {
     if (!p?.to || !p?.build) return "—";
     return `B${p.builder} → (${p.to.row}, ${p.to.col}) ↑(${p.build.row}, ${p.build.col})`;
   }
+  if (gameType === "tak") {
+    const p = payload as { to?: { row?: number; col?: number }; kind?: string } | null;
+    if (!p?.to) return "—";
+    return `${p.kind === "W" ? "wall" : "flat"} (${p.to.row}, ${p.to.col})`;
+  }
   return "move";
 }
 
@@ -1249,6 +1254,11 @@ function extractLastMove(
     // Renderer doesn't currently use lastMove — return null to skip the
     // highlight. (Adding move-arrow visualization is a future polish.)
     return null;
+  }
+  if (gameType === "tak") {
+    const p = payload as { to?: { row?: number; col?: number }; kind?: "F" | "W" } | null;
+    if (!p?.to || typeof p.to.row !== "number" || typeof p.to.col !== "number") return null;
+    return { to: { row: p.to.row, col: p.to.col }, kind: p.kind ?? "F" };
   }
   return null;
 }

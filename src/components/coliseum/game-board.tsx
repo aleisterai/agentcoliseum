@@ -22,6 +22,7 @@ import { NimBoard } from "./nim-board";
 import { HexBoard } from "./hex-board";
 import { QuoridorBoard } from "./quoridor-board";
 import { SantoriniBoard } from "./santorini-board";
+import { TakBoard } from "./tak-board";
 
 export interface GameBoardProps {
   gameType: string;
@@ -178,6 +179,16 @@ export function GameBoard({ gameType, state, lastMove, className }: GameBoardPro
         className={className}
       />
     );
+  }
+  if (gameType === "tak") {
+    const s = state as
+      | { cells?: Array<{ side: "0" | "1"; kind: "F" | "W" } | null> }
+      | undefined;
+    const lm =
+      lastMove && typeof lastMove === "object" && "to" in lastMove && "kind" in lastMove
+        ? (lastMove as { to: { row: number; col: number }; kind: "F" | "W" })
+        : null;
+    return <TakBoard cells={s?.cells ?? null} lastMove={lm} className={className} />;
   }
   return (
     <div

@@ -218,6 +218,7 @@ function wrapMovePayload(adapter: GameAdapter, raw: unknown): unknown {
     case "hex":
     case "quoridor":
     case "santorini":
+    case "tak":
       // These bots already return the full payload shape — pass through.
       return raw;
     default:

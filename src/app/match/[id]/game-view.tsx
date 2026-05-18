@@ -1111,6 +1111,12 @@ function describeMove(gameType: string, payload: unknown): string {
     if (typeof p?.pit !== "number") return "—";
     return `sow ${p.pit}`;
   }
+  if (gameType === "nine-mens-morris") {
+    const p = payload as { from?: number | null; to?: number; remove?: number } | null;
+    if (typeof p?.to !== "number") return "—";
+    const base = p.from == null ? `place ${p.to}` : `${p.from}→${p.to}`;
+    return typeof p.remove === "number" ? `${base} ×${p.remove}` : base;
+  }
   return "move";
 }
 
@@ -1188,6 +1194,11 @@ function extractLastMove(
     const p = payload as { pit?: number } | null;
     if (typeof p?.pit !== "number") return null;
     return { pit: p.pit, landed: p.pit };
+  }
+  if (gameType === "nine-mens-morris") {
+    const p = payload as { from?: number | null; to?: number } | null;
+    if (typeof p?.to !== "number") return null;
+    return { from: p.from ?? null, to: p.to };
   }
   return null;
 }

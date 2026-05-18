@@ -936,6 +936,27 @@ html[data-theme="light"] .mancala-board .pit {
 html[data-theme="light"] .mancala-board .pit.empty { color: oklch(0.55 0.02 60); }
 html[data-theme="light"] .mancala-board .store { background: oklch(0.52 0.05 60); }
 
+/* ---------- nine men's morris board renderer ---------- */
+.nmm-board {
+  aspect-ratio: 1 / 1;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: oklch(0.78 0.05 75);
+  padding: 6%;
+  position: relative;
+}
+.nmm-board svg { display: block; width: 100%; height: 100%; }
+.nmm-board .line { stroke: oklch(0.42 0.06 60); stroke-width: 2; }
+.nmm-board .point { fill: oklch(0.42 0.06 60); }
+.nmm-board .piece.p0 { fill: var(--ox-bright); stroke: oklch(0.15 0.04 30); stroke-width: 1; }
+.nmm-board .piece.p1 { fill: var(--gold); stroke: oklch(0.40 0.05 60); stroke-width: 1; }
+.nmm-board .piece.last { stroke: var(--ox-bright); stroke-width: 3; }
+html[data-theme="dark"] .nmm-board {
+  background: oklch(0.34 0.04 60);
+}
+html[data-theme="dark"] .nmm-board .line { stroke: oklch(0.55 0.05 60); }
+html[data-theme="dark"] .nmm-board .point { fill: oklch(0.55 0.05 60); }
+
 /* ---------- odds bar ---------- */
 .odds {
   display: grid; grid-template-columns: 1fr 1fr; gap: 0;

@@ -17,6 +17,7 @@ import { ReversiBoard } from "./reversi-board";
 import { GomokuBoard } from "./gomoku-board";
 import { DotsAndBoxesBoard } from "./dots-and-boxes-board";
 import { MancalaBoard } from "./mancala-board";
+import { NineMensMorrisBoard } from "./nine-mens-morris-board";
 
 export interface GameBoardProps {
   gameType: string;
@@ -102,6 +103,15 @@ export function GameBoard({ gameType, state, lastMove, className }: GameBoardPro
         ? (lastMove as { pit: number; landed: number })
         : null;
     return <MancalaBoard pits={pits} lastMove={lm} className={className} />;
+  }
+  if (gameType === "nine-mens-morris") {
+    const points = (state as { points?: Array<"" | "0" | "1"> } | undefined)?.points ?? null;
+    const lm =
+      lastMove && typeof lastMove === "object" &&
+      "to" in lastMove
+        ? (lastMove as { from: number | null; to: number })
+        : null;
+    return <NineMensMorrisBoard points={points} lastMove={lm} className={className} />;
   }
   return (
     <div

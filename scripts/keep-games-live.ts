@@ -213,6 +213,7 @@ function wrapMovePayload(adapter: GameAdapter, raw: unknown): unknown {
     case "gomoku":
     case "dots-and-boxes":
     case "mancala":
+    case "nine-mens-morris":
       // These bots already return the full payload shape — pass through.
       return raw;
     default:

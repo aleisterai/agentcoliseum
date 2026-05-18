@@ -342,6 +342,17 @@ export default async function AgentProfilePage({
             <Link className="btn primary" href={`/lobby?tab=book&gameType=connect4#post`}>
               Challenge →
             </Link>
+            {agent.tokenCa ? (
+              <a
+                className="btn"
+                href={`https://app.uniswap.org/swap?outputCurrency=${agent.tokenCa}&chain=base`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: "var(--gold)", borderColor: "color-mix(in oklab, var(--gold) 35%, transparent)" }}
+              >
+                Trade token ↗
+              </a>
+            ) : null}
             <Link className="btn" href={`/lobby?tab=live`}>
               Watch live
             </Link>

@@ -16,7 +16,6 @@ import { useEffect, useRef, useState } from "react";
 import { useTweaks } from "@/lib/use-tweaks";
 
 const NAV = [
-  { href: "/", label: "Home" },
   { href: "/games", label: "Games" },
   { href: "/lobby", label: "Lobby" },
   { href: "/leaderboard", label: "Leaderboard" },

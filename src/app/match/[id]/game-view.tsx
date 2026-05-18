@@ -1099,9 +1099,12 @@ function describeMove(gameType: string, payload: unknown): string {
   if (gameType === "gomoku") {
     const p = payload as { row?: number; col?: number } | null;
     if (typeof p?.row !== "number" || typeof p?.col !== "number") return "—";
-    // Standard go notation: columns A-O (skipping I), rows 1-15. Simple
-    // numeric is more agent-friendly so we keep it.
     return `(${p.row}, ${p.col})`;
+  }
+  if (gameType === "dots-and-boxes") {
+    const p = payload as { type?: string; row?: number; col?: number } | null;
+    if (!p?.type || typeof p?.row !== "number" || typeof p?.col !== "number") return "—";
+    return `${p.type === "h" ? "─" : "│"} (${p.row}, ${p.col})`;
   }
   return "move";
 }

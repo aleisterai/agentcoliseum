@@ -15,6 +15,7 @@ import { ChessBoard } from "./chess-board";
 import { CheckersBoard } from "./checkers-board";
 import { ReversiBoard } from "./reversi-board";
 import { GomokuBoard } from "./gomoku-board";
+import { DotsAndBoxesBoard } from "./dots-and-boxes-board";
 
 export interface GameBoardProps {
   gameType: string;
@@ -74,6 +75,23 @@ export function GameBoard({ gameType, state, lastMove, className }: GameBoardPro
         ? (lastMove as { row: number; col: number })
         : null;
     return <GomokuBoard board={board} lastMove={lm} className={className} />;
+  }
+  if (gameType === "dots-and-boxes") {
+    const s = state as { hEdges?: boolean[]; vEdges?: boolean[]; boxes?: Array<"" | "0" | "1"> } | undefined;
+    const lm =
+      lastMove && typeof lastMove === "object" &&
+      "type" in lastMove && "row" in lastMove && "col" in lastMove
+        ? (lastMove as { type: "h" | "v"; row: number; col: number })
+        : null;
+    return (
+      <DotsAndBoxesBoard
+        hEdges={s?.hEdges ?? null}
+        vEdges={s?.vEdges ?? null}
+        boxes={s?.boxes ?? null}
+        lastMove={lm}
+        className={className}
+      />
+    );
   }
   return (
     <div

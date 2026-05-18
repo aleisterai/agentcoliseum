@@ -18,7 +18,9 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePrivy } from "@privy-io/react-auth";
-import { useAccount } from "wagmi";
+import { useAccount, useWalletClient } from "wagmi";
+import { publicActions } from "viem";
+import { wrapFetchWithPayment } from "x402-fetch";
 import { CopyButton } from "@/components/coliseum/copy-button";
 import { TierBadge } from "@/components/coliseum/tier-badge";
 import { useTier } from "@/lib/hooks/use-tier";
@@ -34,6 +36,7 @@ export default function RegisterPage() {
   const { ready, authenticated, login, getAccessToken } = usePrivy();
   const { address } = useAccount();
   const { data: tier } = useTier();
+  const { data: walletClient } = useWalletClient();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [minted, setMinted] = useState<Minted | null>(null);
@@ -44,6 +47,9 @@ export default function RegisterPage() {
     setError(null);
     setSubmitting(true);
     try {
+      if (!walletClient) throw new Error("Wallet not ready — reconnect and try again");
+
+      // Step 1 — owner bootstrap (Privy JWT → owner row + ownerApiKey).
       const privyToken = await getAccessToken();
       if (!privyToken) throw new Error("Could not get Privy session");
       const meRes = await fetch("/api/owners/me", {
@@ -53,7 +59,22 @@ export default function RegisterPage() {
       if (!meRes.ok) throw new Error(`owner init failed: ${meRes.status}`);
       const me: { apiKey: string } = await meRes.json();
 
-      const regRes = await fetch("/api/agents/register", {
+      // Step 2 — x402-aware fetch. The browser handles the 402 dance:
+      // server returns payment requirements → x402-fetch signs an
+      // ERC-3009 transferWithAuthorization with the user's wallet →
+      // retries the request with the X-PAYMENT header → server settles
+      // via the x402 facilitator and runs the handler. The user sees one
+      // signing prompt in their wallet.
+      const signer = walletClient.extend(publicActions);
+      // x402-fetch's signer type requires both wallet + public actions;
+      // wagmi's WalletClient + viem publicActions matches at runtime even
+      // if TypeScript narrows pedantically. Cast through unknown.
+      const fetchWithPay = wrapFetchWithPayment(
+        fetch,
+        signer as unknown as Parameters<typeof wrapFetchWithPayment>[1],
+      );
+
+      const regRes = await fetchWithPay("/api/agents/register", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${me.apiKey}`,
@@ -61,12 +82,6 @@ export default function RegisterPage() {
         },
         body: "{}",
       });
-      if (regRes.status === 402) {
-        setError(
-          "Credential mint costs 0.10 USDC via x402. The browser payment flow is not implemented yet — for now, run the curl command from /skill.md from a wallet that holds USDC on Base.",
-        );
-        return;
-      }
       if (!regRes.ok) {
         const j = await regRes.json().catch(() => ({}));
         throw new Error(j?.message ?? `register failed: ${regRes.status}`);
@@ -74,7 +89,17 @@ export default function RegisterPage() {
       const data = (await regRes.json()) as Minted;
       setMinted(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      // Friendlier surface for common failure modes.
+      if (/user rejected|user denied|user_rejected/i.test(msg)) {
+        setError("Signing canceled in wallet. Try again to mint.");
+      } else if (/insufficient|balance|allowance/i.test(msg)) {
+        setError(
+          "Your wallet doesn't have enough USDC on Base for the 0.10 USDC anti-spam fee. Top up and retry.",
+        );
+      } else {
+        setError(msg);
+      }
     } finally {
       setSubmitting(false);
     }

@@ -13,12 +13,12 @@
  */
 import { NextResponse } from "next/server";
 import { and, eq, ne } from "drizzle-orm";
-import { z } from "zod";
 import { db } from "@/lib/db/client";
 import { agents } from "@/lib/db/schema";
 import { errorResponse, jsonError } from "@/lib/http";
 import { UnauthorizedError } from "@/lib/auth";
 import { slugifyHandle } from "@/lib/utils";
+import { AgentSelfPatchSchema } from "./schema";
 
 export const dynamic = "force-dynamic";
 
@@ -68,28 +68,8 @@ export async function GET(req: Request) {
   }
 }
 
-const PatchSchema = z
-  .object({
-    handle: z.string().min(2).max(32).optional(),
-    displayName: z.string().min(1).max(80).optional(),
-    bio: z.string().max(2000).nullable().optional(),
-    avatarUrl: z.string().url().max(500).nullable().optional(),
-    tokenCa: z
-      .string()
-      .regex(/^0x[a-fA-F0-9]{40}$/, "tokenCa must be a 0x… EVM address")
-      .nullable()
-      .optional(),
-    website: z.string().url().max(500).nullable().optional(),
-    socials: z
-      .object({
-        x: z.string().max(80).optional(),
-        github: z.string().max(80).optional(),
-        farcaster: z.string().max(80).optional(),
-      })
-      .nullable()
-      .optional(),
-  })
-  .strict();
+// PatchSchema moved to ./schema.ts so it can be unit-tested without
+// pulling the server-only DB client. See `AgentSelfPatchSchema` import.
 
 export async function PATCH(req: Request) {
   try {
@@ -107,7 +87,7 @@ export async function PATCH(req: Request) {
     } catch {
       return jsonError(400, "bad_request", "Body must be valid JSON");
     }
-    const parsed = PatchSchema.safeParse(body);
+    const parsed = AgentSelfPatchSchema.safeParse(body);
     if (!parsed.success) {
       return jsonError(400, "bad_request", "Body failed validation", parsed.error.flatten());
     }

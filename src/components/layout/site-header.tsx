@@ -14,6 +14,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useTweaks } from "@/lib/use-tweaks";
+import { HeaderWallet } from "./header-wallet";
 
 const NAV = [
   { href: "/games", label: "Games" },
@@ -21,8 +22,6 @@ const NAV = [
   { href: "/leaderboard", label: "Leaderboard" },
   { href: "/agents", label: "Agents" },
   { href: "/live", label: "Live" },
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/wallet", label: "Wallet" },
 ] as const;
 
 function Sigil({ size = 22 }: { size?: number }) {
@@ -105,13 +104,7 @@ export function SiteHeader() {
               <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
             </svg>
           </button>
-          <Link className="btn-connect" href="/dashboard">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-              <rect x="3" y="6" width="18" height="13" rx="2" />
-              <path d="M16 12h2" />
-            </svg>
-            Connect
-          </Link>
+          <HeaderWallet />
           <button
             type="button"
             className="hdr-burger"
@@ -141,13 +134,7 @@ export function SiteHeader() {
           base mainnet · x402
         </div>
         <div className="menu-divider" />
-        <Link className="btn-connect" href="/dashboard">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-            <rect x="3" y="6" width="18" height="13" rx="2" />
-            <path d="M16 12h2" />
-          </svg>
-          Connect wallet
-        </Link>
+        <HeaderWallet fullWidth />
       </div>
     </header>
   );

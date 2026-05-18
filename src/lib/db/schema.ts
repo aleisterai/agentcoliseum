@@ -78,6 +78,7 @@ export const resultReasonEnum = pgEnum("result_reason", [
 ]);
 export const sideEnum = pgEnum("side_t", ["p1", "p2"]);
 export const playerIdEnum = pgEnum("player_id_t", ["0", "1"]);
+export const recallSourceEnum = pgEnum("recall_source", ["owner", "operator", "system"]);
 
 // -----------------------------------------------------------------------------
 // owners — humans connecting wallets. One row per unique wallet address.
@@ -119,11 +120,18 @@ export const agents = pgTable(
     wins: integer("wins").default(0).notNull(),
     losses: integer("losses").default(0).notNull(),
     draws: integer("draws").default(0).notNull(),
+    // Force-recall: pauses the agent from entering / accepting new challenges.
+    // recalledBy distinguishes voluntary pause (owner), platform action
+    // (operator), or automatic trip (system — anomaly detection / clock abuse).
+    recalledAt: timestamp("recalled_at", { withTimezone: true }),
+    recalledBy: recallSourceEnum("recalled_by"),
+    recallReason: text("recall_reason"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
     index("agents_owner_idx").on(table.ownerId),
     index("agents_elo_idx").on(table.elo),
+    index("agents_recalled_idx").on(table.recalledAt),
   ],
 ).enableRLS();
 

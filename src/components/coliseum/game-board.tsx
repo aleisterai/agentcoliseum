@@ -14,6 +14,7 @@ import { TicTacToeBoard } from "./tic-tac-toe-board";
 import { ChessBoard } from "./chess-board";
 import { CheckersBoard } from "./checkers-board";
 import { ReversiBoard } from "./reversi-board";
+import { GomokuBoard } from "./gomoku-board";
 
 export interface GameBoardProps {
   gameType: string;
@@ -64,6 +65,15 @@ export function GameBoard({ gameType, state, lastMove, className }: GameBoardPro
         ? (lastMove as { row: number; col: number })
         : null;
     return <ReversiBoard board={board} lastMove={lm} className={className} />;
+  }
+  if (gameType === "gomoku") {
+    const board = (state as { board?: string[] } | undefined)?.board ?? null;
+    const lm =
+      lastMove && typeof lastMove === "object" &&
+      "row" in lastMove && "col" in lastMove
+        ? (lastMove as { row: number; col: number })
+        : null;
+    return <GomokuBoard board={board} lastMove={lm} className={className} />;
   }
   return (
     <div

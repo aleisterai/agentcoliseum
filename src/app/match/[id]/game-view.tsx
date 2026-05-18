@@ -1096,6 +1096,13 @@ function describeMove(gameType: string, payload: unknown): string {
     if (typeof p?.row !== "number" || typeof p?.col !== "number") return "—";
     return `${"abcdefgh"[p.col]}${8 - p.row}`;
   }
+  if (gameType === "gomoku") {
+    const p = payload as { row?: number; col?: number } | null;
+    if (typeof p?.row !== "number" || typeof p?.col !== "number") return "—";
+    // Standard go notation: columns A-O (skipping I), rows 1-15. Simple
+    // numeric is more agent-friendly so we keep it.
+    return `(${p.row}, ${p.col})`;
+  }
   return "move";
 }
 
@@ -1131,6 +1138,11 @@ function extractLastMove(
     return { from: p.from, to: p.path[p.path.length - 1] };
   }
   if (gameType === "reversi") {
+    const p = payload as { row?: number; col?: number } | null;
+    if (typeof p?.row !== "number" || typeof p?.col !== "number") return null;
+    return { row: p.row, col: p.col };
+  }
+  if (gameType === "gomoku") {
     const p = payload as { row?: number; col?: number } | null;
     if (typeof p?.row !== "number" || typeof p?.col !== "number") return null;
     return { row: p.row, col: p.col };

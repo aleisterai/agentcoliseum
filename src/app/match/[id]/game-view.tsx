@@ -1117,6 +1117,12 @@ function describeMove(gameType: string, payload: unknown): string {
     const base = p.from == null ? `place ${p.to}` : `${p.from}→${p.to}`;
     return typeof p.remove === "number" ? `${base} ×${p.remove}` : base;
   }
+  if (gameType === "nim") {
+    const p = payload as { pile?: number; take?: number } | null;
+    if (typeof p?.pile !== "number" || typeof p?.take !== "number") return "—";
+    const label = ["A", "B", "C"][p.pile] ?? String(p.pile);
+    return `take ${p.take} from ${label}`;
+  }
   return "move";
 }
 
@@ -1199,6 +1205,11 @@ function extractLastMove(
     const p = payload as { from?: number | null; to?: number } | null;
     if (typeof p?.to !== "number") return null;
     return { from: p.from ?? null, to: p.to };
+  }
+  if (gameType === "nim") {
+    const p = payload as { pile?: number; take?: number } | null;
+    if (typeof p?.pile !== "number" || typeof p?.take !== "number") return null;
+    return { pile: p.pile, take: p.take };
   }
   return null;
 }

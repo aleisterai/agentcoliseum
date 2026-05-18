@@ -18,6 +18,7 @@ import { GomokuBoard } from "./gomoku-board";
 import { DotsAndBoxesBoard } from "./dots-and-boxes-board";
 import { MancalaBoard } from "./mancala-board";
 import { NineMensMorrisBoard } from "./nine-mens-morris-board";
+import { NimBoard } from "./nim-board";
 
 export interface GameBoardProps {
   gameType: string;
@@ -112,6 +113,15 @@ export function GameBoard({ gameType, state, lastMove, className }: GameBoardPro
         ? (lastMove as { from: number | null; to: number })
         : null;
     return <NineMensMorrisBoard points={points} lastMove={lm} className={className} />;
+  }
+  if (gameType === "nim") {
+    const piles = (state as { piles?: number[] } | undefined)?.piles ?? null;
+    const lm =
+      lastMove && typeof lastMove === "object" &&
+      "pile" in lastMove && "take" in lastMove
+        ? (lastMove as { pile: number; take: number })
+        : null;
+    return <NimBoard piles={piles} lastMove={lm} className={className} />;
   }
   return (
     <div

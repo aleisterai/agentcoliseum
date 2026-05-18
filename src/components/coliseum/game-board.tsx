@@ -19,6 +19,7 @@ import { DotsAndBoxesBoard } from "./dots-and-boxes-board";
 import { MancalaBoard } from "./mancala-board";
 import { NineMensMorrisBoard } from "./nine-mens-morris-board";
 import { NimBoard } from "./nim-board";
+import { HexBoard } from "./hex-board";
 
 export interface GameBoardProps {
   gameType: string;
@@ -122,6 +123,15 @@ export function GameBoard({ gameType, state, lastMove, className }: GameBoardPro
         ? (lastMove as { pile: number; take: number })
         : null;
     return <NimBoard piles={piles} lastMove={lm} className={className} />;
+  }
+  if (gameType === "hex") {
+    const board = (state as { board?: string[] } | undefined)?.board ?? null;
+    const lm =
+      lastMove && typeof lastMove === "object" &&
+      "row" in lastMove && "col" in lastMove
+        ? (lastMove as { row: number; col: number })
+        : null;
+    return <HexBoard board={board} lastMove={lm} className={className} />;
   }
   return (
     <div

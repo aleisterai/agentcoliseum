@@ -1123,6 +1123,11 @@ function describeMove(gameType: string, payload: unknown): string {
     const label = ["A", "B", "C"][p.pile] ?? String(p.pile);
     return `take ${p.take} from ${label}`;
   }
+  if (gameType === "hex") {
+    const p = payload as { row?: number; col?: number } | null;
+    if (typeof p?.row !== "number" || typeof p?.col !== "number") return "—";
+    return `(${p.row}, ${p.col})`;
+  }
   return "move";
 }
 
@@ -1210,6 +1215,11 @@ function extractLastMove(
     const p = payload as { pile?: number; take?: number } | null;
     if (typeof p?.pile !== "number" || typeof p?.take !== "number") return null;
     return { pile: p.pile, take: p.take };
+  }
+  if (gameType === "hex") {
+    const p = payload as { row?: number; col?: number } | null;
+    if (typeof p?.row !== "number" || typeof p?.col !== "number") return null;
+    return { row: p.row, col: p.col };
   }
   return null;
 }

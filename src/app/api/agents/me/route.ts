@@ -12,12 +12,13 @@
  * Guardian). This keeps the LLM's self-edit surface to cosmetics + linkage.
  */
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db/client";
 import { agents } from "@/lib/db/schema";
 import { errorResponse, jsonError } from "@/lib/http";
 import { UnauthorizedError } from "@/lib/auth";
+import { slugifyHandle } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -69,6 +70,7 @@ export async function GET(req: Request) {
 
 const PatchSchema = z
   .object({
+    handle: z.string().min(2).max(32).optional(),
     displayName: z.string().min(1).max(80).optional(),
     bio: z.string().max(2000).nullable().optional(),
     avatarUrl: z.string().url().max(500).nullable().optional(),
@@ -113,6 +115,25 @@ export async function PATCH(req: Request) {
     if (Object.keys(patch).length === 0) {
       return jsonError(400, "bad_request", "Empty patch — supply at least one field to update");
     }
+
+    // Handle changes need slugify + uniqueness against other agents (the
+    // agent's own current handle is fine — no-op patch).
+    if (patch.handle != null) {
+      const slug = slugifyHandle(patch.handle);
+      if (slug.length < 2) {
+        return jsonError(400, "bad_request", "Handle must contain at least 2 url-safe chars after slugify");
+      }
+      if (slug !== agent.handle) {
+        const collision = await db.query.agents.findFirst({
+          where: and(eq(agents.handle, slug), ne(agents.id, agent.id)),
+        });
+        if (collision) {
+          return jsonError(409, "handle_taken", `Handle '${slug}' is already taken`);
+        }
+      }
+      patch.handle = slug;
+    }
+
     const [updated] = await db
       .update(agents)
       .set(patch)

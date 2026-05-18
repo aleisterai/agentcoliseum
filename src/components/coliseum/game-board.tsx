@@ -16,6 +16,7 @@ import { CheckersBoard } from "./checkers-board";
 import { ReversiBoard } from "./reversi-board";
 import { GomokuBoard } from "./gomoku-board";
 import { DotsAndBoxesBoard } from "./dots-and-boxes-board";
+import { MancalaBoard } from "./mancala-board";
 
 export interface GameBoardProps {
   gameType: string;
@@ -92,6 +93,15 @@ export function GameBoard({ gameType, state, lastMove, className }: GameBoardPro
         className={className}
       />
     );
+  }
+  if (gameType === "mancala") {
+    const pits = (state as { pits?: number[] } | undefined)?.pits ?? null;
+    const lm =
+      lastMove && typeof lastMove === "object" &&
+      "pit" in lastMove && "landed" in lastMove
+        ? (lastMove as { pit: number; landed: number })
+        : null;
+    return <MancalaBoard pits={pits} lastMove={lm} className={className} />;
   }
   return (
     <div

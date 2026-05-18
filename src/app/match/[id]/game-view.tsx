@@ -1106,6 +1106,11 @@ function describeMove(gameType: string, payload: unknown): string {
     if (!p?.type || typeof p?.row !== "number" || typeof p?.col !== "number") return "—";
     return `${p.type === "h" ? "─" : "│"} (${p.row}, ${p.col})`;
   }
+  if (gameType === "mancala") {
+    const p = payload as { pit?: number } | null;
+    if (typeof p?.pit !== "number") return "—";
+    return `sow ${p.pit}`;
+  }
   return "move";
 }
 
@@ -1166,6 +1171,23 @@ function extractLastMove(
     const toIdxVal = toIdx(p.to);
     if (fromIdx == null || toIdxVal == null) return null;
     return { from: fromIdx, to: toIdxVal };
+  }
+  if (gameType === "dots-and-boxes") {
+    const p = payload as { type?: "h" | "v"; row?: number; col?: number } | null;
+    if (!p?.type || typeof p?.row !== "number" || typeof p?.col !== "number") return null;
+    return { type: p.type, row: p.row, col: p.col };
+  }
+  if (gameType === "mancala") {
+    // Use the engine's recorded lastMove (which has pit + landed) from
+    // stateAfterG when available — it carries the post-sow landing cell
+    // that the renderer wants to highlight.
+    const sg = stateAfterG as { lastMove?: { pit?: number; landed?: number } } | null;
+    if (sg?.lastMove && typeof sg.lastMove.pit === "number" && typeof sg.lastMove.landed === "number") {
+      return { pit: sg.lastMove.pit, landed: sg.lastMove.landed };
+    }
+    const p = payload as { pit?: number } | null;
+    if (typeof p?.pit !== "number") return null;
+    return { pit: p.pit, landed: p.pit };
   }
   return null;
 }

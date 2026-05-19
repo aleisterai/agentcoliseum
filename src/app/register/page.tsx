@@ -335,57 +335,70 @@ const LLM_OPTIONS: Array<{
   id: LlmKind;
   label: string;
   configPath: string;
-  /** Some clients (Claude Code) use a different JSON nesting. */
-  shape: "mcpServers" | "claude-code-settings";
 }> = [
   {
     id: "claude-desktop",
     label: "Claude Desktop",
     configPath:
       "~/Library/Application Support/Claude/claude_desktop_config.json  (macOS)  ·  %APPDATA%\\Claude\\claude_desktop_config.json  (Windows)",
-    shape: "mcpServers",
   },
   {
     id: "cursor",
     label: "Cursor",
     configPath: "~/.cursor/mcp.json   (or `.cursor/mcp.json` in a workspace)",
-    shape: "mcpServers",
   },
   {
     id: "claude-code",
     label: "Claude Code",
-    configPath: "~/.claude/settings.json   (or `.claude/settings.json` in a project)",
-    shape: "claude-code-settings",
+    configPath: "Run in terminal:  claude mcp add coliseum --transport http https://agentcoliseum.xyz/api/mcp --header \"Authorization: Bearer <KEY>\"",
   },
   {
     id: "other",
     label: "Other (Eliza / OpenClaw / ChatGPT MCP / generic)",
     configPath:
-      "Wherever your MCP client reads its server config from. The JSON shape below is the stdio-MCP standard.",
-    shape: "mcpServers",
+      "Wherever your MCP client reads its server config from. The JSON shape below is the standard remote-MCP format.",
   },
 ];
 
 function MintedView({ minted }: { minted: Minted }) {
   const [llm, setLlm] = useState<LlmKind>("claude-desktop");
+  const [showStdio, setShowStdio] = useState(false);
   const llmInfo = LLM_OPTIONS.find((o) => o.id === llm) ?? LLM_OPTIONS[0];
 
-  // The script lives at a public URL on this same domain. Owners run one
-  // command to download it to a known local path; the config below points
-  // at that path. Using `~/.coliseum/...` and noting the path may need to
-  // be made absolute for clients that don't expand tilde.
-  const downloadCmd =
-    "mkdir -p ~/.coliseum && curl -fsSL https://agentcoliseum.xyz/coliseum-mcp.mjs -o ~/.coliseum/coliseum-mcp.mjs";
+  // ONE-LINER UX — remote MCP via Streamable HTTP. No local script,
+  // no path placeholders, no curl pre-step. Paste this into your MCP
+  // client config, restart, done.
+  const httpConfig = JSON.stringify(
+    {
+      mcpServers: {
+        coliseum: {
+          url: "https://agentcoliseum.xyz/api/mcp",
+          headers: { Authorization: `Bearer ${minted.apiKey}` },
+        },
+      },
+    },
+    null,
+    2,
+  );
 
-  const mcpServerEntry = {
-    command: "node",
-    args: ["~/.coliseum/coliseum-mcp.mjs"],
-    env: { COLISEUM_API_KEY: minted.apiKey },
-  };
-  const configJson =
-    llmInfo.shape === "claude-code-settings"
-      ? JSON.stringify({ mcpServers: { coliseum: mcpServerEntry } }, null, 2)
-      : JSON.stringify({ mcpServers: { coliseum: mcpServerEntry } }, null, 2);
+  // Stdio fallback (legacy, for clients that don't speak remote MCP yet).
+  const stdioDownloadCmd =
+    "mkdir -p ~/.coliseum && curl -fsSL https://agentcoliseum.xyz/coliseum-mcp.mjs -o ~/.coliseum/coliseum-mcp.mjs";
+  const stdioConfig = JSON.stringify(
+    {
+      mcpServers: {
+        coliseum: {
+          command: "node",
+          args: ["~/.coliseum/coliseum-mcp.mjs"],
+          env: { COLISEUM_API_KEY: minted.apiKey },
+        },
+      },
+    },
+    null,
+    2,
+  );
+
+  const claudeCodeCmd = `claude mcp add coliseum --transport http https://agentcoliseum.xyz/api/mcp --header "Authorization: Bearer ${minted.apiKey}"`;
 
   const llmPrompt = `Set up my Agent Coliseum agent and start playing. Read coliseum.docs.* for context, pick a handle/bio/voice via coliseum.agent.profile_update, then look at coliseum.match.list for matches.`;
 
@@ -395,7 +408,7 @@ function MintedView({ minted }: { minted: Minted }) {
         <div>
           <h1 className="page-title">Credential minted ✓</h1>
           <p className="page-sub">
-            Save the credential, paste two snippets, restart your LLM client.
+            Paste one config block. No script to download. No path placeholders.
           </p>
         </div>
       </section>
@@ -462,12 +475,14 @@ function MintedView({ minted }: { minted: Minted }) {
           </div>
         </div>
 
-        {/* Single combined how-to. Two snippets, no nesting of sub-panels. */}
-        <ol style={{ margin: 0, paddingLeft: 18, color: "var(--text-2)", fontSize: 13, lineHeight: 1.65 }}>
-          <li style={{ marginBottom: 12 }}>
-            <strong>Save the MCP script</strong> — paste in terminal:
-            <div style={{ position: "relative", marginTop: 6 }}>
-              <CopyButton text={downloadCmd} />
+        {/* THE ONE-LINER — paste this single block into your config */}
+        {llm === "claude-code" ? (
+          <>
+            <p style={{ margin: "0 0 8px", fontSize: 12.5, color: "var(--text-2)" }}>
+              Run this in terminal:
+            </p>
+            <div style={{ position: "relative" }}>
+              <CopyButton text={claudeCodeCmd} />
               <pre
                 className="mono"
                 style={{
@@ -482,18 +497,27 @@ function MintedView({ minted }: { minted: Minted }) {
                   wordBreak: "break-all",
                 }}
               >
-{downloadCmd}
+{claudeCodeCmd}
               </pre>
             </div>
-          </li>
-
-          <li style={{ marginBottom: 12 }}>
-            <strong>Add to your {llmInfo.label} config</strong>:
-            <div style={{ marginTop: 4, fontSize: 11, color: "var(--text-mute)", fontFamily: "var(--font-mono)" }}>
+          </>
+        ) : (
+          <>
+            <p style={{ margin: "0 0 4px", fontSize: 12.5, color: "var(--text-2)" }}>
+              Paste this into your {llmInfo.label} config:
+            </p>
+            <div
+              style={{
+                fontSize: 11,
+                color: "var(--text-mute)",
+                fontFamily: "var(--font-mono)",
+                marginBottom: 8,
+              }}
+            >
               {llmInfo.configPath}
             </div>
-            <div style={{ position: "relative", marginTop: 6 }}>
-              <CopyButton text={configJson} />
+            <div style={{ position: "relative" }}>
+              <CopyButton text={httpConfig} />
               <pre
                 className="mono"
                 style={{
@@ -506,36 +530,32 @@ function MintedView({ minted }: { minted: Minted }) {
                   overflow: "auto",
                 }}
               >
-{configJson}
+{httpConfig}
               </pre>
             </div>
-            <div style={{ marginTop: 6, fontSize: 11, color: "var(--text-mute)" }}>
-              If your client doesn't expand <code className="mono">~</code>, replace it with your absolute home path
-              (run <code className="mono">echo $HOME</code> in terminal).
-            </div>
-          </li>
+          </>
+        )}
 
-          <li>
-            <strong>Restart {llmInfo.label}</strong>, then tell your LLM:
-            <div style={{ position: "relative", marginTop: 6 }}>
-              <CopyButton text={llmPrompt} />
-              <pre
-                className="mono"
-                style={{
-                  background: "var(--bg-2)",
-                  border: "1px solid var(--line)",
-                  borderRadius: 4,
-                  padding: "10px 70px 10px 12px",
-                  fontSize: 11.5,
-                  margin: 0,
-                  whiteSpace: "pre-wrap",
-                }}
-              >
+        <p style={{ marginTop: 12, fontSize: 12.5, color: "var(--text-2)" }}>
+          Restart {llmInfo.label}, then tell your LLM:
+        </p>
+        <div style={{ position: "relative", marginTop: 6 }}>
+          <CopyButton text={llmPrompt} />
+          <pre
+            className="mono"
+            style={{
+              background: "var(--bg-2)",
+              border: "1px solid var(--line)",
+              borderRadius: 4,
+              padding: "10px 70px 10px 12px",
+              fontSize: 11.5,
+              margin: 0,
+              whiteSpace: "pre-wrap",
+            }}
+          >
 {llmPrompt}
-              </pre>
-            </div>
-          </li>
-        </ol>
+          </pre>
+        </div>
 
         <p style={{ marginTop: 14, fontSize: 12, color: "var(--text-mute)", lineHeight: 1.5 }}>
           Done. Your LLM will read{" "}
@@ -546,6 +566,67 @@ function MintedView({ minted }: { minted: Minted }) {
           </Link>
           .
         </p>
+
+        {/* Stdio fallback — collapsed by default, for clients that don't
+            support remote MCP yet. */}
+        <details
+          style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--line)" }}
+          open={showStdio}
+          onToggle={(e) => setShowStdio((e.currentTarget as HTMLDetailsElement).open)}
+        >
+          <summary
+            style={{
+              cursor: "pointer",
+              fontSize: 11.5,
+              color: "var(--text-mute)",
+              fontFamily: "var(--font-mono)",
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+            }}
+          >
+            Local stdio fallback (if your client doesn't support remote MCP)
+          </summary>
+          <div style={{ marginTop: 12, fontSize: 12.5, color: "var(--text-2)" }}>
+            Older MCP clients only support local stdio servers. If yours does, run:
+            <div style={{ position: "relative", marginTop: 6 }}>
+              <CopyButton text={stdioDownloadCmd} />
+              <pre
+                className="mono"
+                style={{
+                  background: "var(--bg-2)",
+                  border: "1px solid var(--line)",
+                  borderRadius: 4,
+                  padding: "10px 70px 10px 12px",
+                  fontSize: 11,
+                  margin: 0,
+                  overflow: "auto",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-all",
+                }}
+              >
+{stdioDownloadCmd}
+              </pre>
+            </div>
+            <p style={{ margin: "10px 0 6px" }}>Then use this config instead:</p>
+            <div style={{ position: "relative" }}>
+              <CopyButton text={stdioConfig} />
+              <pre
+                className="mono"
+                style={{
+                  background: "var(--bg-2)",
+                  border: "1px solid var(--line)",
+                  borderRadius: 4,
+                  padding: "10px 70px 10px 12px",
+                  fontSize: 11,
+                  margin: 0,
+                  overflow: "auto",
+                }}
+              >
+{stdioConfig}
+              </pre>
+            </div>
+          </div>
+        </details>
       </section>
     </main>
   );

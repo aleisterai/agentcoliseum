@@ -10,6 +10,8 @@ import { OwnerMcpSetup } from "@/components/coliseum/owner-mcp-setup";
 import { OwnerVoiceSetup } from "@/components/coliseum/owner-voice-setup";
 import { OwnerRecallControl } from "@/components/coliseum/owner-recall-control";
 import { OwnerStakeControl } from "@/components/coliseum/owner-stake-control";
+import { OwnerCoinControl } from "@/components/coliseum/owner-coin-control";
+import { readErc20Metadata } from "@/lib/chain/erc20-token";
 import { AgentProfileTabs } from "./tabs";
 
 /* Profile page — match history + Elo trail; 30s window. */
@@ -253,6 +255,14 @@ export default async function AgentProfilePage({
     else break;
   }
   const streakLabel = streak === "—" ? "—" : `${streak}${streakCount}`;
+
+  // Coin metadata — server-side ERC-20 read. Null if no CA bound or
+  // the read fails (e.g., the linked token got self-destructed). The
+  // page revalidate (30s) caches this between requests; readErc20Metadata
+  // returns null on any read error so we degrade silently.
+  const coinMeta = agent.tokenCa
+    ? await readErc20Metadata(agent.tokenCa as `0x${string}`)
+    : null;
 
   // ELO chart: reconstruct from current elo and deltas
   let curr = agent.elo;
@@ -552,8 +562,101 @@ export default async function AgentProfilePage({
         </div>
       </section>
 
+      {coinMeta ? (
+        <section
+          className="panel"
+          style={{
+            padding: 0,
+            marginTop: 18,
+            borderColor: "color-mix(in oklab, var(--gold) 30%, transparent)",
+            background: "color-mix(in oklab, var(--gold) 4%, transparent)",
+          }}
+        >
+          <div className="panel-hd">
+            <span className="panel-hd-title">Coin</span>
+            <span
+              className="mono"
+              style={{
+                fontSize: 10,
+                letterSpacing: "0.12em",
+                textTransform: "uppercase",
+                color: "var(--gold)",
+              }}
+            >
+              ● linked · ERC-20 on Base
+            </span>
+          </div>
+          <div
+            style={{
+              padding: 18,
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: 18,
+            }}
+          >
+            <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+              <span
+                className="mono"
+                style={{ fontSize: 26, fontWeight: 700, color: "var(--gold)" }}
+              >
+                ${coinMeta.symbol}
+              </span>
+              <span style={{ fontSize: 13, color: "var(--text-2)" }}>
+                {coinMeta.name}
+              </span>
+              <a
+                className="mono dim"
+                href={`https://basescan.org/token/${coinMeta.address}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ fontSize: 11, marginTop: 2 }}
+              >
+                {coinMeta.address.slice(0, 10)}…{coinMeta.address.slice(-6)} ↗
+              </a>
+            </div>
+            <div
+              style={{
+                marginLeft: "auto",
+                display: "flex",
+                gap: 8,
+                flexWrap: "wrap",
+              }}
+            >
+              <a
+                className="btn"
+                href={`https://app.uniswap.org/swap?outputCurrency=${coinMeta.address}&chain=base`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: "var(--gold)",
+                  borderColor: "color-mix(in oklab, var(--gold) 45%, transparent)",
+                  background: "color-mix(in oklab, var(--gold) 12%, transparent)",
+                  padding: "8px 14px",
+                  textDecoration: "none",
+                }}
+              >
+                Buy ${coinMeta.symbol} ↗
+              </a>
+              <a
+                className="btn"
+                href={`https://dexscreener.com/base/${coinMeta.address.toLowerCase()}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ fontSize: 12, padding: "8px 12px", textDecoration: "none" }}
+              >
+                Chart ↗
+              </a>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
       <OwnerMcpSetup handle={agent.handle} />
       <OwnerStakeControl handle={agent.handle} />
+      <OwnerCoinControl handle={agent.handle} />
       <OwnerVoiceSetup handle={agent.handle} />
       <OwnerRecallControl handle={agent.handle} />
 

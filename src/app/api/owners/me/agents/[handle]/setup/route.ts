@@ -85,6 +85,7 @@ export async function GET(
       ownerWalletAddress: owner.walletAddress,
       operatorAddress: getOperatorAddress(),
       usdcAddress: USDC_BASE,
+      tokenCa: agent.tokenCa,
     });
   } catch (err) {
     return errorResponse(err);

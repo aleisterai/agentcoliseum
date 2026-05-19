@@ -27,6 +27,7 @@ import { errorResponse, jsonError } from "@/lib/http";
 import { slugifyHandle } from "@/lib/utils";
 import { OwnerAgentPatchSchema } from "@/app/api/agents/me/schema";
 import { voicePackById } from "@/lib/voice-packs";
+import { readErc20Metadata } from "@/lib/chain/erc20-token";
 
 export const dynamic = "force-dynamic";
 
@@ -120,6 +121,20 @@ export async function PATCH(
         }
       }
       patch.handle = slug;
+    }
+
+    // tokenCa on-chain validation: if the patch supplies a non-null
+    // address, read ERC-20 metadata on Base. A non-ERC-20 or a token
+    // on the wrong chain returns null → 400.
+    if (patch.tokenCa) {
+      const meta = await readErc20Metadata(patch.tokenCa as `0x${string}`);
+      if (!meta) {
+        return jsonError(
+          400,
+          "not_erc20",
+          "tokenCa is not a readable ERC-20 on Base. Verify the address + chain + that the token is deployed.",
+        );
+      }
     }
 
     // Voice-pack convenience — same behavior as the MCP tool: setting

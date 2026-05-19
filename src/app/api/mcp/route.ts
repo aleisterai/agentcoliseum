@@ -30,6 +30,7 @@ import { AgentSelfPatchSchema } from "@/app/api/agents/me/schema";
 import { voicePackById } from "@/lib/voice-packs";
 import { checkAndRecord as checkRateLimit, RATE_LIMIT_CONFIG } from "@/lib/guardian/rate-limit";
 import { readUsdcAllowance } from "@/lib/chain/allowance";
+import { readErc20Metadata } from "@/lib/chain/erc20-token";
 import { owners } from "@/lib/db/schema";
 import type { Agent } from "@/lib/db/schema";
 
@@ -259,6 +260,18 @@ async function runTool(
         if (patch.lossLine === undefined) patch.lossLine = preset.lossLine;
         if (patch.trashTalkTemplates === undefined)
           patch.trashTalkTemplates = preset.trashTalkTemplates;
+      }
+      // tokenCa on-chain validation: a non-ERC-20 / wrong-chain address
+      // is rejected so the LLM can't bind something garbage. readErc20Metadata
+      // returns null on any read error.
+      if (patch.tokenCa) {
+        const meta = await readErc20Metadata(patch.tokenCa as `0x${string}`);
+        if (!meta) {
+          return {
+            error:
+              "not_erc20: tokenCa is not a readable ERC-20 on Base. Verify the address + chain + that the token is deployed.",
+          };
+        }
       }
       // Soft stake cap: must be ≤ owner's hard cap. The hard cap is
       // owner-only and lives on the agent row; we read it from the

@@ -6,6 +6,20 @@
  * GET /api/match/[id]/moves
  *   Returns the move log for the match. Drives the move-log tab + replay
  *   scrubber. Spectator view (no private addendum on per-move snapshots).
+ *
+ * DEPRECATED for agent use (Phase 1, May 2026): the canonical agent-side
+ * move submission is now the MCP tool `coliseum.match.move` (POST to
+ * /api/mcp with method=tools/call). The MCP path runs the same Guardian
+ * + applyMove pipeline; auth happens via the agent's MCP credential, and
+ * the LLM gets back the typed match-state object instead of a raw row.
+ *
+ * This route stays online for the 30-day deprecation window so existing
+ * non-MCP HTTP clients don't hard-break, but new integrations should go
+ * through MCP. Every successful response carries:
+ *   Deprecation: true
+ *   Sunset: <RFC-1123 date 30 days out>
+ *   Link: </api/mcp>; rel="successor-version"
+ * per the HTTP deprecation RFCs.
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
@@ -90,7 +104,26 @@ async function postMove(req: NextRequest) {
   }
 }
 
-export const POST = withFixedPayment(postMove, PRICE.perMove, "Per-move fee");
+// Deprecation envelope. 30-day sunset window from the May-2026 cutover
+// to the MCP-canonical move path. The headers tell well-behaved HTTP
+// clients (and any future scanners) to migrate; the route itself
+// keeps working.
+const DEPRECATION_SUNSET = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toUTCString();
+const innerPost = withFixedPayment(postMove, PRICE.perMove, "Per-move fee");
+export const POST = async (req: NextRequest) => {
+  const res = await innerPost(req);
+  res.headers.set("Deprecation", "true");
+  res.headers.set("Sunset", DEPRECATION_SUNSET);
+  res.headers.set(
+    "Link",
+    '</api/mcp>; rel="successor-version"; title="coliseum.match.move via MCP"',
+  );
+  res.headers.set(
+    "X-Coliseum-Migration",
+    "Use the MCP tool coliseum.match.move via /api/mcp. See https://agentcoliseum.xyz/docs/agents.",
+  );
+  return res;
+};
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {

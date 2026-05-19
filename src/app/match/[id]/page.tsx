@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import {
   agents,
@@ -10,6 +10,7 @@ import {
   matchReactions,
 } from "@/lib/db/schema";
 import { catalogEntry } from "@/lib/game/catalog";
+import { readErc20Metadata } from "@/lib/chain/erc20-token";
 import { MatchView } from "./game-view";
 
 export const dynamic = "force-dynamic";
@@ -127,6 +128,53 @@ export default async function MatchPage({
       .groupBy(matchReactions.emoji),
   ]);
 
+  // Phase-1 rail enrichment: 7d net earnings + ERC-20 metadata for each
+  // player. Both queries are scoped to the loaded agent IDs and run in
+  // parallel; if a token CA isn't set or the read fails, coin stays null
+  // and the rail simply omits the Buy CTA.
+  const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const [earningsRows, p1Coin, p2Coin] = await Promise.all([
+    (p1 || p2)
+      ? db
+          .select({
+            agentId: matches.winnerAgentId,
+            netUsdc: sql<number>`COALESCE(SUM(${matches.potUsdc} - COALESCE(${matches.platformFeeUsdc}, 0) - (${matches.potUsdc} / 2)), 0)::bigint`,
+          })
+          .from(matches)
+          .where(
+            and(
+              eq(matches.status, "completed"),
+              inArray(
+                matches.winnerAgentId,
+                [p1?.id, p2?.id].filter(Boolean) as string[],
+              ),
+              gte(matches.completedAt, since7d),
+            ),
+          )
+          .groupBy(matches.winnerAgentId)
+      : Promise.resolve([]),
+    p1?.tokenCa
+      ? readErc20Metadata(p1.tokenCa as `0x${string}`)
+      : Promise.resolve(null),
+    p2?.tokenCa
+      ? readErc20Metadata(p2.tokenCa as `0x${string}`)
+      : Promise.resolve(null),
+  ]);
+  const earningsByAgent: Record<string, number> = Object.fromEntries(
+    earningsRows.map((r) => [r.agentId ?? "", Number(r.netUsdc)]),
+  );
+
+  function buildCoinPayload(meta: typeof p1Coin) {
+    if (!meta) return null;
+    return {
+      address: meta.address,
+      symbol: meta.symbol,
+      name: meta.name,
+      uniswapBuyUrl: `https://app.uniswap.org/swap?outputCurrency=${meta.address}&chain=base`,
+      dexscreenerUrl: `https://dexscreener.com/base/${meta.address.toLowerCase()}`,
+    };
+  }
+
   // For each agent: pull recent record vs everyone else (cheap aggregate from
   // the per-agent counters we already maintain).
   // Pass the boardgame.io G through opaquely — each gameType's renderer
@@ -165,6 +213,9 @@ export default async function MatchPage({
               losses: p1.losses,
               draws: p1.draws,
               eloDelta: match.p1EloDelta,
+              catchphrase: p1.catchphrase,
+              earnings7dUsdc: earningsByAgent[p1.id] ?? 0,
+              coin: buildCoinPayload(p1Coin),
             }
           : null,
         p2: p2
@@ -179,6 +230,9 @@ export default async function MatchPage({
               losses: p2.losses,
               draws: p2.draws,
               eloDelta: match.p2EloDelta,
+              catchphrase: p2.catchphrase,
+              earnings7dUsdc: earningsByAgent[p2.id] ?? 0,
+              coin: buildCoinPayload(p2Coin),
             }
           : null,
         isSystemGame: match.mode === "system",

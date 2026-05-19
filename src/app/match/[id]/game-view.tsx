@@ -42,6 +42,20 @@ type Agent = {
   losses: number;
   draws: number;
   eloDelta: number | null;
+  // Voice / personality, surfaced on the rail to give the match a face.
+  catchphrase: string | null;
+  // 7-day net earnings (microUSDC). Positive = green, negative = red.
+  earnings7dUsdc: number;
+  // Resolved coin metadata (only set when tokenCa is bound + the ERC-20
+  // read succeeded server-side). Powers the rail-level "Buy $TICKER ↗"
+  // CTA without a second client-side fetch.
+  coin: {
+    address: string;
+    symbol: string;
+    name: string;
+    uniswapBuyUrl: string;
+    dexscreenerUrl: string;
+  } | null;
 };
 
 export type MatchViewProps = {
@@ -723,6 +737,14 @@ function AgentCard({
   const winPct =
     totalGames === 0 ? 0 : Math.round((agent.wins / totalGames) * 1000) / 10;
 
+  const earnings7d = agent.earnings7dUsdc;
+  const earnings7dLabel =
+    earnings7d === 0
+      ? "—"
+      : earnings7d > 0
+        ? `+${(earnings7d / 1_000_000).toFixed(2)}`
+        : `−${(-earnings7d / 1_000_000).toFixed(2)}`;
+
   return (
     <div className={cn("agent-card", isTurn && "turn")}>
       <div className="agent-card-hd">
@@ -752,6 +774,19 @@ function AgentCard({
           {chipLabel}
         </span>
       </div>
+      {agent.catchphrase ? (
+        <div
+          style={{
+            padding: "8px 14px 0",
+            fontSize: 12,
+            fontStyle: "italic",
+            color: "var(--gold)",
+            lineHeight: 1.35,
+          }}
+        >
+          &ldquo;{agent.catchphrase}&rdquo;
+        </div>
+      ) : null}
       <div className="agent-card-bd">
         <div className="stat-grid">
           <div>
@@ -788,12 +823,75 @@ function AgentCard({
             </div>
           </div>
           <div>
-            <div className="lbl">Token</div>
-            <div className="val mute" style={{ fontSize: 11 }}>
-              {shortAddr(agent.tokenCa)}
+            <div className="lbl">7d net</div>
+            <div
+              className={cn(
+                "val",
+                "mono",
+                earnings7d > 0 ? "up" : earnings7d < 0 ? "down" : "mute",
+              )}
+              style={{ fontSize: 12 }}
+            >
+              {earnings7dLabel === "—" ? "—" : `◆ ${earnings7dLabel}`}
             </div>
           </div>
         </div>
+        {agent.coin ? (
+          <div
+            className="row"
+            style={{
+              marginTop: 10,
+              padding: "8px 10px",
+              background: "color-mix(in oklab, var(--gold) 8%, transparent)",
+              border: "1px solid color-mix(in oklab, var(--gold) 35%, transparent)",
+              borderRadius: 4,
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 8,
+            }}
+          >
+            <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+              <span
+                className="mono"
+                style={{ color: "var(--gold)", fontSize: 13, fontWeight: 600 }}
+              >
+                ${agent.coin.symbol}
+              </span>
+              <span
+                style={{
+                  fontSize: 10,
+                  color: "var(--text-mute)",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  maxWidth: 140,
+                }}
+              >
+                {agent.coin.name}
+              </span>
+            </div>
+            <div className="row" style={{ gap: 6 }}>
+              <a
+                className="lnk-gold mono"
+                href={agent.coin.uniswapBuyUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ fontSize: 11 }}
+              >
+                Buy ↗
+              </a>
+              <a
+                className="lnk mono"
+                href={agent.coin.dexscreenerUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ fontSize: 11, color: "var(--text-mute)" }}
+              >
+                Chart ↗
+              </a>
+            </div>
+          </div>
+        ) : null}
         <div className="clock-row">
           <div className="lbl">Clock · {running ? "running" : "waiting"}</div>
           <div className={cn("clock mono", running && "running")}>

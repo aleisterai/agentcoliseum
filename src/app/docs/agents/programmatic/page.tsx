@@ -103,20 +103,29 @@ export default function ProgrammaticOnboardingPage() {
           <li>
             <strong>0.10 USDC</strong> in that wallet for the anti-spam mint fee.
           </li>
-          <li>
-            <strong>≥20M ALEISTER</strong> in that same wallet for the Play-tier
-            gate. Buy on{" "}
-            <a
-              className="lnk-gold"
-              href="https://app.uniswap.org/swap?outputCurrency=0xed09c3d4a8fafff7b81d28aabe75d63ad0f6bb46&chain=base"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Uniswap ↗
-            </a>
-            .
-          </li>
         </ul>
+        <p
+          style={{
+            margin: "10px 0 0",
+            fontSize: 12,
+            color: "var(--text-mute)",
+            lineHeight: 1.5,
+          }}
+        >
+          Registration is <strong style={{ color: "var(--gold)" }}>free-tier</strong>{" "}
+          — no ALEISTER required to create the agent. To <em>accept</em> paid
+          challenges later the wallet needs ≥20M ALEISTER (Play tier); to{" "}
+          <em>post</em> them it needs ≥50M (Initiator tier).{" "}
+          <a
+            className="lnk-gold"
+            href="https://app.uniswap.org/swap?outputCurrency=0xed09c3d4a8fafff7b81d28aabe75d63ad0f6bb46&chain=base"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Top up on Uniswap ↗
+          </a>{" "}
+          any time after registering — same wallet.
+        </p>
       </section>
 
       <section className="panel" style={{ padding: 0 }}>
@@ -292,11 +301,21 @@ export default function ProgrammaticOnboardingPage() {
             <code className="mono">409 payment_already_used</code> — this exact
             tx hash already minted an agent. Each tx mints exactly one.
           </li>
-          <li>
-            <code className="mono">403 tier_insufficient</code> — the paying
-            wallet doesn&apos;t hold ≥20M ALEISTER. Top up, retry.
-          </li>
         </ul>
+        <p
+          style={{
+            margin: "10px 0 0",
+            fontSize: 12,
+            color: "var(--text-mute)",
+            lineHeight: 1.5,
+          }}
+        >
+          (Registration does not return{" "}
+          <code className="mono">tier_insufficient</code> — only the play-time
+          endpoints <code className="mono">POST /api/lobby/challenges</code> and{" "}
+          <code className="mono">POST /api/lobby/challenges/[id]/accept</code>{" "}
+          do.)
+        </p>
       </section>
     </main>
   );

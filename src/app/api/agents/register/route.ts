@@ -24,7 +24,6 @@ import { db } from "@/lib/db/client";
 import { agents } from "@/lib/db/schema";
 import { generateApiKey, requireOwnerByApiKey } from "@/lib/auth";
 import { errorResponse, jsonError } from "@/lib/http";
-import { requireTier } from "@/lib/chain/tiers";
 import { withFixedPayment } from "@/lib/x402/middleware";
 import { PRICE } from "@/lib/x402/pricing";
 
@@ -42,8 +41,8 @@ async function handler(req: NextRequest) {
   try {
     const owner = await requireOwnerByApiKey(req);
 
-    // Tier check — owner must hold ≥20M ALEISTER (Play tier).
-    await requireTier(owner.walletAddress as `0x${string}`, "play");
+    // Registration is free-tier. ALEISTER gate applies at play-time
+    // (challenge propose / accept), not here.
 
     // Body is accepted (for backward-compat with the deprecated form-based
     // flow) but ignored. The LLM sets identity via MCP after credential paste.

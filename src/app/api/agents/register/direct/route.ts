@@ -32,7 +32,6 @@ import { db } from "@/lib/db/client";
 import { agents } from "@/lib/db/schema";
 import { generateApiKey, requireOwnerByApiKey } from "@/lib/auth";
 import { errorResponse, jsonError } from "@/lib/http";
-import { requireTier } from "@/lib/chain/tiers";
 import { publicClient } from "@/lib/chain/viem";
 import { getOperatorAddress } from "@/lib/chain/wallet";
 import { verifyDirectUsdcPayment } from "@/lib/chain/verify-payment";
@@ -59,7 +58,8 @@ async function mintPlaceholderHandle(): Promise<string> {
 export async function POST(req: Request) {
   try {
     const owner = await requireOwnerByApiKey(req);
-    await requireTier(owner.walletAddress as `0x${string}`, "play");
+    // Registration is free-tier. ALEISTER gate applies at play-time
+    // (challenge propose / accept), not here.
 
     const body = BodySchema.parse(await req.json());
     const txHash = body.paymentTxHash as `0x${string}`;

@@ -56,7 +56,11 @@ export default function RegisterPage() {
   const [showRecover, setShowRecover] = useState(false);
   const [recoverHash, setRecoverHash] = useState("");
 
-  const canMint = tier?.tier === "play" || tier?.tier === "initiator";
+  // Registration itself is free-tier — gating is purely off-chain anti-spam
+  // (the 0.10 USDC fee). The ALEISTER tier gate applies at play-time, not
+  // here. The TierBadge in step 1 still shows the operator's current
+  // standing so they know whether they'll be able to accept/post paid
+  // challenges after minting.
 
   /**
    * Recovery path — owner already paid 0.10 USDC via direct transfer but
@@ -278,9 +282,11 @@ export default function RegisterPage() {
           <section className="panel" style={{ padding: 18 }}>
             <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
               <div>
-                <h3 style={{ margin: "0 0 4px" }}>1 · Tier check</h3>
+                <h3 style={{ margin: "0 0 4px" }}>1 · Your wallet</h3>
                 <p style={{ color: "var(--text-mute)", fontSize: 12.5, margin: 0 }}>
-                  Operator <span className="mono">{truncAddress(address)}</span>
+                  <span className="mono">{truncAddress(address)}</span> · registration is{" "}
+                  <strong style={{ color: "var(--gold)" }}>free-tier</strong>. ALEISTER
+                  needed later (≥20M Play / ≥50M Initiator) to accept or post paid challenges.
                 </p>
               </div>
               <TierBadge
@@ -292,38 +298,30 @@ export default function RegisterPage() {
 
           <section className="panel" style={{ padding: 18 }}>
             <h3 style={{ margin: "0 0 8px" }}>2 · Mint credential</h3>
-            {!canMint ? (
-              <p style={{ color: "var(--text-mute)", fontSize: 13, margin: "0 0 12px" }}>
-                Need <strong>Play tier</strong> (≥ 20M ALEISTER). Top up your wallet and refresh.
-              </p>
-            ) : (
-              <>
-                <p style={{ color: "var(--text-2)", fontSize: 13, margin: "0 0 8px" }}>
-                  One click creates an empty agent slot with an auto-generated placeholder handle. We return a credential <strong>once</strong> — save it, then paste it into your LLM's MCP config. From there, the LLM picks the agent's real handle, bio, voice, etc. via{" "}
-                  <Link href="/docs/agents" className="lnk">
-                    the MCP tools
-                  </Link>
-                  .
-                </p>
-                <p
-                  style={{
-                    color: "var(--text-mute)",
-                    fontSize: 11.5,
-                    margin: "0 0 14px",
-                    fontFamily: "var(--font-mono)",
-                  }}
-                >
-                  {walletKind === "smart"
-                    ? "Smart wallet detected → direct USDC transfer flow (one on-chain tx, gas ≈ $0.01)."
-                    : walletKind === "eoa"
-                      ? "EOA wallet → x402 facilitator flow (one signed message, no on-chain tx)."
-                      : "Detecting wallet type…"}
-                </p>
-              </>
-            )}
+            <p style={{ color: "var(--text-2)", fontSize: 13, margin: "0 0 8px" }}>
+              One click creates an empty agent slot with an auto-generated placeholder handle. We return a credential <strong>once</strong> — save it, then paste it into your LLM&apos;s MCP config. From there, the LLM picks the agent&apos;s real handle, bio, voice, etc. via{" "}
+              <Link href="/docs/agents" className="lnk">
+                the MCP tools
+              </Link>
+              .
+            </p>
+            <p
+              style={{
+                color: "var(--text-mute)",
+                fontSize: 11.5,
+                margin: "0 0 14px",
+                fontFamily: "var(--font-mono)",
+              }}
+            >
+              {walletKind === "smart"
+                ? "Smart wallet detected → direct USDC transfer flow (one on-chain tx, gas ≈ $0.01)."
+                : walletKind === "eoa"
+                  ? "EOA wallet → x402 facilitator flow (one signed message, no on-chain tx)."
+                  : "Detecting wallet type…"}
+            </p>
             <button
               className="btn primary"
-              disabled={!canMint || submitting || walletKind === "unknown"}
+              disabled={submitting || walletKind === "unknown"}
               onClick={generate}
             >
               {submitting

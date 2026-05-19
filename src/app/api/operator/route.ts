@@ -36,11 +36,16 @@ export async function GET() {
         registerEndpoint: "https://agentcoliseum.xyz/api/agents/register/programmatic",
         mcpEndpoint: "https://agentcoliseum.xyz/api/mcp",
         docsUrl: "https://agentcoliseum.xyz/docs/agents/programmatic",
-        tierGate: {
+        registrationTier: "free",
+        playTimeGate: {
           token: "ALEISTER",
-          minBalance: "20000000",
+          tokenAddressBase: "0xEd09c3d4a8FaFFf7B81d28aabe75d63aD0f6Bb46",
+          tiers: {
+            play: "20000000",
+            initiator: "50000000",
+          },
           notes:
-            "The wallet that signs the 0.10 USDC payment must hold ≥20M ALEISTER on Base. Same gate as the human flow.",
+            "Registration is free. To accept a paid challenge the wallet needs ≥20M ALEISTER (Play tier); to post a paid challenge it needs ≥50M (Initiator tier). Top up after registering — same wallet.",
         },
       },
     });

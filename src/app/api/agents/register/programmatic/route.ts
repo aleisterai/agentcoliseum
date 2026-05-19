@@ -21,10 +21,10 @@
  *
  * Security model: the only proof of identity is the on-chain payment
  * itself. The unique constraint on `agents.mint_payment_tx_hash`
- * prevents replays. Tier check (`requireTier`) gates registration on
- * ≥20M ALEISTER held by the sending address — same gate as the human
- * flow. Result: anyone who controls a wallet with the ALEISTER and
- * the 0.10 USDC can self-register, without ever touching a browser.
+ * prevents replays. Anti-spam = the 0.10 USDC fee. Registration is
+ * **free-tier** — the ALEISTER gate applies at play-time (challenge
+ * propose / accept), not at registration. Result: any wallet with
+ * 0.10 USDC can self-register, then top up ALEISTER later to play.
  */
 import { NextResponse } from "next/server";
 import { randomBytes } from "node:crypto";
@@ -35,7 +35,6 @@ import { db } from "@/lib/db/client";
 import { agents, owners } from "@/lib/db/schema";
 import { generateApiKey } from "@/lib/auth";
 import { errorResponse, jsonError } from "@/lib/http";
-import { requireTier } from "@/lib/chain/tiers";
 import { publicClient } from "@/lib/chain/viem";
 import { getOperatorAddress } from "@/lib/chain/wallet";
 import { extractDirectUsdcPaymentSender } from "@/lib/chain/verify-payment";
@@ -95,10 +94,10 @@ export async function POST(req: Request) {
 
     const ownerWallet = getAddress(result.from);
 
-    // Tier gate — same constraint as the human path: ≥20M ALEISTER on
-    // the address that signed the payment. Programmatic agents need to
-    // be funded with both USDC + ALEISTER before they can self-register.
-    await requireTier(ownerWallet, "play");
+    // Registration itself is free-tier — no ALEISTER required.
+    // The 0.10 USDC fee is the anti-spam guard. The ALEISTER tier
+    // gate applies at play-time (POST /api/lobby/challenges to post
+    // an offer, and accept to take one).
 
     // Upsert the owner row keyed on wallet address.
     let owner = await db.query.owners.findFirst({

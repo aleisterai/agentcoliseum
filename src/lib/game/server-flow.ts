@@ -40,6 +40,12 @@ import {
   type ResultReason,
 } from "@/lib/game/lifecycle";
 import { broadcastGame, broadcastLobby, realtimeEvent } from "@/lib/realtime";
+import type {
+  MovePlayedPayload,
+  GameEndedPayload,
+  LobbyGameCreatedPayload,
+  LobbyGameEndedPayload,
+} from "@/lib/realtime-types";
 
 /* ===== errors ===== */
 
@@ -184,11 +190,12 @@ export async function postChallenge(
     })
     .returning();
 
-  await broadcastLobby(realtimeEvent.GameCreated, {
+  const lobbyPayload: LobbyGameCreatedPayload = {
     id: created.id,
     gameType: adapter.id,
     mode: input.mode,
-  });
+  };
+  await broadcastLobby(realtimeEvent.GameCreated, lobbyPayload);
   return { kind: "challenge", challenge: created };
 }
 
@@ -427,17 +434,11 @@ export async function applyMove(input: ApplyMoveInput): Promise<Match> {
     .where(eq(matches.id, match.id))
     .returning();
 
-  // Broadcast the move on the match channel.
-  //
-  // Payload contract MUST stay in sync with the subscriber in
-  // src/app/match/[id]/game-view.tsx (search MovePlayed). The client
-  // bails out on `stateAfterG == null`, so the board freezes silently
-  // if any of these field names drift. All 14 of our games are
-  // perfect-information, so `serializeForSpectator(G,"spectator")`
-  // returns G as-is — broadcasting G itself is safe and matches the
-  // SSR-side `stateAfter: m.stateAfter.G` shape the move list uses.
+  // Broadcast the move on the match channel. Shape is typed via
+  // `MovePlayedPayload` in src/lib/realtime-types.ts — a rename here
+  // breaks the build at the subscriber, not silently in production.
   const view = adapter.serializeForSpectator(nextState.G as never, "spectator", false);
-  await broadcastGame(match.id, realtimeEvent.MovePlayed, {
+  const movePayload: MovePlayedPayload = {
     matchId: match.id,
     moveNumber,
     payload: input.payload,
@@ -451,7 +452,8 @@ export async function applyMove(input: ApplyMoveInput): Promise<Match> {
     turnStartedAt: now.toISOString(),
     p1MsLeft,
     p2MsLeft,
-  });
+  };
+  await broadcastGame(match.id, realtimeEvent.MovePlayed, movePayload);
 
   // System-mode opponent? Drive the bot.
   if (match.mode === "system" && nextAgentId === null) {
@@ -529,10 +531,9 @@ export async function driveSystemBot(match: Match): Promise<Match> {
     .where(eq(matches.id, match.id))
     .returning();
 
-  // Same payload contract as the human-move broadcast above — see the
-  // comment block there. System-bot moves always hand the turn back to
-  // p1 ("0"), so the new currentTurnPlayerId is hard-coded.
-  await broadcastGame(match.id, realtimeEvent.MovePlayed, {
+  // System-bot moves always hand the turn back to p1 ("0"). Typed via
+  // the same MovePlayedPayload contract as the human-move broadcast.
+  const systemBotPayload: MovePlayedPayload = {
     matchId: match.id,
     moveNumber,
     payload: { auto: true },
@@ -548,7 +549,8 @@ export async function driveSystemBot(match: Match): Promise<Match> {
     p1MsLeft: match.p1MsLeft,
     p2MsLeft: match.p2MsLeft,
     isBot: true,
-  });
+  };
+  await broadcastGame(match.id, realtimeEvent.MovePlayed, systemBotPayload);
   return updated;
 }
 
@@ -781,17 +783,16 @@ export async function finalizeMatch(args: FinalizeArgs): Promise<Match> {
         resultReason: args.resultReason,
         p1EloDelta: p1Delta,
         p2EloDelta: p2Delta,
-      },
+      } satisfies GameEndedPayload,
     };
   }).then(async ({ updated, broadcastPayload }) => {
-    // Fire-and-forget broadcasts AFTER the transaction has committed and
-    // released its connection back to the pool. Awaited so the caller
-    // sees broadcasts complete before applyMove returns, but they no
-    // longer pin a Postgres connection. broadcastPayload === null on
-    // the idempotent re-finalize path — skip the duplicate broadcast.
+    // Fire-and-forget broadcasts AFTER the transaction has committed.
+    // broadcastPayload === null on the idempotent re-finalize path —
+    // skip the duplicate broadcast.
     if (broadcastPayload) {
       await broadcastGame(updated.id, realtimeEvent.GameEnded, broadcastPayload);
-      await broadcastLobby(realtimeEvent.GameEnded, { id: updated.id });
+      const lobbyPayload: LobbyGameEndedPayload = { id: updated.id };
+      await broadcastLobby(realtimeEvent.GameEnded, lobbyPayload);
     }
     return updated;
   });

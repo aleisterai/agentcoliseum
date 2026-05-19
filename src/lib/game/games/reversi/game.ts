@@ -21,6 +21,7 @@
  */
 import { INVALID_MOVE } from "boardgame.io/core";
 import type { Game } from "boardgame.io";
+import { extraTurnAware } from "@/lib/game/turn-control";
 
 export const SIZE = 8;
 
@@ -247,39 +248,36 @@ export function renderBoard(board: Board): string {
 // boardgame.io Game definition
 // ---------------------------------------------------------------------------
 
+/** Maps boardgame.io playerID ("0" | "1") to the Reversi side glyph. */
+function sideOfPlayer(playerID: string): Side {
+  return playerID === "0" ? "B" : "W";
+}
+
 export const game: Game<ReversiState> = {
   name: "reversi",
   setup: () => startingState(),
-  // Same pattern as mancala/dots-and-boxes (see those for context).
-  // Reversi's `applyMove` auto-passes when the new side has no legal
-  // moves — i.e. the mover gets to move again. Letting boardgame.io's
-  // `maxMoves: 1` auto-advance ctx.currentPlayer in that case desyncs
-  // it from G.turn and the next move comes back INVALID_MOVE.
+  // Auto-pass (opponent has no legal moves) keeps the turn on the mover
+  // — handled by extraTurnAware with a custom playerID→side mapping.
   turn: { minMoves: 1 },
   moves: {
-    place: ({ G, playerID, events }, raw: unknown) => {
-      // playerID "0" = Black (first to move), "1" = White.
-      const expectedSide: Side = playerID === "0" ? "B" : "W";
-      if (G.turn !== expectedSide) return INVALID_MOVE;
-      const arg = raw as { row?: unknown; col?: unknown };
-      const row = Number(arg.row);
-      const col = Number(arg.col);
-      if (!Number.isInteger(row) || !Number.isInteger(col) || !inBounds(row, col)) {
-        return INVALID_MOVE;
-      }
-      if (!isLegalMove(G.board, row, col, expectedSide)) return INVALID_MOVE;
-
-      const next = applyMove(G, { row, col });
-      G.board = next.board;
-      G.turn = next.turn;
-      G.lastMove = next.lastMove;
-      G.consecutivePasses = next.consecutivePasses;
-      // End the boardgame.io turn iff the next G.turn is the OPPOSITE
-      // side. If `applyMove` auto-passed and the same player moves
-      // again, leave ctx.currentPlayer where it is.
-      const nextExpectedSide: Side = G.turn;
-      if (nextExpectedSide !== expectedSide) events.endTurn();
-    },
+    place: extraTurnAware<ReversiState, unknown>(
+      (G, playerID, raw) => {
+        const expectedSide = sideOfPlayer(playerID);
+        const arg = raw as { row?: unknown; col?: unknown };
+        const row = Number(arg.row);
+        const col = Number(arg.col);
+        if (!Number.isInteger(row) || !Number.isInteger(col) || !inBounds(row, col)) {
+          return INVALID_MOVE;
+        }
+        if (!isLegalMove(G.board, row, col, expectedSide)) return INVALID_MOVE;
+        const next = applyMove(G, { row, col });
+        G.board = next.board;
+        G.turn = next.turn;
+        G.lastMove = next.lastMove;
+        G.consecutivePasses = next.consecutivePasses;
+      },
+      { isCurrentPlayer: (G, playerID) => G.turn === sideOfPlayer(playerID) },
+    ),
   },
   endIf: ({ G }) => {
     const result = checkResult(G);

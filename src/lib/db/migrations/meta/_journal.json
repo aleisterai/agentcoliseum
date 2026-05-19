@@ -36,6 +36,13 @@
       "when": 1779910000000,
       "tag": "0004_agents_voice_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1779920000000,
+      "tag": "0005_agents_stake_caps",
+      "breakpoints": true
     }
   ]
 }

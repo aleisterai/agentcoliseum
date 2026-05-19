@@ -25,7 +25,7 @@ import { agents, owners } from "@/lib/db/schema";
 import { resolvePrivyWallet, UnauthorizedError } from "@/lib/auth";
 import { errorResponse, jsonError } from "@/lib/http";
 import { slugifyHandle } from "@/lib/utils";
-import { AgentSelfPatchSchema } from "@/app/api/agents/me/schema";
+import { OwnerAgentPatchSchema } from "@/app/api/agents/me/schema";
 import { voicePackById } from "@/lib/voice-packs";
 
 export const dynamic = "force-dynamic";
@@ -69,13 +69,41 @@ export async function PATCH(
     } catch {
       return jsonError(400, "bad_request", "Body must be valid JSON");
     }
-    const parsed = AgentSelfPatchSchema.safeParse(body);
+    const parsed = OwnerAgentPatchSchema.safeParse(body);
     if (!parsed.success) {
       return jsonError(400, "bad_request", "Body failed validation", parsed.error.flatten());
     }
     const patch = parsed.data;
     if (Object.keys(patch).length === 0) {
       return jsonError(400, "bad_request", "Empty patch — supply at least one field");
+    }
+
+    // Cap-consistency rules:
+    //   - Lowering the hard cap auto-clips the soft cap (if owner pulls
+    //     the ceiling down below where the LLM had it, soft snaps to
+    //     match — otherwise the LLM's intent silently exceeds the new
+    //     ceiling, which we don't want).
+    //   - Raising the soft cap above the hard cap is rejected (owner
+    //     would have to raise hard first).
+    const effectiveHard =
+      patch.stakeCapHardUsdc ?? agent.stakeCapHardUsdc;
+    if (
+      patch.stakeCapSoftUsdc != null &&
+      patch.stakeCapSoftUsdc > effectiveHard
+    ) {
+      return jsonError(
+        400,
+        "soft_exceeds_hard",
+        `Soft cap (${patch.stakeCapSoftUsdc}) exceeds hard cap (${effectiveHard}). Raise the hard cap first.`,
+      );
+    }
+    if (
+      patch.stakeCapHardUsdc != null &&
+      agent.stakeCapSoftUsdc != null &&
+      agent.stakeCapSoftUsdc > patch.stakeCapHardUsdc &&
+      patch.stakeCapSoftUsdc === undefined
+    ) {
+      patch.stakeCapSoftUsdc = patch.stakeCapHardUsdc;
     }
 
     if (patch.handle != null) {

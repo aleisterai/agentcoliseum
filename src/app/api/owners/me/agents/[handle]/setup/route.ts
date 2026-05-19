@@ -21,6 +21,9 @@ import { db } from "@/lib/db/client";
 import { agents, owners } from "@/lib/db/schema";
 import { resolvePrivyWallet, UnauthorizedError } from "@/lib/auth";
 import { errorResponse, jsonError } from "@/lib/http";
+import { readUsdcAllowance } from "@/lib/chain/allowance";
+import { getOperatorAddress } from "@/lib/chain/wallet";
+import { USDC_BASE } from "@/lib/chain/aerodrome";
 
 export const dynamic = "force-dynamic";
 
@@ -50,6 +53,19 @@ export async function GET(
       return jsonError(404, "agent_not_found", "Agent not found or not owned by you");
     }
 
+    // Read the owner's USDC.allowance to the operator wallet so the
+    // manage page can show actual spending headroom (not just configured
+    // caps). 0n is the sentinel for "RPC blip or unset"; caller treats
+    // that as no allowance.
+    const allowance = await readUsdcAllowance(
+      owner.walletAddress as `0x${string}`,
+    );
+    const allowanceUsdc = Number(
+      allowance > BigInt(Number.MAX_SAFE_INTEGER)
+        ? BigInt(Number.MAX_SAFE_INTEGER)
+        : allowance,
+    );
+
     return NextResponse.json({
       handle: agent.handle,
       displayName: agent.displayName,
@@ -63,6 +79,12 @@ export async function GET(
       winLine: agent.winLine,
       lossLine: agent.lossLine,
       trashTalkTemplates: agent.trashTalkTemplates,
+      stakeCapHardUsdc: agent.stakeCapHardUsdc,
+      stakeCapSoftUsdc: agent.stakeCapSoftUsdc,
+      onChainAllowanceUsdc: allowanceUsdc,
+      ownerWalletAddress: owner.walletAddress,
+      operatorAddress: getOperatorAddress(),
+      usdcAddress: USDC_BASE,
     });
   } catch (err) {
     return errorResponse(err);

@@ -29,6 +29,8 @@ import { DOCS } from "@/lib/mcp/docs";
 import { AgentSelfPatchSchema } from "@/app/api/agents/me/schema";
 import { voicePackById } from "@/lib/voice-packs";
 import { checkAndRecord as checkRateLimit, RATE_LIMIT_CONFIG } from "@/lib/guardian/rate-limit";
+import { readUsdcAllowance } from "@/lib/chain/allowance";
+import { owners } from "@/lib/db/schema";
 import type { Agent } from "@/lib/db/schema";
 
 export const dynamic = "force-dynamic";
@@ -100,7 +102,7 @@ const TOOLS = [
   {
     name: "coliseum.agent.profile_update",
     description:
-      "Update mutable fields on your own agent profile. New agents start with placeholder handle 'agent-xxxxxx' and displayName 'Unnamed Agent' — set both via this tool on first connect. Patchable fields: handle (string, 2-32, slugified to lowercase + dashes), displayName (string, ≤80), bio (string, ≤2000), avatarUrl (URL), tokenCa (0x… EVM address on Base, ERC-20 only), website (URL), socials (object with optional x/github/farcaster strings), voicePackId (one of 'calm-professor', 'trash-talker', 'stoic-samurai', 'anxious-nerd', 'degen' — call coliseum.docs.read({topic:'voice-packs'}) for descriptions), catchphrase (≤80), winLine (≤80), lossLine (≤80), trashTalkTemplates (array of up to 20 strings ≤120 chars each). Send only the fields you want to change. Returns the updated profile. Recalled agents cannot edit. Handle changes are slugified server-side (a-z, 0-9, dash) and must be unique. Tip: setting voicePackId alone copies that preset's lines into your profile.",
+      "Update mutable fields on your own agent profile. New agents start with placeholder handle 'agent-xxxxxx' and displayName 'Unnamed Agent' — set both via this tool on first connect. Patchable fields: handle (string, 2-32, slugified to lowercase + dashes), displayName (string, ≤80), bio (string, ≤2000), avatarUrl (URL), tokenCa (0x… EVM address on Base, ERC-20 only), website (URL), socials (object with optional x/github/farcaster strings), voicePackId (one of 'calm-professor', 'trash-talker', 'stoic-samurai', 'anxious-nerd', 'degen' — call coliseum.docs.read({topic:'voice-packs'}) for descriptions), catchphrase (≤80), winLine (≤80), lossLine (≤80), trashTalkTemplates (array of up to 20 strings ≤120 chars each), stakeCapSoftUsdc (integer microUSDC; your per-match soft cap. Must be ≤ the owner's hard cap; rejected with 'soft_exceeds_hard' otherwise. Call coliseum.agent.config to read your current caps + on-chain allowance + effective limit). Send only the fields you want to change. Returns the updated profile. Recalled agents cannot edit. Handle changes are slugified server-side (a-z, 0-9, dash) and must be unique. Tip: setting voicePackId alone copies that preset's lines into your profile.",
     inputSchema: {
       type: "object",
       properties: {
@@ -130,6 +132,11 @@ const TOOLS = [
           type: ["array", "null"],
           maxItems: 20,
           items: { type: "string", maxLength: 120 },
+        },
+        stakeCapSoftUsdc: {
+          type: ["integer", "null"],
+          minimum: 0,
+          maximum: 10_000_000_000,
         },
       },
       additionalProperties: false,
@@ -172,6 +179,8 @@ function publicAgentShape(a: Agent) {
     winLine: a.winLine,
     lossLine: a.lossLine,
     trashTalkTemplates: a.trashTalkTemplates,
+    stakeCapHardUsdc: a.stakeCapHardUsdc,
+    stakeCapSoftUsdc: a.stakeCapSoftUsdc,
     elo: a.elo,
     wins: a.wins,
     losses: a.losses,
@@ -251,6 +260,17 @@ async function runTool(
         if (patch.trashTalkTemplates === undefined)
           patch.trashTalkTemplates = preset.trashTalkTemplates;
       }
+      // Soft stake cap: must be ≤ owner's hard cap. The hard cap is
+      // owner-only and lives on the agent row; we read it from the
+      // already-loaded `agent` object (no extra query needed).
+      if (
+        patch.stakeCapSoftUsdc != null &&
+        patch.stakeCapSoftUsdc > agent.stakeCapHardUsdc
+      ) {
+        return {
+          error: `soft_exceeds_hard: stakeCapSoftUsdc (${patch.stakeCapSoftUsdc}) exceeds the owner's hard cap (${agent.stakeCapHardUsdc}). Lower the soft cap, or ask the owner to raise the hard cap from the dashboard.`,
+        };
+      }
       const [updated] = await db
         .update(agents)
         .set(patch)
@@ -259,21 +279,45 @@ async function runTool(
       return publicAgentShape(updated);
     }
 
-    case "coliseum.agent.config":
+    case "coliseum.agent.config": {
+      // Real, agent-specific config now that the cap columns are wired.
+      // Effective per-match cap = min(soft || hard, on-chain allowance,
+      // rookie cap if still in rookie-pool). Rookie pool = first 5
+      // matches; cap is the platform-wide rookie max (currently $10).
+      const ownerRow = await db.query.owners.findFirst({
+        where: eq(owners.id, agent.ownerId),
+      });
+      const allowance = ownerRow
+        ? await readUsdcAllowance(ownerRow.walletAddress as `0x${string}`)
+        : 0n;
+      const allowanceUsdc = Number(allowance > BigInt(Number.MAX_SAFE_INTEGER) ? BigInt(Number.MAX_SAFE_INTEGER) : allowance);
+      const totalMatches = agent.wins + agent.losses + agent.draws;
+      const inRookiePool = totalMatches < 5;
+      const ROOKIE_CAP = 10_000_000;
+      const softOrHard = agent.stakeCapSoftUsdc ?? agent.stakeCapHardUsdc;
+      const effective = Math.min(
+        softOrHard,
+        allowanceUsdc,
+        inRookiePool ? ROOKIE_CAP : Number.MAX_SAFE_INTEGER,
+      );
       return {
         handle: agent.handle,
         recalled: agent.recalledAt != null,
         recallReason: agent.recallReason,
-        defaults: {
-          maxStakeUsdc: 10_000_000,
-          dailyLossUsdc: 25_000_000,
-          eloFloorDelta: 150,
-          rookieMaxStakeUsdc: 10_000_000,
-          rookieMatches: 5,
+        caps: {
+          stakeCapHardUsdc: agent.stakeCapHardUsdc,
+          stakeCapSoftUsdc: agent.stakeCapSoftUsdc,
+          onChainAllowanceUsdc: allowanceUsdc,
+          rookiePoolActive: inRookiePool,
+          rookieCapUsdc: ROOKIE_CAP,
+          effectivePerMatchUsdc: effective,
         },
+        ownerWallet: ownerRow?.walletAddress ?? null,
+        operatorWallet: process.env.NEXT_PUBLIC_OPERATOR_ADDRESS ?? null,
         notice:
-          "Phase 1 will surface owner-set spending limits via this endpoint. For now treat these as the platform-wide defaults.",
+          "stakeCapHardUsdc is set by your owner. stakeCapSoftUsdc is yours to set via profile_update (must be ≤ hard). On-chain allowance is the owner's USDC.approve(operator) — they may need to top it up before you can stake. Rookie pool caps you at $10/match for your first 5 matches; clears automatically after.",
       };
+    }
 
     case "coliseum.agent.stats": {
       const recent = await db

@@ -146,6 +146,15 @@ export const agents = pgTable(
     winLine: text("win_line"),
     lossLine: text("loss_line"),
     trashTalkTemplates: jsonb("trash_talk_templates").$type<string[]>(),
+    // Stake caps (microUSDC = 6-decimal units).
+    //   hard  — owner-set per-match ceiling. The LLM cannot exceed this.
+    //   soft  — LLM-set per-match preference, must be ≤ hard. Defaults
+    //           to null which falls back to the hard cap.
+    // Effective cap at play-time = min(soft ?? hard, on-chain allowance,
+    // rookie pool cap). The on-chain allowance is read live; the rookie
+    // cap is enforced by the Guardian until the agent finishes 5 matches.
+    stakeCapHardUsdc: integer("stake_cap_hard_usdc").default(10_000_000).notNull(),
+    stakeCapSoftUsdc: integer("stake_cap_soft_usdc"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [

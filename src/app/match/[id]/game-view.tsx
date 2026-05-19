@@ -121,11 +121,20 @@ export function MatchView({ initial }: MatchViewProps) {
   const [p2MsLeft, setP2MsLeft] = useState(initial.p2MsLeft);
   const [turnStartedAt, setTurnStartedAt] = useState(initial.turnStartedAt);
   const [now, setNow] = useState(() => Date.now());
-  // Real subscription state — drives the SYNCED chip in the board header.
-  // Stays "connecting" until Supabase confirms the channel join.
-  const [liveSync, setLiveSync] = useState<"connecting" | "synced" | "offline">(
-    "connecting",
-  );
+  // Last-update timestamps from each delivery channel. The chip is
+  // honest about UX: if either WS broadcasts or polling are currently
+  // delivering moves, the board IS live and the chip shows LIVE — even
+  // if the Supabase Realtime channel transitions to CLOSED in between
+  // ticks (which it does periodically; its auto-reconnect doesn't
+  // always re-emit a fresh SUBSCRIBED event, so a status-only chip
+  // gets stuck on RECONNECTING despite the page being fully functional).
+  const [lastWsAt, setLastWsAt] = useState<number>(0);
+  const [lastPollAt, setLastPollAt] = useState<number>(0);
+  // Raw Supabase channel state — used for diagnostics in the tooltip
+  // and as a tiebreaker before the first delivery arrives.
+  const [wsChannelState, setWsChannelState] = useState<
+    "connecting" | "subscribed" | "closed"
+  >("connecting");
 
   const [scrubIndex, setScrubIndex] = useState<number>(
     initialMoveParam ?? Math.max(0, initial.moves.length - 1),
@@ -244,86 +253,141 @@ export function MatchView({ initial }: MatchViewProps) {
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!process.env.NEXT_PUBLIC_SUPABASE_URL) return;
-    try {
-      const sb = createPublicClient();
-      const ch = sb.channel(channelName.game(initial.id));
+    let cleanedUp = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let sb: ReturnType<typeof createPublicClient> | null = null;
+    let ch: ReturnType<typeof createPublicClient>["channel"] extends (
+      ...args: never[]
+    ) => infer R
+      ? R | null
+      : null = null;
 
-      ch.on("broadcast", { event: realtimeEvent.MovePlayed }, (e: { payload: unknown }) => {
-        const p = e.payload as Partial<{
-          moveNumber: number;
-          payload: unknown;
-          stateAfterG: unknown;
-          currentTurnPlayerId: "0" | "1";
-          turnStartedAt: string;
-          p1MsLeft: number;
-          p2MsLeft: number;
-          reasoning: string | null;
-          evScore: number | null;
-          thinkingMs: number;
-          x402PaymentId: string | null;
-        }>;
-        if (p.moveNumber == null || p.stateAfterG == null) return;
-        const justMovedPid: "0" | "1" = p.currentTurnPlayerId === "0" ? "1" : "0";
-        setMoves((prev) => {
-          if (prev.some((x) => x.moveNumber === p.moveNumber)) return prev;
-          const next: Move = {
-            moveNumber: p.moveNumber!,
-            agentId:
-              justMovedPid === "0" ? initial.p1?.id ?? null : initial.p2?.id ?? null,
-            playerId: justMovedPid,
-            payload: p.payload ?? null,
-            stateAfterG: p.stateAfterG ?? null,
-            reasoning: p.reasoning ?? null,
-            evScore: p.evScore ?? null,
-            thinkingMs: p.thinkingMs ?? 0,
-            x402PaymentId: p.x402PaymentId ?? null,
-            createdAt: new Date().toISOString(),
-          };
-          return [...prev, next];
+    function join() {
+      if (cleanedUp) return;
+      try {
+        sb = createPublicClient();
+        const channel = sb.channel(channelName.game(initial.id));
+        ch = channel;
+
+        channel.on(
+          "broadcast",
+          { event: realtimeEvent.MovePlayed },
+          (e: { payload: unknown }) => {
+            const p = e.payload as Partial<{
+              moveNumber: number;
+              payload: unknown;
+              stateAfterG: unknown;
+              currentTurnPlayerId: "0" | "1";
+              turnStartedAt: string;
+              p1MsLeft: number;
+              p2MsLeft: number;
+              reasoning: string | null;
+              evScore: number | null;
+              thinkingMs: number;
+              x402PaymentId: string | null;
+            }>;
+            if (p.moveNumber == null || p.stateAfterG == null) return;
+            setLastWsAt(Date.now());
+            const justMovedPid: "0" | "1" = p.currentTurnPlayerId === "0" ? "1" : "0";
+            setMoves((prev) => {
+              if (prev.some((x) => x.moveNumber === p.moveNumber)) return prev;
+              const next: Move = {
+                moveNumber: p.moveNumber!,
+                agentId:
+                  justMovedPid === "0"
+                    ? initial.p1?.id ?? null
+                    : initial.p2?.id ?? null,
+                playerId: justMovedPid,
+                payload: p.payload ?? null,
+                stateAfterG: p.stateAfterG ?? null,
+                reasoning: p.reasoning ?? null,
+                evScore: p.evScore ?? null,
+                thinkingMs: p.thinkingMs ?? 0,
+                x402PaymentId: p.x402PaymentId ?? null,
+                createdAt: new Date().toISOString(),
+              };
+              return [...prev, next];
+            });
+            setStateG(p.stateAfterG);
+            if (p.currentTurnPlayerId) setCurrentTurnPlayerId(p.currentTurnPlayerId);
+            if (p.turnStartedAt) setTurnStartedAt(p.turnStartedAt);
+            if (p.p1MsLeft != null) setP1MsLeft(p.p1MsLeft);
+            if (p.p2MsLeft != null) setP2MsLeft(p.p2MsLeft);
+          },
+        );
+
+        channel.on(
+          "broadcast",
+          { event: realtimeEvent.ChatMessage },
+          (e: { payload: unknown }) => {
+            const p = e.payload as {
+              id: string;
+              speakerOwnerId: string | null;
+              anonymousToken: string | null;
+              body: string;
+              createdAt: string;
+            };
+            setChat((prev) => (prev.some((x) => x.id === p.id) ? prev : [...prev, p]));
+          },
+        );
+
+        channel.on(
+          "broadcast",
+          { event: realtimeEvent.Reaction },
+          (e: { payload: unknown }) => {
+            const p = e.payload as { emoji: string };
+            setReactions((prev) => bumpReaction(prev, p.emoji));
+          },
+        );
+
+        channel.on("broadcast", { event: realtimeEvent.GameEnded }, () => {
+          setStatus("completed");
+          setLiveMode(false);
         });
-        setStateG(p.stateAfterG);
-        if (p.currentTurnPlayerId) setCurrentTurnPlayerId(p.currentTurnPlayerId);
-        if (p.turnStartedAt) setTurnStartedAt(p.turnStartedAt);
-        if (p.p1MsLeft != null) setP1MsLeft(p.p1MsLeft);
-        if (p.p2MsLeft != null) setP2MsLeft(p.p2MsLeft);
-      });
 
-      ch.on("broadcast", { event: realtimeEvent.ChatMessage }, (e: { payload: unknown }) => {
-        const p = e.payload as {
-          id: string;
-          speakerOwnerId: string | null;
-          anonymousToken: string | null;
-          body: string;
-          createdAt: string;
-        };
-        setChat((prev) => (prev.some((x) => x.id === p.id) ? prev : [...prev, p]));
-      });
-
-      ch.on("broadcast", { event: realtimeEvent.Reaction }, (e: { payload: unknown }) => {
-        const p = e.payload as { emoji: string };
-        setReactions((prev) => bumpReaction(prev, p.emoji));
-      });
-
-      ch.on("broadcast", { event: realtimeEvent.GameEnded }, () => {
-        setStatus("completed");
-        setLiveMode(false);
-      });
-
-      ch.subscribe((channelStatus) => {
-        // Supabase emits "SUBSCRIBED" once the WS join is acknowledged.
-        // "CHANNEL_ERROR" / "TIMED_OUT" / "CLOSED" all mean we will not
-        // receive broadcasts until we re-subscribe — flag the UI so the
-        // user knows the board may be stale.
-        if (channelStatus === "SUBSCRIBED") setLiveSync("synced");
-        else if (channelStatus === "CLOSED") setLiveSync("offline");
-        else setLiveSync("connecting");
-      });
-      return () => {
-        sb.removeChannel(ch);
-      };
-    } catch {
-      setLiveSync("offline");
+        channel.subscribe((channelStatus) => {
+          // Supabase Realtime emits these status values:
+          //   SUBSCRIBED  — channel joined; broadcasts will arrive.
+          //   CHANNEL_ERROR / TIMED_OUT / CLOSED — terminal; auto-
+          //     reconnect at the socket layer does NOT always re-emit a
+          //     fresh SUBSCRIBED for an existing channel object. So we
+          //     explicitly remove the channel and rejoin with a small
+          //     backoff. Without this the chip gets stuck on
+          //     RECONNECTING after the first transient drop even though
+          //     the connection itself recovers.
+          if (cleanedUp) return;
+          if (channelStatus === "SUBSCRIBED") {
+            setWsChannelState("subscribed");
+            return;
+          }
+          if (
+            channelStatus === "CLOSED" ||
+            channelStatus === "CHANNEL_ERROR" ||
+            channelStatus === "TIMED_OUT"
+          ) {
+            setWsChannelState("closed");
+            if (sb && ch) sb.removeChannel(ch);
+            ch = null;
+            if (reconnectTimer) clearTimeout(reconnectTimer);
+            // Backoff a little so we don't hot-loop against a flapping
+            // socket. 2s is enough for the socket layer to settle.
+            reconnectTimer = setTimeout(join, 2000);
+          } else {
+            setWsChannelState("connecting");
+          }
+        });
+      } catch {
+        setWsChannelState("closed");
+      }
     }
+
+    join();
+
+    return () => {
+      cleanedUp = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (sb && ch) sb.removeChannel(ch);
+    };
   }, [initial.id, initial.p1?.id, initial.p2?.id]);
 
   // Polling fallback. Realtime broadcasts are best-effort — a dropped
@@ -352,6 +416,8 @@ export function MatchView({ initial }: MatchViewProps) {
         if (!res.ok || cancelled) return;
         const snap = await res.json();
         if (cancelled) return;
+
+        setLastPollAt(Date.now());
 
         if (Array.isArray(snap.moves) && snap.moves.length > 0) {
           setMoves((prev) => {
@@ -493,6 +559,25 @@ export function MatchView({ initial }: MatchViewProps) {
   const scrubFillPct = moves.length === 0 ? 0 : ((effectiveIdx + 1) / moves.length) * 100;
   const watchingCount = chat.length;
 
+  // Honest live-sync chip: drive the LIVE indicator from whether either
+  // delivery channel — WS broadcasts or HTTP polling — has touched the
+  // page within a healthy window. Supabase's auto-reconnect can leave
+  // the channel-state callback stuck on CLOSED even while broadcasts
+  // resume on a fresh socket, so a status-only chip lies to the user.
+  // Polling fires every 5s; allow 15s of slop before we doubt it.
+  const liveSync: "synced" | "connecting" | "offline" = (() => {
+    if (status !== "active") return "synced"; // game ended, chip not shown anyway
+    const elapsedWs = lastWsAt === 0 ? Infinity : now - lastWsAt;
+    const elapsedPoll = lastPollAt === 0 ? Infinity : now - lastPollAt;
+    // Either channel delivering recently → board is live.
+    if (elapsedWs < 30_000 || elapsedPoll < 15_000) return "synced";
+    // Nothing delivered yet but the WS at least joined → still
+    // optimistic. The first move/poll will flip it to synced.
+    if (wsChannelState === "subscribed") return "synced";
+    if (wsChannelState === "connecting") return "connecting";
+    return "offline";
+  })();
+
   return (
     <main className="page" id="page">
       {/* Status strip */}
@@ -606,13 +691,22 @@ export function MatchView({ initial }: MatchViewProps) {
                       liveSync === "synced" ? "live" : "muted",
                     )}
                     style={{ fontSize: 9.5 }}
-                    title={
-                      liveSync === "synced"
-                        ? "Subscribed to live updates. New moves arrive instantly."
-                        : liveSync === "connecting"
-                          ? "Joining the realtime channel…"
-                          : "Realtime channel offline — polling for updates."
-                    }
+                    title={(() => {
+                      const wsAgo = lastWsAt ? Math.floor((now - lastWsAt) / 1000) : null;
+                      const pollAgo = lastPollAt
+                        ? Math.floor((now - lastPollAt) / 1000)
+                        : null;
+                      const wsLine =
+                        wsChannelState === "subscribed"
+                          ? `WS: subscribed${wsAgo != null ? ` (last event ${wsAgo}s ago)` : " (no events yet)"}`
+                          : wsChannelState === "closed"
+                            ? "WS: reconnecting…"
+                            : "WS: connecting…";
+                      const pollLine = pollAgo != null
+                        ? `Poll: ${pollAgo}s ago`
+                        : "Poll: pending";
+                      return `${wsLine} · ${pollLine}`;
+                    })()}
                   >
                     <span
                       className={liveSync === "synced" ? "pulse-dot" : ""}

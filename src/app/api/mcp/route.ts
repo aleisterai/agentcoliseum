@@ -23,7 +23,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db/client";
-import { agents, challenges, matches } from "@/lib/db/schema";
+import { agents, challenges, matches, matchMoves, owners } from "@/lib/db/schema";
 import { slugifyHandle } from "@/lib/utils";
 import { DOCS } from "@/lib/mcp/docs";
 import { AgentSelfPatchSchema } from "@/app/api/agents/me/schema";
@@ -31,7 +31,20 @@ import { voicePackById } from "@/lib/voice-packs";
 import { checkAndRecord as checkRateLimit, RATE_LIMIT_CONFIG } from "@/lib/guardian/rate-limit";
 import { readUsdcAllowance } from "@/lib/chain/allowance";
 import { readErc20Metadata } from "@/lib/chain/erc20-token";
-import { owners } from "@/lib/db/schema";
+import { guardian } from "@/lib/guardian";
+import { pullStake, refundStake, StakePullError } from "@/lib/chain/stake";
+import { requireTier } from "@/lib/chain/tiers";
+import { REGISTRY } from "@/lib/game/registry";
+import {
+  postChallenge,
+  acceptChallenge,
+  applyMove,
+  ChallengeRaceError,
+  IllegalMoveError,
+  NotYourTurnError,
+  MatchNotFoundError,
+  UnknownGameTypeError,
+} from "@/lib/game/server-flow";
 import type { Agent } from "@/lib/db/schema";
 
 export const dynamic = "force-dynamic";
@@ -160,6 +173,68 @@ const TOOLS = [
     description:
       "List your active matches (status='active', this agent on either side) + open challenges you could accept (status='posted', not your own, not expired). Each active match returns matchId + opponent + clock + isMyTurn + a stateUrl/moveUrl pair you can hit next. Each open challenge returns challengeId + initiator + stake + acceptUrl + a `blocked` field that names the ELO / cap reason if you can't take it. The `blocked` field is best-effort; the actual accept goes through the Guardian which re-checks recall, ELO, budget, and on-chain allowance — so a non-blocked challenge here can still get rejected at accept time if the allowance dropped between calls.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "coliseum.challenge.propose",
+    description:
+      "Post a new challenge to the lobby. mode='free' has no stake (anti-spam $0.01 x402); mode='paid' requires stakeUsdc in microUSDC and pulls that stake from the owner's wallet via USDC.transferFrom at propose time (Guardian re-checks recall + budget + on-chain allowance first); mode='system' plays a system bot at the given difficulty. Optional opponentHandle pins the challenge to a specific agent. Optional eloMin/eloMax filter who can accept. timeoutMin caps how long the challenge stays open before auto-refund. For paid challenges, the wallet needs ≥50M ALEISTER (Initiator tier). Returns { kind: 'challenge'|'match', ... }. For system-mode, immediately creates a match; otherwise creates a challenge row that opens to acceptors.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        gameType: { type: "string" },
+        mode: { type: "string", enum: ["free", "paid", "system"] },
+        stakeUsdc: { type: "integer", minimum: 1 },
+        systemBotDifficulty: { type: "string", enum: ["easy", "medium", "hard"] },
+        opponentHandle: { type: "string", maxLength: 32 },
+        eloMin: { type: "integer" },
+        eloMax: { type: "integer" },
+        timeoutMin: { type: "integer", enum: [30, 60, 180, 1440] },
+      },
+      required: ["gameType", "mode"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "coliseum.challenge.accept",
+    description:
+      "Accept an open challenge by id. For paid challenges, Guardian re-checks your effective per-match cap (soft ?? hard, on-chain allowance, rookie pool) and then the operator pulls your stake from your owner's wallet via USDC.transferFrom. If a concurrent accept wins the race, your stake is auto-refunded. Returns the new match { id, opponent, currentTurn, clock, state }.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        challengeId: { type: "string", format: "uuid" },
+      },
+      required: ["challengeId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "coliseum.match.state",
+    description:
+      "Read the current state of one match: board (game-specific JSON), whose turn it is, ms left on each clock, move count, status, invalid-move counter, and the last move's payload + reasoning. Always call this before coliseum.match.move so your move targets the live state — the clock decrements between requests and someone else may have moved.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        matchId: { type: "string", format: "uuid" },
+      },
+      required: ["matchId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "coliseum.match.move",
+    description:
+      "Submit a move in a match. `payload` is the game-specific move object — call coliseum.docs.read({topic:'games'}) for the format per game type, and coliseum.match.state(matchId) for the current state. `reasoning` is an optional 1-3 sentence string explaining the move (shown on the public reasoning trace; not required). `thinkingMs` is the wall-clock time you spent thinking — it decrements your clock. Server validates the move against the game's rules; 2 invalid moves in a row forfeits the match. The first move on the clock pays $0.0008 USDC via x402 — handled server-side, the LLM never signs crypto. Returns the post-move state + the result if the move ended the game.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        matchId: { type: "string", format: "uuid" },
+        payload: { type: "object", additionalProperties: true },
+        reasoning: { type: ["string", "null"], maxLength: 2000 },
+        thinkingMs: { type: "integer", minimum: 0, maximum: 600_000 },
+      },
+      required: ["matchId", "payload", "thinkingMs"],
+      additionalProperties: false,
+    },
   },
 ] as const;
 
@@ -511,6 +586,348 @@ async function runTool(
         windowHours: 24,
         sinceFilterNote: `Only challenges still open + not yet expired. Active matches scoped to this agent. Window probe: ${since.toISOString()}.`,
       };
+    }
+
+    case "coliseum.challenge.propose": {
+      const Args = z
+        .object({
+          gameType: z.string(),
+          mode: z.enum(["free", "paid", "system"]),
+          stakeUsdc: z.number().int().positive().optional(),
+          systemBotDifficulty: z.enum(["easy", "medium", "hard"]).optional(),
+          opponentHandle: z.string().max(32).optional(),
+          eloMin: z.number().int().optional(),
+          eloMax: z.number().int().optional(),
+          timeoutMin: z
+            .union([z.literal(30), z.literal(60), z.literal(180), z.literal(1440)])
+            .default(60),
+        })
+        .strict();
+      const parsed = Args.safeParse(args);
+      if (!parsed.success) {
+        return { error: `validation_failed: ${JSON.stringify(parsed.error.flatten())}` };
+      }
+      const v = parsed.data;
+      if (!REGISTRY[v.gameType]) {
+        return {
+          error: `unknown_game_type: ${v.gameType}. Valid: ${Object.keys(REGISTRY).join(", ")}`,
+        };
+      }
+      if (v.mode === "paid" && !v.stakeUsdc) {
+        return { error: "stakeUsdc required for mode='paid'" };
+      }
+      if (v.mode === "system" && !v.systemBotDifficulty) {
+        return { error: "systemBotDifficulty required for mode='system'" };
+      }
+      // Find the owner so we can do tier + on-chain stake pull.
+      const ownerRow = await db.query.owners.findFirst({
+        where: eq(owners.id, agent.ownerId),
+      });
+      if (!ownerRow) return { error: "owner_not_found" };
+      // Tier gate matches the REST route exactly.
+      try {
+        await requireTier(
+          ownerRow.walletAddress as `0x${string}`,
+          v.mode === "paid" ? "initiator" : "play",
+        );
+      } catch (e) {
+        return {
+          error: `tier_insufficient: ${e instanceof Error ? e.message : String(e)}`,
+        };
+      }
+      // Guardian — same call shape as /api/lobby/challenges POST.
+      const g = await guardian.evaluate("challenge.propose", {
+        agent,
+        stakeUsdc: v.stakeUsdc ?? undefined,
+        gameType: v.gameType,
+      });
+      if (!g.ok) {
+        return {
+          error: `${g.denials[0]?.code ?? "guardian_denied"}: ${g.denials.map((d) => d.message).join(" · ")}`,
+        };
+      }
+      // Pull stake BEFORE creating the challenge row so an over-balance
+      // or under-allowance condition fails without an orphan challenge.
+      let proposerStakeTxHash: `0x${string}` | null = null;
+      if (v.mode === "paid" && v.stakeUsdc) {
+        try {
+          const pull = await pullStake(
+            ownerRow.walletAddress as `0x${string}`,
+            v.stakeUsdc,
+          );
+          proposerStakeTxHash = pull.txHash;
+        } catch (err) {
+          if (err instanceof StakePullError) {
+            return { error: `${err.code}: ${err.message}` };
+          }
+          throw err;
+        }
+      }
+      try {
+        const result = await postChallenge({
+          gameType: v.gameType,
+          initiatorAgentId: agent.id,
+          mode: v.mode,
+          stakeUsdc: v.stakeUsdc ?? null,
+          systemBotDifficulty: v.systemBotDifficulty,
+          opponentHandle: v.opponentHandle ?? null,
+          eloMin: v.eloMin ?? null,
+          eloMax: v.eloMax ?? null,
+          timeoutMin: v.timeoutMin,
+        });
+        if (proposerStakeTxHash && result.kind === "challenge") {
+          await db
+            .update(challenges)
+            .set({
+              proposerStakeTxHash,
+              initiatorEscrowLockedAt: new Date(),
+            })
+            .where(eq(challenges.id, result.challenge.id));
+        }
+        return { ...result, proposerStakeTxHash };
+      } catch (err) {
+        if (err instanceof UnknownGameTypeError) {
+          return { error: `unknown_game_type: ${err.message}` };
+        }
+        throw err;
+      }
+    }
+
+    case "coliseum.challenge.accept": {
+      const Args = z.object({ challengeId: z.string().uuid() }).strict();
+      const parsed = Args.safeParse(args);
+      if (!parsed.success) {
+        return { error: `validation_failed: ${JSON.stringify(parsed.error.flatten())}` };
+      }
+      const challenge = await db.query.challenges.findFirst({
+        where: eq(challenges.id, parsed.data.challengeId),
+      });
+      if (!challenge) return { error: "challenge_not_found" };
+      if (challenge.status !== "posted") {
+        return { error: `not_open: challenge is ${challenge.status}` };
+      }
+      if (challenge.eloMin != null && agent.elo < challenge.eloMin) {
+        return {
+          error: `elo_below_min: your ELO ${agent.elo} < min ${challenge.eloMin}`,
+        };
+      }
+      if (challenge.eloMax != null && agent.elo > challenge.eloMax) {
+        return {
+          error: `elo_above_max: your ELO ${agent.elo} > max ${challenge.eloMax}`,
+        };
+      }
+      const ownerRow = await db.query.owners.findFirst({
+        where: eq(owners.id, agent.ownerId),
+      });
+      if (!ownerRow) return { error: "owner_not_found" };
+      try {
+        await requireTier(ownerRow.walletAddress as `0x${string}`, "play");
+      } catch (e) {
+        return {
+          error: `tier_insufficient: ${e instanceof Error ? e.message : String(e)}`,
+        };
+      }
+      const g = await guardian.evaluate("challenge.accept", {
+        agent,
+        stakeUsdc: challenge.stakeUsdc ?? undefined,
+        gameType: challenge.gameType,
+      });
+      if (!g.ok) {
+        return {
+          error: `${g.denials[0]?.code ?? "guardian_denied"}: ${g.denials.map((d) => d.message).join(" · ")}`,
+        };
+      }
+      let acceptorStakeTxHash: `0x${string}` | null = null;
+      const isPaid = challenge.mode === "paid" && challenge.stakeUsdc;
+      if (isPaid) {
+        try {
+          const pull = await pullStake(
+            ownerRow.walletAddress as `0x${string}`,
+            challenge.stakeUsdc!,
+          );
+          acceptorStakeTxHash = pull.txHash;
+        } catch (err) {
+          if (err instanceof StakePullError) {
+            return { error: `${err.code}: ${err.message}` };
+          }
+          throw err;
+        }
+      }
+      try {
+        const match = await acceptChallenge({
+          challengeId: challenge.id,
+          acceptorAgentId: agent.id,
+        });
+        if (acceptorStakeTxHash) {
+          await db
+            .update(challenges)
+            .set({
+              acceptorStakeTxHash,
+              acceptorEscrowLockedAt: new Date(),
+            })
+            .where(eq(challenges.id, challenge.id));
+        }
+        return {
+          matchId: match.id,
+          gameType: match.gameType,
+          mode: match.mode,
+          status: match.status,
+          stakeUsdc: match.stakeUsdc,
+          potUsdc: match.potUsdc,
+          currentTurnPlayerId: match.currentTurnPlayerId,
+          currentTurnAgentId: match.currentTurnAgentId,
+          p1MsLeft: match.p1MsLeft,
+          p2MsLeft: match.p2MsLeft,
+          acceptorStakeTxHash,
+        };
+      } catch (err) {
+        // Race-loss refund: we pulled but lost the atomic accept.
+        if (acceptorStakeTxHash) {
+          try {
+            await refundStake(
+              ownerRow.walletAddress as `0x${string}`,
+              challenge.stakeUsdc!,
+            );
+          } catch (refundErr) {
+            console.error(
+              "[mcp/accept] race-loss refund failed",
+              { challengeId: challenge.id, pull: acceptorStakeTxHash, refundErr },
+            );
+          }
+        }
+        if (err instanceof ChallengeRaceError) {
+          return { error: `challenge_already_accepted: ${err.message}` };
+        }
+        if (err instanceof IllegalMoveError) {
+          return { error: `accept_failed: ${err.message}` };
+        }
+        if (err instanceof UnknownGameTypeError) {
+          return { error: `unknown_game_type: ${err.message}` };
+        }
+        throw err;
+      }
+    }
+
+    case "coliseum.match.state": {
+      const Args = z.object({ matchId: z.string().uuid() }).strict();
+      const parsed = Args.safeParse(args);
+      if (!parsed.success) {
+        return { error: `validation_failed: ${JSON.stringify(parsed.error.flatten())}` };
+      }
+      const match = await db.query.matches.findFirst({
+        where: eq(matches.id, parsed.data.matchId),
+      });
+      if (!match) return { error: "match_not_found" };
+      // Only return state if this agent is one of the players.
+      if (match.p1AgentId !== agent.id && match.p2AgentId !== agent.id) {
+        return { error: "not_a_player" };
+      }
+      const opponentId = match.p1AgentId === agent.id ? match.p2AgentId : match.p1AgentId;
+      const opponent = opponentId
+        ? await db.query.agents.findFirst({
+            where: eq(agents.id, opponentId),
+            columns: { handle: true, displayName: true, elo: true },
+          })
+        : null;
+      const myPlayerId = match.p1AgentId === agent.id ? "0" : "1";
+      const myMsLeft = match.p1AgentId === agent.id ? match.p1MsLeft : match.p2MsLeft;
+      const opponentMsLeft = match.p1AgentId === agent.id ? match.p2MsLeft : match.p1MsLeft;
+      const myInvalidCount = match.p1AgentId === agent.id ? match.p1InvalidCount : match.p2InvalidCount;
+      // Last move (for context — the LLM can see what the opponent just played).
+      const lastMove = await db
+        .select({
+          moveNumber: matchMoves.moveNumber,
+          agentId: matchMoves.agentId,
+          payload: matchMoves.payload,
+          reasoning: matchMoves.reasoning,
+          createdAt: matchMoves.createdAt,
+        })
+        .from(matchMoves)
+        .where(eq(matchMoves.matchId, match.id))
+        .orderBy(desc(matchMoves.moveNumber))
+        .limit(1);
+      return {
+        matchId: match.id,
+        gameType: match.gameType,
+        mode: match.mode,
+        status: match.status,
+        stakeUsdc: match.stakeUsdc,
+        potUsdc: match.potUsdc,
+        moveCount: match.moveCount,
+        myPlayerId,
+        myMsLeft,
+        opponentMsLeft,
+        clockBudgetMs: match.clockBudgetMs,
+        myInvalidCount,
+        isMyTurn: match.currentTurnAgentId === agent.id,
+        currentTurnAgentId: match.currentTurnAgentId,
+        turnStartedAt: match.turnStartedAt.toISOString(),
+        startedAt: match.startedAt.toISOString(),
+        opponent,
+        boardState: match.state, // game-specific shape; see docs.read({topic:'games'})
+        lastMove: lastMove[0]
+          ? {
+              moveNumber: lastMove[0].moveNumber,
+              byMe: lastMove[0].agentId === agent.id,
+              payload: lastMove[0].payload,
+              reasoning: lastMove[0].reasoning,
+              at: lastMove[0].createdAt.toISOString(),
+            }
+          : null,
+        winnerAgentId: match.winnerAgentId,
+        resultReason: match.resultReason,
+      };
+    }
+
+    case "coliseum.match.move": {
+      const Args = z
+        .object({
+          matchId: z.string().uuid(),
+          payload: z.record(z.string(), z.unknown()),
+          reasoning: z.string().max(2000).nullable().optional(),
+          thinkingMs: z.number().int().min(0).max(600_000),
+        })
+        .strict();
+      const parsed = Args.safeParse(args);
+      if (!parsed.success) {
+        return { error: `validation_failed: ${JSON.stringify(parsed.error.flatten())}` };
+      }
+      const v = parsed.data;
+      try {
+        const updated = await applyMove({
+          matchId: v.matchId,
+          agentId: agent.id,
+          payload: v.payload,
+          reasoning: v.reasoning ?? null,
+          thinkingMs: v.thinkingMs,
+        });
+        const isMyTurn = updated.currentTurnAgentId === agent.id;
+        return {
+          matchId: updated.id,
+          status: updated.status,
+          moveCount: updated.moveCount,
+          isMyTurn,
+          currentTurnAgentId: updated.currentTurnAgentId,
+          p1MsLeft: updated.p1MsLeft,
+          p2MsLeft: updated.p2MsLeft,
+          winnerAgentId: updated.winnerAgentId,
+          resultReason: updated.resultReason,
+          boardState: updated.state,
+          finalized: updated.status === "completed",
+        };
+      } catch (err) {
+        if (err instanceof MatchNotFoundError) return { error: "match_not_found" };
+        if (err instanceof NotYourTurnError) {
+          return { error: "not_your_turn: opponent must move first" };
+        }
+        if (err instanceof IllegalMoveError) {
+          return { error: `illegal_move: ${err.message}` };
+        }
+        if (err instanceof UnknownGameTypeError) {
+          return { error: `unknown_game_type: ${err.message}` };
+        }
+        throw err;
+      }
     }
 
     default:

@@ -567,7 +567,9 @@ export async function finalizeMatch(args: FinalizeArgs): Promise<Match> {
       .limit(1);
     if (!match) throw new MatchNotFoundError();
     if (match.status === "completed" || match.status === "abandoned") {
-      return match; // idempotent
+      // Idempotent: another path already finalized this match. Skip the
+      // re-broadcast — listeners already got the original GameEnded.
+      return { updated: match, broadcastPayload: null };
     }
 
     const adapter = getAdapter(match.gameType);
@@ -727,16 +729,31 @@ export async function finalizeMatch(args: FinalizeArgs): Promise<Match> {
       .set({ resolvedAt: now })
       .where(eq(sidePools.matchId, match.id));
 
-    // Broadcast.
-    await broadcastGame(match.id, realtimeEvent.GameEnded, {
-      matchId: match.id,
-      winnerAgentId: args.winnerAgentId,
-      resultReason: args.resultReason,
-      p1EloDelta: p1Delta,
-      p2EloDelta: p2Delta,
-    });
-    await broadcastLobby(realtimeEvent.GameEnded, { id: match.id });
-
+    // Stash the broadcast payload for fire-and-forget AFTER commit. Doing
+    // the Realtime RPC inside the transaction holds a DB connection for
+    // the round-trip duration (100ms-1s with REST fallback). Under load
+    // — 6+ concurrent finalizers — that exhausts the pool and tail queries
+    // start failing with "Failed query: insert into match_moves ...".
+    return {
+      updated,
+      broadcastPayload: {
+        matchId: match.id,
+        winnerAgentId: args.winnerAgentId,
+        resultReason: args.resultReason,
+        p1EloDelta: p1Delta,
+        p2EloDelta: p2Delta,
+      },
+    };
+  }).then(async ({ updated, broadcastPayload }) => {
+    // Fire-and-forget broadcasts AFTER the transaction has committed and
+    // released its connection back to the pool. Awaited so the caller
+    // sees broadcasts complete before applyMove returns, but they no
+    // longer pin a Postgres connection. broadcastPayload === null on
+    // the idempotent re-finalize path — skip the duplicate broadcast.
+    if (broadcastPayload) {
+      await broadcastGame(updated.id, realtimeEvent.GameEnded, broadcastPayload);
+      await broadcastLobby(realtimeEvent.GameEnded, { id: updated.id });
+    }
     return updated;
   });
 }

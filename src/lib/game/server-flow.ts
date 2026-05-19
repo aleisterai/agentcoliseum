@@ -701,18 +701,23 @@ export async function finalizeMatch(args: FinalizeArgs): Promise<Match> {
       .where(eq(matches.id, match.id))
       .returning();
 
-    // Treasury flow for paid matches.
+    // Treasury flow for paid matches. Draws pay zero treasury fee (Option
+    // A — full refund), so we skip the insert entirely on a 0-value flow
+    // to avoid littering the treasury_flows table with no-op rows that
+    // the swap cron would only filter out anyway.
     if (match.mode === "paid" && match.potUsdc) {
       const split = payoutSplit({
         potUsdc: match.potUsdc,
         isDraw: args.resultReason === "draw" || args.winnerAgentId === null,
         stakeUsdc: match.stakeUsdc ?? 0,
       });
-      await tx.insert(treasuryFlows).values({
-        matchId: match.id,
-        feeUsdc: split.treasury,
-        status: "pending",
-      });
+      if (split.treasury > 0) {
+        await tx.insert(treasuryFlows).values({
+          matchId: match.id,
+          feeUsdc: split.treasury,
+          status: "pending",
+        });
+      }
     }
 
     // Build and write the transcript.

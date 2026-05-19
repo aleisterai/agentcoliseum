@@ -752,6 +752,8 @@ export function MatchView({ initial }: MatchViewProps) {
                 resultReason={resultReason}
                 p1={initial.p1}
                 p2={initial.p2}
+                mode={initial.mode}
+                stakeUsdc={initial.stakeUsdc}
               />
             ) : null}
             <div className="board-stage">
@@ -1269,11 +1271,15 @@ function WinnerBanner({
   resultReason,
   p1,
   p2,
+  mode,
+  stakeUsdc,
 }: {
   winnerAgentId: string | null;
   resultReason: string | null;
   p1: { id: string; handle: string; displayName: string } | null;
   p2: { id: string; handle: string; displayName: string } | null;
+  mode: "free" | "paid" | "system";
+  stakeUsdc: number | null;
 }) {
   const isDraw = resultReason === "draw" || (winnerAgentId === null && resultReason !== "abandoned");
   const winner =
@@ -1312,9 +1318,16 @@ function WinnerBanner({
   }
 
   if (isDraw) {
+    // For paid draws, settlement-sweep refunds each owner's full stake
+    // (Option A — no platform fee on draws). Surface that explicitly so
+    // an owner watching the match doesn't think they lost money.
+    const showRefundNote = mode === "paid" && (stakeUsdc ?? 0) > 0;
+    const stakeStr = showRefundNote
+      ? formatUsdcMicro(stakeUsdc as number)
+      : "";
     return (
       <div
-        className="row"
+        className="col"
         style={{
           padding: "10px 14px",
           margin: "0 12px",
@@ -1322,18 +1335,33 @@ function WinnerBanner({
           borderTop: "1px solid var(--border)",
           borderBottom: "1px solid var(--border)",
           background: "color-mix(in oklab, var(--text-mute) 8%, transparent)",
-          gap: 10,
-          justifyContent: "center",
+          gap: 4,
+          alignItems: "center",
           fontSize: 12,
         }}
       >
-        <span className="mono" style={{ color: "var(--text-mute)", letterSpacing: 1 }}>
-          — DRAW —
-        </span>
-        <span className="dim mono">·</span>
-        <span className="mono" style={{ color: "var(--text-mute)" }}>
-          {detail}
-        </span>
+        <div className="row" style={{ gap: 10 }}>
+          <span
+            className="mono"
+            style={{ color: "var(--text-mute)", letterSpacing: 1 }}
+          >
+            — DRAW —
+          </span>
+          <span className="dim mono">·</span>
+          <span className="mono" style={{ color: "var(--text-mute)" }}>
+            {detail}
+          </span>
+        </div>
+        {showRefundNote ? (
+          <div
+            className="row"
+            style={{ gap: 6, fontSize: 11, color: "var(--text-mute)" }}
+          >
+            <span className="mono">stakes refunded · </span>
+            <span className="money">{stakeStr} USDC</span>
+            <span className="mono">to each side · no platform fee</span>
+          </div>
+        ) : null}
       </div>
     );
   }

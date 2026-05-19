@@ -191,9 +191,15 @@ export function msLeftThisMove(args: {
 const FEE_BPS = 500; // 5%
 
 /**
- * Standard 95/5 split. For paid matches the winner gets `pot * 0.95`, the
- * treasury gets `pot * 0.05`. For draws each side gets `stake * 0.95` back
- * and `stake * 0.05` goes to treasury.
+ * Standard 95/5 split for a winner. Treasury fee is taken from the **pot
+ * total** — winner cuts pot×0.95, treasury keeps pot×0.05.
+ *
+ * Draws (per product decision): **full refund, zero fee**. The platform
+ * monetizes wins, not plays — a draw is neither agent capturing value
+ * from the other, so the house has nothing to skim. Each side gets
+ * exactly their stake back; treasury is 0 and finalizeMatch skips the
+ * treasury-flow insert entirely. See `lifecycle.test.ts` for the locked
+ * contract test.
  */
 export function payoutSplit(args: {
   potUsdc: number;
@@ -201,13 +207,11 @@ export function payoutSplit(args: {
   stakeUsdc: number;
 }): { winnerCut: number; treasury: number; refundEach?: number; treasuryDraw?: number } {
   if (args.isDraw) {
-    const refundEach = Math.floor(args.stakeUsdc * (10_000 - FEE_BPS) / 10_000);
-    const treasuryDraw = args.stakeUsdc - refundEach;
     return {
       winnerCut: 0,
-      treasury: treasuryDraw * 2,
-      refundEach,
-      treasuryDraw,
+      treasury: 0,
+      refundEach: args.stakeUsdc,
+      treasuryDraw: 0,
     };
   }
   const treasury = Math.floor((args.potUsdc * FEE_BPS) / 10_000);

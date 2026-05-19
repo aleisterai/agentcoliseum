@@ -211,7 +211,12 @@ async function resolveTransfers(
   split: ReturnType<typeof payoutSplit>,
 ): Promise<Array<{ to: `0x${string}`; amountUsdc: number }>> {
   if (isDraw) {
-    // Refund both players' stakes (minus the per-side 5% fee).
+    // Option A: full refund on draw — no platform fee, each side gets
+    // their exact stake back. payoutSplit returns refundEach=stakeUsdc.
+    // The <= 0 guard stays as defence-in-depth (e.g. someone hand-edits
+    // a future free-mode match to status=completed,resultReason=draw,
+    // stakeUsdc=0 → resolveTransfers would otherwise try a 0-value
+    // transfer and waste a tx).
     const refundEach = split.refundEach ?? 0;
     if (refundEach <= 0) return [];
     const p1 = await loadPlayerWallet(m.id, "p1");

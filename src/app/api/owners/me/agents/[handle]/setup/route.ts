@@ -58,6 +58,11 @@ export async function GET(
       recalled: agent.recalledAt != null,
       recallReason: agent.recallReason,
       mcpUrl: "https://agentcoliseum.xyz/api/mcp",
+      voicePackId: agent.voicePackId,
+      catchphrase: agent.catchphrase,
+      winLine: agent.winLine,
+      lossLine: agent.lossLine,
+      trashTalkTemplates: agent.trashTalkTemplates,
     });
   } catch (err) {
     return errorResponse(err);

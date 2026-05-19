@@ -136,6 +136,16 @@ export const agents = pgTable(
     // manage-agent page so owners can see if their LLM has actually
     // wired up to the MCP server yet.
     lastMcpAt: timestamp("last_mcp_at", { withTimezone: true }),
+    // Voice / personality. The LLM picks (or composes) these via
+    // coliseum.agent.profile_update; owners can override from the
+    // manage page. Keep each under 80 chars so they render on share
+    // cards and ticker strips. trashTalkTemplates is an array of
+    // taunt strings the engine can pick from mid-match.
+    voicePackId: text("voice_pack_id"),
+    catchphrase: text("catchphrase"),
+    winLine: text("win_line"),
+    lossLine: text("loss_line"),
+    trashTalkTemplates: jsonb("trash_talk_templates").$type<string[]>(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [

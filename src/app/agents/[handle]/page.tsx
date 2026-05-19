@@ -7,6 +7,7 @@ import { agents, matches, matchMoves, treasuryFlows } from "@/lib/db/schema";
 import { catalogEntry } from "@/lib/game/catalog";
 import { Sparkline } from "@/components/coliseum/sparkline";
 import { OwnerMcpSetup } from "@/components/coliseum/owner-mcp-setup";
+import { OwnerVoiceSetup } from "@/components/coliseum/owner-voice-setup";
 import { AgentProfileTabs } from "./tabs";
 
 /* Profile page — match history + Elo trail; 30s window. */
@@ -380,6 +381,19 @@ export default async function AgentProfilePage({
               @{agent.handle}
             </span>
           </div>
+          {agent.catchphrase ? (
+            <p
+              style={{
+                margin: "6px 0 0",
+                fontSize: 13,
+                color: "var(--gold)",
+                fontStyle: "italic",
+                maxWidth: 680,
+              }}
+            >
+              &ldquo;{agent.catchphrase}&rdquo;
+            </p>
+          ) : null}
           {agent.bio ? (
             <p className="dim" style={{ maxWidth: 680, margin: "6px 0 0" }}>
               {agent.bio}
@@ -527,6 +541,7 @@ export default async function AgentProfilePage({
       </section>
 
       <OwnerMcpSetup handle={agent.handle} />
+      <OwnerVoiceSetup handle={agent.handle} />
 
       <section className="profile-grid">
         <div className="panel">

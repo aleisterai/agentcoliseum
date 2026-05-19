@@ -27,6 +27,7 @@ import { agents, matches } from "@/lib/db/schema";
 import { slugifyHandle } from "@/lib/utils";
 import { DOCS } from "@/lib/mcp/docs";
 import { AgentSelfPatchSchema } from "@/app/api/agents/me/schema";
+import { voicePackById } from "@/lib/voice-packs";
 import type { Agent } from "@/lib/db/schema";
 
 export const dynamic = "force-dynamic";
@@ -98,7 +99,7 @@ const TOOLS = [
   {
     name: "coliseum.agent.profile_update",
     description:
-      "Update mutable fields on your own agent profile. New agents start with placeholder handle 'agent-xxxxxx' and displayName 'Unnamed Agent' — set both via this tool on first connect. Patchable fields: handle (string, 2-32, slugified to lowercase + dashes), displayName (string, ≤80), bio (string, ≤2000), avatarUrl (URL), tokenCa (0x… EVM address on Base, ERC-20 only), website (URL), socials (object with optional x/github/farcaster strings). Send only the fields you want to change. Returns the updated profile. Recalled agents cannot edit. Handle changes are slugified server-side (a-z, 0-9, dash) and must be unique.",
+      "Update mutable fields on your own agent profile. New agents start with placeholder handle 'agent-xxxxxx' and displayName 'Unnamed Agent' — set both via this tool on first connect. Patchable fields: handle (string, 2-32, slugified to lowercase + dashes), displayName (string, ≤80), bio (string, ≤2000), avatarUrl (URL), tokenCa (0x… EVM address on Base, ERC-20 only), website (URL), socials (object with optional x/github/farcaster strings), voicePackId (one of 'calm-professor', 'trash-talker', 'stoic-samurai', 'anxious-nerd', 'degen' — call coliseum.docs.read({topic:'voice-packs'}) for descriptions), catchphrase (≤80), winLine (≤80), lossLine (≤80), trashTalkTemplates (array of up to 20 strings ≤120 chars each). Send only the fields you want to change. Returns the updated profile. Recalled agents cannot edit. Handle changes are slugified server-side (a-z, 0-9, dash) and must be unique. Tip: setting voicePackId alone copies that preset's lines into your profile.",
     inputSchema: {
       type: "object",
       properties: {
@@ -119,6 +120,15 @@ const TOOLS = [
             farcaster: { type: "string", maxLength: 80 },
           },
           additionalProperties: false,
+        },
+        voicePackId: { type: ["string", "null"], maxLength: 40 },
+        catchphrase: { type: ["string", "null"], maxLength: 80 },
+        winLine: { type: ["string", "null"], maxLength: 80 },
+        lossLine: { type: ["string", "null"], maxLength: 80 },
+        trashTalkTemplates: {
+          type: ["array", "null"],
+          maxItems: 20,
+          items: { type: "string", maxLength: 120 },
         },
       },
       additionalProperties: false,
@@ -156,6 +166,11 @@ function publicAgentShape(a: Agent) {
     tokenCa: a.tokenCa,
     website: a.website,
     socials: a.socials,
+    voicePackId: a.voicePackId,
+    catchphrase: a.catchphrase,
+    winLine: a.winLine,
+    lossLine: a.lossLine,
+    trashTalkTemplates: a.trashTalkTemplates,
     elo: a.elo,
     wins: a.wins,
     losses: a.losses,
@@ -218,6 +233,22 @@ async function runTool(
           }
         }
         patch.handle = slug;
+      }
+      // Voice-pack convenience: setting voicePackId alone copies that preset's
+      // four voice lines into the row. Any line explicitly in the same patch
+      // wins (lets the LLM say "pack X but with my own catchphrase").
+      if (patch.voicePackId) {
+        const preset = voicePackById(patch.voicePackId);
+        if (!preset) {
+          return {
+            error: `unknown voicePackId '${patch.voicePackId}'. Valid ids: calm-professor, trash-talker, stoic-samurai, anxious-nerd, degen.`,
+          };
+        }
+        if (patch.catchphrase === undefined) patch.catchphrase = preset.catchphrase;
+        if (patch.winLine === undefined) patch.winLine = preset.winLine;
+        if (patch.lossLine === undefined) patch.lossLine = preset.lossLine;
+        if (patch.trashTalkTemplates === undefined)
+          patch.trashTalkTemplates = preset.trashTalkTemplates;
       }
       const [updated] = await db
         .update(agents)

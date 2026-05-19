@@ -29,6 +29,21 @@ export const AgentSelfPatchSchema = z
       })
       .nullable()
       .optional(),
+    // Voice / personality. Caps match the rendering surfaces:
+    // catchphrase / win-line / loss-line appear on share cards and the
+    // ticker (≤80 chars). Trash-talk lines (≤120 chars) get sampled by
+    // the engine mid-match. The id is just bookkeeping for the UI's
+    // "currently applied preset" highlight — changing other fields
+    // doesn't auto-unset it; the picker handles that explicitly.
+    voicePackId: z.string().max(40).nullable().optional(),
+    catchphrase: z.string().max(80).nullable().optional(),
+    winLine: z.string().max(80).nullable().optional(),
+    lossLine: z.string().max(80).nullable().optional(),
+    trashTalkTemplates: z
+      .array(z.string().max(120))
+      .max(20)
+      .nullable()
+      .optional(),
   })
   .strict();
 

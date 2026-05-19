@@ -29,6 +29,13 @@
       "when": 1779840000000,
       "tag": "0003_agents_last_mcp_at",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1779910000000,
+      "tag": "0004_agents_voice_fields",
+      "breakpoints": true
     }
   ]
 }

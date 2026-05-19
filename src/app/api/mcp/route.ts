@@ -34,6 +34,8 @@ import { readErc20Metadata } from "@/lib/chain/erc20-token";
 import { guardian } from "@/lib/guardian";
 import { pullStake, refundStake, StakePullError } from "@/lib/chain/stake";
 import { requireTier } from "@/lib/chain/tiers";
+import { tournaments, tournamentEntries } from "@/lib/db/schema";
+import { registerForTournament, RegistrationError } from "@/lib/tournament-registration";
 import { REGISTRY } from "@/lib/game/registry";
 import {
   postChallenge,
@@ -233,6 +235,34 @@ const TOOLS = [
         thinkingMs: { type: "integer", minimum: 0, maximum: 600_000 },
       },
       required: ["matchId", "payload", "thinkingMs"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "coliseum.tournament.list",
+    description:
+      "List open tournaments — status='registering' with at least one spot left. Each returns id + name + gameType + size + entryFeeUsdc + prizePoolUsdc (sum of entry fees so far) + entriesCount + registrationCloseAt. Pass status='running' or 'completed' to see other states.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          enum: ["registering", "running", "completed"],
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "coliseum.tournament.register",
+    description:
+      "Register THIS agent into an open tournament. Pulls the entry fee from the owner's USDC allowance (same approve mechanism as stakes). Guardian re-checks recall + budget before the pull. Errors: tournament_not_found, wrong_status, registration_closed, tournament_full, already_entered, insufficient_allowance (owner must approve more USDC), insufficient_balance (owner needs to top up). Returns the new entry + updated tournament (with prize pool bumped).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tournamentId: { type: "string", format: "uuid" },
+      },
+      required: ["tournamentId"],
       additionalProperties: false,
     },
   },
@@ -925,6 +955,95 @@ async function runTool(
         }
         if (err instanceof UnknownGameTypeError) {
           return { error: `unknown_game_type: ${err.message}` };
+        }
+        throw err;
+      }
+    }
+
+    case "coliseum.tournament.list": {
+      const Args = z
+        .object({
+          status: z
+            .enum(["registering", "running", "completed"])
+            .default("registering"),
+        })
+        .strict();
+      const parsed = Args.safeParse(args);
+      if (!parsed.success) {
+        return { error: `validation_failed: ${JSON.stringify(parsed.error.flatten())}` };
+      }
+      const rows = await db
+        .select({
+          id: tournaments.id,
+          name: tournaments.name,
+          gameType: tournaments.gameType,
+          size: tournaments.size,
+          entryFeeUsdc: tournaments.entryFeeUsdc,
+          prizePoolUsdc: tournaments.prizePoolUsdc,
+          status: tournaments.status,
+          winnerAgentId: tournaments.winnerAgentId,
+          registrationCloseAt: tournaments.registrationCloseAt,
+          startedAt: tournaments.startedAt,
+          completedAt: tournaments.completedAt,
+          createdAt: tournaments.createdAt,
+          entriesCount: sql<number>`(
+            SELECT COUNT(*)::int FROM ${tournamentEntries}
+            WHERE ${tournamentEntries.tournamentId} = ${tournaments.id}
+          )`,
+        })
+        .from(tournaments)
+        .where(eq(tournaments.status, parsed.data.status))
+        .orderBy(desc(tournaments.createdAt))
+        .limit(50);
+      return {
+        tournaments: rows.map((r) => ({
+          ...r,
+          registrationCloseAt: r.registrationCloseAt?.toISOString() ?? null,
+          startedAt: r.startedAt?.toISOString() ?? null,
+          completedAt: r.completedAt?.toISOString() ?? null,
+          createdAt: r.createdAt.toISOString(),
+          spotsLeft: r.size - r.entriesCount,
+          registerUrl: `https://agentcoliseum.xyz/api/tournaments/${r.id}/register`,
+          bracketUrl: `https://agentcoliseum.xyz/tournament/${r.id}`,
+        })),
+      };
+    }
+
+    case "coliseum.tournament.register": {
+      const Args = z
+        .object({ tournamentId: z.string().uuid() })
+        .strict();
+      const parsed = Args.safeParse(args);
+      if (!parsed.success) {
+        return { error: `validation_failed: ${JSON.stringify(parsed.error.flatten())}` };
+      }
+      const ownerRow = await db.query.owners.findFirst({
+        where: eq(owners.id, agent.ownerId),
+      });
+      if (!ownerRow) return { error: "owner_not_found" };
+      try {
+        const result = await registerForTournament({
+          tournamentId: parsed.data.tournamentId,
+          agent,
+          ownerWalletAddress: ownerRow.walletAddress as `0x${string}`,
+        });
+        return {
+          entry: {
+            ...result.entry,
+            registeredAt: result.entry.registeredAt.toISOString(),
+          },
+          tournament: {
+            ...result.tournament,
+            registrationCloseAt:
+              result.tournament.registrationCloseAt?.toISOString() ?? null,
+            startedAt: result.tournament.startedAt?.toISOString() ?? null,
+            completedAt: result.tournament.completedAt?.toISOString() ?? null,
+            createdAt: result.tournament.createdAt.toISOString(),
+          },
+        };
+      } catch (err) {
+        if (err instanceof RegistrationError) {
+          return { error: `${err.code}: ${err.message}` };
         }
         throw err;
       }

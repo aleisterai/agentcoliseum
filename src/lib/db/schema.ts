@@ -436,6 +436,104 @@ export const matchReactions = pgTable(
 ).enableRLS();
 
 // -----------------------------------------------------------------------------
+// tournaments — single-elim brackets, 4 / 8 / 16 size.
+// Lifecycle: registering → running → completed | cancelled.
+// -----------------------------------------------------------------------------
+
+export const tournamentStatusEnum = pgEnum("tournament_status", [
+  "registering",
+  "running",
+  "completed",
+  "cancelled",
+]);
+
+export const tournaments = pgTable(
+  "tournaments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    gameType: text("game_type").notNull(),
+    size: integer("size").notNull(), // 4 | 8 | 16
+    entryFeeUsdc: integer("entry_fee_usdc").notNull(), // microUSDC
+    prizePoolUsdc: integer("prize_pool_usdc").default(0).notNull(),
+    status: tournamentStatusEnum("status").default("registering").notNull(),
+    winnerAgentId: uuid("winner_agent_id").references(() => agents.id, {
+      onDelete: "set null",
+    }),
+    // Optional bounded registration window. After registrationCloseAt the
+    // tournament refuses new entries (status stays 'registering' until
+    // someone advances it).
+    registrationCloseAt: timestamp("registration_close_at", { withTimezone: true }),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("tournaments_status_idx").on(table.status),
+    index("tournaments_game_type_idx").on(table.gameType),
+    check("tournaments_size_valid", sql`${table.size} IN (4, 8, 16)`),
+  ],
+).enableRLS();
+
+export const tournamentEntries = pgTable(
+  "tournament_entries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tournamentId: uuid("tournament_id")
+      .references(() => tournaments.id, { onDelete: "cascade" })
+      .notNull(),
+    agentId: uuid("agent_id")
+      .references(() => agents.id, { onDelete: "cascade" })
+      .notNull(),
+    // Bracket seed (1..size). Filled in when the tournament transitions
+    // to 'running'; null while still registering.
+    seed: integer("seed"),
+    // Round in which this agent was eliminated (1 = first round, 0 = winner).
+    // Null while the agent is still in the bracket.
+    eliminatedRound: integer("eliminated_round"),
+    // Entry-fee tx hash from the USDC.transferFrom pull at register time.
+    entryFeeTxHash: text("entry_fee_tx_hash"),
+    registeredAt: timestamp("registered_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("tournament_entries_uq").on(table.tournamentId, table.agentId),
+    index("tournament_entries_tournament_idx").on(table.tournamentId),
+    index("tournament_entries_agent_idx").on(table.agentId),
+  ],
+).enableRLS();
+
+export const tournamentMatches = pgTable(
+  "tournament_matches",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tournamentId: uuid("tournament_id")
+      .references(() => tournaments.id, { onDelete: "cascade" })
+      .notNull(),
+    matchId: uuid("match_id")
+      .references(() => matches.id, { onDelete: "set null" }),
+    round: integer("round").notNull(), // 1 = first round, increments
+    bracketPosition: integer("bracket_position").notNull(), // 0..size/2-1 within round
+    p1AgentId: uuid("p1_agent_id")
+      .references(() => agents.id, { onDelete: "set null" }),
+    p2AgentId: uuid("p2_agent_id")
+      .references(() => agents.id, { onDelete: "set null" }),
+    winnerAgentId: uuid("winner_agent_id")
+      .references(() => agents.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("tournament_matches_slot_uq").on(
+      table.tournamentId,
+      table.round,
+      table.bracketPosition,
+    ),
+    index("tournament_matches_match_idx").on(table.matchId),
+  ],
+).enableRLS();
+
+// -----------------------------------------------------------------------------
 // treasury_flows — every 5% fee skim. Cron swaps these to ALEISTER and sends
 // to the treasury wallet on Aerodrome.
 // -----------------------------------------------------------------------------

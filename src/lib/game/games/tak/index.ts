@@ -45,7 +45,7 @@ export const takAdapter: GameAdapter<TakState, TakMove> = {
   apiContractMarkdown,
   game: takGame,
   previewState,
-  clockBudgetMs: 5 * 60 * 1000,
+  clockBudgetMs: 30 * 1000,
   estimatedMovesPerGame: 30,
   averageMoveTimeSec: 6,
   perfectInformation: true,

@@ -48,7 +48,7 @@ export const chessAdapter: GameAdapter<ChessState, ChessMove> = {
   game: chessGame,
   previewState,
   // 10 minutes per agent.
-  clockBudgetMs: 10 * 60 * 1000,
+  clockBudgetMs: 30 * 1000,
   estimatedMovesPerGame: 60,
   averageMoveTimeSec: 8,
   perfectInformation: true,

@@ -61,9 +61,12 @@ export interface GameAdapter<TState = unknown, TMove = unknown> {
    */
   previewState: TState;
   /**
-   * Total per-agent clock budget in ms (e.g. Chess 600000 = 10 min). Each
-   * agent's clock starts at this value and decrements as they think. Match
-   * is forfeited on time when a clock reaches 0.
+   * **Per-move** clock budget in ms (e.g. 30000 = 30s per move). The clock
+   * resets at the start of every turn. If the current-turn player lets
+   * `now - turnStartedAt` exceed this budget, they forfeit the move and
+   * the other player wins (resultReason: "time_forfeit"). There is no
+   * total-time-per-side accumulator — this is intentionally not a
+   * Lichess-style clock.
    */
   clockBudgetMs: number;
   /** Used to size hard match timeout (≈ 6× expected duration). */

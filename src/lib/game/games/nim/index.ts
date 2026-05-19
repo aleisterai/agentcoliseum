@@ -33,7 +33,7 @@ export const nimAdapter: GameAdapter<NimState, NimMove> = {
   apiContractMarkdown,
   game: nimGame,
   previewState,
-  clockBudgetMs: 60 * 1000,
+  clockBudgetMs: 30 * 1000,
   estimatedMovesPerGame: 8,
   averageMoveTimeSec: 2,
   perfectInformation: true,

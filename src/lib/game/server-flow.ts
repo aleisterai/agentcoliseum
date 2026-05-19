@@ -35,7 +35,6 @@ import { buildEngine } from "@/lib/game/engine";
 import { buildTranscript } from "@/lib/game/snapshot";
 import {
   clockExpired,
-  decrementClock,
   eloUpdate,
   payoutSplit,
   type ResultReason,
@@ -273,25 +272,32 @@ export async function applyMove(input: ApplyMoveInput): Promise<Match> {
 
   const now = new Date();
 
-  // Decrement the active clock first; forfeit if it hit zero.
-  const { p1MsLeft, p2MsLeft } = decrementClock({
-    p1MsLeft: match.p1MsLeft,
-    p2MsLeft: match.p2MsLeft,
-    turnStartedAt: match.turnStartedAt,
-    currentTurnPlayerId: match.currentTurnPlayerId,
-    now,
-  });
-  if (clockExpired({ p1MsLeft, p2MsLeft, currentTurnPlayerId: match.currentTurnPlayerId })) {
+  // Per-move clock: each player has `adapter.clockBudgetMs` to make this
+  // move. If they didn't, they forfeit it and the opponent wins. No
+  // per-side accumulator — the clock resets on every accepted move.
+  if (
+    clockExpired({
+      turnStartedAt: match.turnStartedAt,
+      perMoveMs: adapter.clockBudgetMs,
+      now,
+    })
+  ) {
     const winnerAgentId =
       match.currentTurnPlayerId === "0" ? match.p2AgentId : match.p1AgentId;
     return finalizeMatch({
       matchId: match.id,
       winnerAgentId,
       resultReason: "time_forfeit",
-      finalP1Ms: p1MsLeft,
-      finalP2Ms: p2MsLeft,
+      // Both columns get the per-move budget — they represent "your
+      // budget for the NEXT move", not "remaining total."
+      finalP1Ms: adapter.clockBudgetMs,
+      finalP2Ms: adapter.clockBudgetMs,
     });
   }
+  // The current-turn player still has time; both rails will show full
+  // budget after this move lands.
+  const p1MsLeft = adapter.clockBudgetMs;
+  const p2MsLeft = adapter.clockBudgetMs;
 
   // Validate payload via the adapter; on invalid, bump counter or forfeit.
   const validation = adapter.validateMovePayload(input.payload);
@@ -523,25 +529,28 @@ export async function driveSystemBot(match: Match): Promise<Match> {
 export async function enforceClockExpiry(matchId: string): Promise<Match | null> {
   const match = await db.query.matches.findFirst({ where: eq(matches.id, matchId) });
   if (!match || match.status !== "active") return null;
+  const adapter = getAdapter(match.gameType);
+  if (!adapter) return null;
   const now = new Date();
-  const { p1MsLeft, p2MsLeft } = decrementClock({
-    p1MsLeft: match.p1MsLeft,
-    p2MsLeft: match.p2MsLeft,
-    turnStartedAt: match.turnStartedAt,
-    currentTurnPlayerId: match.currentTurnPlayerId,
-    now,
-  });
-  if (!clockExpired({ p1MsLeft, p2MsLeft, currentTurnPlayerId: match.currentTurnPlayerId })) {
+  if (
+    !clockExpired({
+      turnStartedAt: match.turnStartedAt,
+      perMoveMs: adapter.clockBudgetMs,
+      now,
+    })
+  ) {
     return null;
   }
+  // Current player ran the per-move clock to zero → forfeit; the OTHER
+  // player wins. winnerAgentId is never null on a time-forfeit path.
   const winnerAgentId =
     match.currentTurnPlayerId === "0" ? match.p2AgentId : match.p1AgentId;
   return finalizeMatch({
     matchId: match.id,
     winnerAgentId,
     resultReason: "time_forfeit",
-    finalP1Ms: p1MsLeft,
-    finalP2Ms: p2MsLeft,
+    finalP1Ms: adapter.clockBudgetMs,
+    finalP2Ms: adapter.clockBudgetMs,
   });
 }
 

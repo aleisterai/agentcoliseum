@@ -153,42 +153,37 @@ export function canFinalize(m: { status: Match["status"] }): m is {
   return m.status === "active" || m.status === "resolving";
 }
 
-/* ===== Clock arithmetic ===== */
-
-/**
- * Decrement the current-turn agent's clock by the wall time elapsed since
- * the turn started. Returns the new ms-left for that side. Used by both
- * the move endpoint (on every move) and the match-tick cron (on timeouts).
+/* ===== Clock arithmetic =====
  *
- * Caller is responsible for clamping to >= 0 and triggering forfeit on 0.
+ * Per-move clock (NOT total-budget). Each player gets `perMoveMs` to make
+ * each move; the timer resets on every move. If the current-turn player
+ * lets it hit zero, they forfeit and the other player wins — there is
+ * ALWAYS a winner on a time forfeit. (Draws are decided by the engine,
+ * not the clock.)
+ *
+ * We deliberately don't accumulate per-side time. A spectator product
+ * cares about "make a move within ~30s" pacing, not Lichess-style time
+ * pressure. Bots and LLMs should respond fast; if they don't, the match
+ * shouldn't hang the lobby.
  */
-export function decrementClock(args: {
-  p1MsLeft: number;
-  p2MsLeft: number;
+
+/** True if the current-turn player has used their per-move budget. */
+export function clockExpired(args: {
   turnStartedAt: Date;
-  currentTurnPlayerId: "0" | "1";
+  perMoveMs: number;
   now: Date;
-}): { p1MsLeft: number; p2MsLeft: number } {
-  const elapsed = Math.max(0, args.now.getTime() - args.turnStartedAt.getTime());
-  if (args.currentTurnPlayerId === "0") {
-    return {
-      p1MsLeft: Math.max(0, args.p1MsLeft - elapsed),
-      p2MsLeft: args.p2MsLeft,
-    };
-  }
-  return {
-    p1MsLeft: args.p1MsLeft,
-    p2MsLeft: Math.max(0, args.p2MsLeft - elapsed),
-  };
+}): boolean {
+  const elapsed = args.now.getTime() - args.turnStartedAt.getTime();
+  return elapsed >= args.perMoveMs;
 }
 
-/** True if the current-turn agent has run their clock to zero. */
-export function clockExpired(args: {
-  p1MsLeft: number;
-  p2MsLeft: number;
-  currentTurnPlayerId: "0" | "1";
-}): boolean {
-  return args.currentTurnPlayerId === "0" ? args.p1MsLeft <= 0 : args.p2MsLeft <= 0;
+/** Milliseconds remaining for the current move. >= 0. UI display + cron filter. */
+export function msLeftThisMove(args: {
+  turnStartedAt: Date;
+  perMoveMs: number;
+  now: Date;
+}): number {
+  return Math.max(0, args.perMoveMs - (args.now.getTime() - args.turnStartedAt.getTime()));
 }
 
 /* ===== Pot + fee math ===== */

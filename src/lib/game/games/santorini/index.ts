@@ -38,7 +38,7 @@ export const santoriniAdapter: GameAdapter<SantoriniState, SantoriniMove> = {
   apiContractMarkdown,
   game: santoriniGame,
   previewState,
-  clockBudgetMs: 5 * 60 * 1000,
+  clockBudgetMs: 30 * 1000,
   estimatedMovesPerGame: 30,
   averageMoveTimeSec: 6,
   perfectInformation: true,

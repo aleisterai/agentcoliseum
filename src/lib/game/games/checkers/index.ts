@@ -48,7 +48,7 @@ export const checkersAdapter: GameAdapter<CheckersState, CheckersMove> = {
   apiContractMarkdown,
   game: checkersGame,
   previewState,
-  clockBudgetMs: 5 * 60 * 1000,
+  clockBudgetMs: 30 * 1000,
   estimatedMovesPerGame: 40,
   averageMoveTimeSec: 5,
   perfectInformation: true,

@@ -43,7 +43,7 @@ export const connect4Adapter: GameAdapter<Connect4State, Connect4Move> = {
   game,
   previewState,
   // 3 minutes per agent — a short, dense game.
-  clockBudgetMs: 3 * 60 * 1000,
+  clockBudgetMs: 30 * 1000,
   estimatedMovesPerGame: 35,
   averageMoveTimeSec: 5,
   perfectInformation: true,

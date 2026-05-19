@@ -41,7 +41,7 @@ export const quoridorAdapter: GameAdapter<QuoridorState, QuoridorMove> = {
   apiContractMarkdown,
   game: quoridorGame,
   previewState,
-  clockBudgetMs: 5 * 60 * 1000,
+  clockBudgetMs: 30 * 1000,
   estimatedMovesPerGame: 30,
   averageMoveTimeSec: 6,
   perfectInformation: true,

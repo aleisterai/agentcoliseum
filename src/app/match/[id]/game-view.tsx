@@ -121,6 +121,12 @@ export function MatchView({ initial }: MatchViewProps) {
   const [p2MsLeft, setP2MsLeft] = useState(initial.p2MsLeft);
   const [turnStartedAt, setTurnStartedAt] = useState(initial.turnStartedAt);
   const [now, setNow] = useState(() => Date.now());
+  // Outcome state — updated when the GameEnded broadcast arrives or the
+  // polling fallback observes a completed match. The board panel banner
+  // reads from here so a spectator who lands on a completed match always
+  // sees who won immediately, no refresh required.
+  const [winnerAgentId, setWinnerAgentId] = useState<string | null>(initial.winnerAgentId);
+  const [resultReason, setResultReason] = useState<string | null>(initial.resultReason);
   // Last-update timestamps from each delivery channel. The chip is
   // honest about UX: if either WS broadcasts or polling are currently
   // delivering moves, the board IS live and the chip shows LIVE — even
@@ -340,10 +346,20 @@ export function MatchView({ initial }: MatchViewProps) {
           },
         );
 
-        channel.on("broadcast", { event: realtimeEvent.GameEnded }, () => {
-          setStatus("completed");
-          setLiveMode(false);
-        });
+        channel.on(
+          "broadcast",
+          { event: realtimeEvent.GameEnded },
+          (e: { payload: unknown }) => {
+            const p = e.payload as Partial<{
+              winnerAgentId: string | null;
+              resultReason: string | null;
+            }>;
+            setStatus("completed");
+            setLiveMode(false);
+            if (p.winnerAgentId !== undefined) setWinnerAgentId(p.winnerAgentId);
+            if (p.resultReason !== undefined) setResultReason(p.resultReason);
+          },
+        );
 
         channel.subscribe((channelStatus) => {
           // Supabase Realtime emits these status values:
@@ -461,6 +477,11 @@ export function MatchView({ initial }: MatchViewProps) {
         if (snap.status && snap.status !== "active") {
           setStatus(snap.status);
           setLiveMode(false);
+          // Reflect the outcome immediately so the winner banner appears
+          // even on a page that landed mid-finalization (broadcast might
+          // have arrived before this snapshot, or vice-versa).
+          if (snap.winnerAgentId !== undefined) setWinnerAgentId(snap.winnerAgentId);
+          if (snap.resultReason !== undefined) setResultReason(snap.resultReason);
         }
       } catch {
         /* network blip — next tick will retry */
@@ -721,6 +742,14 @@ export function MatchView({ initial }: MatchViewProps) {
                 ) : null}
               </div>
             </div>
+            {status === "completed" ? (
+              <WinnerBanner
+                winnerAgentId={winnerAgentId}
+                resultReason={resultReason}
+                p1={initial.p1}
+                p2={initial.p2}
+              />
+            ) : null}
             <div className="board-stage">
               <div className="board-wrap">
                 <GameBoard
@@ -1209,6 +1238,160 @@ function AgentCard({
           </Link>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * WinnerBanner — prominent outcome strip rendered between the board panel
+ * header and the board itself when status === "completed". Always tells
+ * the spectator who won and why, with reason-specific copy so a forfeit
+ * doesn't look like a draw.
+ *
+ * Outcome categories:
+ *   - natural: engine declared a winner (4-in-a-row, checkmate, mill, …)
+ *   - draw: explicit engine draw or stalemate
+ *   - time_forfeit: the loser ran the per-move clock to zero
+ *   - invalid_move_forfeit: the loser submitted 2 illegal moves in a row
+ *   - abandoned / disputed: rare ops paths
+ *
+ * winnerAgentId === null with reason "draw" is the only legitimate
+ * no-winner outcome. Anything else missing a winnerAgentId is a server
+ * bug and we fall back to a neutral "match concluded" rather than
+ * showing a blank panel.
+ */
+function WinnerBanner({
+  winnerAgentId,
+  resultReason,
+  p1,
+  p2,
+}: {
+  winnerAgentId: string | null;
+  resultReason: string | null;
+  p1: { id: string; handle: string; displayName: string } | null;
+  p2: { id: string; handle: string; displayName: string } | null;
+}) {
+  const isDraw = resultReason === "draw" || (winnerAgentId === null && resultReason !== "abandoned");
+  const winner =
+    winnerAgentId === p1?.id ? p1 : winnerAgentId === p2?.id ? p2 : null;
+  const loser =
+    winner == null ? null : winner.id === p1?.id ? p2 : p1;
+  const winnerSide: "red" | "gold" | null =
+    winner == null ? null : winner.id === p1?.id ? "red" : "gold";
+
+  // Reason-specific tail copy. Defensive defaults so a future enum value
+  // doesn't render a blank string.
+  let detail = "";
+  switch (resultReason) {
+    case "natural":
+      detail = "natural win";
+      break;
+    case "time_forfeit":
+      detail = loser ? `@${loser.handle} ran out of time` : "opponent ran out of time";
+      break;
+    case "invalid_move_forfeit":
+      detail = loser
+        ? `@${loser.handle} forfeited on two illegal moves`
+        : "opponent forfeited on illegal moves";
+      break;
+    case "resign":
+      detail = loser ? `@${loser.handle} resigned` : "opponent resigned";
+      break;
+    case "draw":
+      detail = "draw";
+      break;
+    case "abandoned":
+      detail = "match abandoned";
+      break;
+    default:
+      detail = resultReason ?? "match concluded";
+  }
+
+  if (isDraw) {
+    return (
+      <div
+        className="row"
+        style={{
+          padding: "10px 14px",
+          margin: "0 12px",
+          marginTop: 8,
+          borderTop: "1px solid var(--border)",
+          borderBottom: "1px solid var(--border)",
+          background: "color-mix(in oklab, var(--text-mute) 8%, transparent)",
+          gap: 10,
+          justifyContent: "center",
+          fontSize: 12,
+        }}
+      >
+        <span className="mono" style={{ color: "var(--text-mute)", letterSpacing: 1 }}>
+          — DRAW —
+        </span>
+        <span className="dim mono">·</span>
+        <span className="mono" style={{ color: "var(--text-mute)" }}>
+          {detail}
+        </span>
+      </div>
+    );
+  }
+
+  // Fallback if we have no resolvable winner agent (server bug).
+  if (!winner) {
+    return (
+      <div
+        className="row"
+        style={{
+          padding: "10px 14px",
+          margin: "0 12px",
+          marginTop: 8,
+          borderTop: "1px solid var(--border)",
+          borderBottom: "1px solid var(--border)",
+          gap: 10,
+          justifyContent: "center",
+          fontSize: 12,
+        }}
+      >
+        <span className="mono" style={{ color: "var(--text-mute)" }}>
+          match concluded · {detail}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="row"
+      style={{
+        padding: "12px 16px",
+        margin: "0 12px",
+        marginTop: 8,
+        borderRadius: 6,
+        background:
+          "linear-gradient(90deg, color-mix(in oklab, var(--gold) 14%, transparent), transparent)",
+        borderLeft: "3px solid var(--gold)",
+        gap: 10,
+        alignItems: "center",
+        fontSize: 13,
+      }}
+    >
+      <span aria-hidden style={{ fontSize: 18, lineHeight: 1 }}>
+        🏆
+      </span>
+      <span
+        className="mono"
+        style={{
+          color: winnerSide === "red" ? "var(--red, #ef4444)" : "var(--gold)",
+          fontWeight: 600,
+        }}
+      >
+        @{winner.handle}
+      </span>
+      <span className="mono" style={{ color: "var(--text)" }}>
+        won
+      </span>
+      <span className="dim mono">·</span>
+      <span className="mono" style={{ color: "var(--text-mute)" }}>
+        {detail}
+      </span>
     </div>
   );
 }

@@ -33,7 +33,7 @@ export const ticTacToeAdapter: GameAdapter<TicTacToeState, TicTacToeMove> = {
   game,
   previewState,
   // 60 seconds per agent — turns are fast in a 9-cell game.
-  clockBudgetMs: 60 * 1000,
+  clockBudgetMs: 30 * 1000,
   estimatedMovesPerGame: 7,
   averageMoveTimeSec: 2,
   perfectInformation: true,

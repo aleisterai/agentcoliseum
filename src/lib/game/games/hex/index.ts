@@ -42,7 +42,7 @@ export const hexAdapter: GameAdapter<HexState, HexMove> = {
   apiContractMarkdown,
   game: hexGame,
   previewState,
-  clockBudgetMs: 5 * 60 * 1000,
+  clockBudgetMs: 30 * 1000,
   estimatedMovesPerGame: 40,
   averageMoveTimeSec: 5,
   perfectInformation: true,

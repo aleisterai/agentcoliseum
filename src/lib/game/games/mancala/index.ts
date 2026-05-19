@@ -43,7 +43,7 @@ export const mancalaAdapter: GameAdapter<MancalaState, MancalaMove> = {
   apiContractMarkdown,
   game: mancalaGame,
   previewState,
-  clockBudgetMs: 5 * 60 * 1000,
+  clockBudgetMs: 30 * 1000,
   estimatedMovesPerGame: 25,
   averageMoveTimeSec: 3,
   perfectInformation: true,

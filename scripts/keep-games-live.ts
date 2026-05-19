@@ -21,12 +21,16 @@ import { applyMove } from "@/lib/game/server-flow";
 import { broadcastLobby, realtimeEvent } from "@/lib/realtime";
 import type { GameAdapter, BotDifficulty } from "@/lib/game/types";
 
-// Tick every 5s and keep 1 active match per game type. 14 games × 1 = 14
-// active matches max — enough to populate the lobby without saturating
-// the DB pool while the dev server is rendering pages in parallel.
-// Bump these if you have a beefier pool config.
+// Tick every 5s and keep 3 active matches per game type. 14 games × 3
+// ≈ 42 active matches — populates every game's "Live now" rail across
+// the homepage and lobby views. Matches are driven in parallel across
+// adapters AND across matches within an adapter (Promise.all) — without
+// that, serial 42-match processing per tick burns wall-clock against the
+// 5-min clock budget and games forfeit on time before they can finish.
+// With pool=10 (Sprint 16 tuning) the dev server breathes fine alongside
+// 42 concurrent bot writes.
 const TICK_MS = 5000;
-const TARGET_LIVE_PER_GAMETYPE = 1;
+const TARGET_LIVE_PER_GAMETYPE = 3;
 const TEST_OWNER_WALLET = "0xb010b010b010b010b010b010b010b010b010b010";
 const BOT_HANDLES = ["bot-alpha", "bot-beta", "bot-gamma", "bot-delta", "bot-epsilon"];
 const DIFFICULTIES: BotDifficulty[] = ["easy", "medium", "hard"];
@@ -112,7 +116,15 @@ async function tick(bots: Bot[]) {
   }
   const botIds = new Set(bots.map((b) => b.id));
 
+  // Iterate adapters sequentially, but parallelize the per-adapter move
+  // drives with Promise.all. Going fully parallel across adapters (14
+  // simultaneous SELECTs + 42 fan-out driveBotMoves) overflows the
+  // Supabase transaction-mode pooler's statement-timeout queue. Per-
+  // adapter parallel gives ~3 concurrent moves at any moment — fast
+  // enough to clear a 42-match backlog in ~5-6s while staying under
+  // the pool ceiling.
   for (const adapter of ADAPTERS) {
+    if (stopping) return;
     const active = await db
       .select({
         id: matches.id,
@@ -122,18 +134,27 @@ async function tick(bots: Bot[]) {
       .from(matches)
       .where(and(eq(matches.gameType, adapter.id), eq(matches.status, "active")));
 
-    // Drive any move where it's a bot's turn.
-    for (const m of active) {
-      if (!m.currentTurnAgentId || !botIds.has(m.currentTurnAgentId)) continue;
-      await driveBotMove(adapter, m.id, m.currentTurnAgentId, m.currentTurnPlayerId, bots);
-      if (stopping) return;
-    }
+    // Drive bot moves on this adapter's matches concurrently.
+    await Promise.all(
+      active.map(async (m) => {
+        if (stopping) return;
+        if (!m.currentTurnAgentId || !botIds.has(m.currentTurnAgentId)) return;
+        await driveBotMove(
+          adapter,
+          m.id,
+          m.currentTurnAgentId,
+          m.currentTurnPlayerId,
+          bots,
+        );
+      }),
+    );
 
-    // Top up to target.
+    // Top up to target. Sequential is fine here — spawns are cheap
+    // and we don't want to over-create if the in-flight create races.
     const need = Math.max(0, TARGET_LIVE_PER_GAMETYPE - active.length);
     for (let i = 0; i < need; i++) {
-      await spawnMatch(adapter, bots);
       if (stopping) return;
+      await spawnMatch(adapter, bots);
     }
   }
 }

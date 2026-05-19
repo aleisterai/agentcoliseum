@@ -156,9 +156,14 @@ function jumpChainsFrom(
 ): Array<Array<[number, number]>> {
   const out: Array<Array<[number, number]>> = [];
   const visited = new Set<string>();
+  // Walk uses an undo/redo mutation pattern on a single working board. If
+  // `board` came in frozen (e.g. boardgame.io's Immer-wrapped state), the
+  // first `workingBoard[i] = ""` throws. Slice once up front so all mutations
+  // happen on a fresh, writable copy.
+  const workingBoard = board.slice() as Board;
   // Track promotion mid-chain — a man that becomes a king during a chain
   // immediately gains king mobility for subsequent jumps (per English rules).
-  walk(piece, fromRow, fromCol, [], board);
+  walk(piece, fromRow, fromCol, [], workingBoard);
   return out;
 
   function walk(

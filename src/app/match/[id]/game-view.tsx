@@ -121,6 +121,11 @@ export function MatchView({ initial }: MatchViewProps) {
   const [p2MsLeft, setP2MsLeft] = useState(initial.p2MsLeft);
   const [turnStartedAt, setTurnStartedAt] = useState(initial.turnStartedAt);
   const [now, setNow] = useState(() => Date.now());
+  // Real subscription state — drives the SYNCED chip in the board header.
+  // Stays "connecting" until Supabase confirms the channel join.
+  const [liveSync, setLiveSync] = useState<"connecting" | "synced" | "offline">(
+    "connecting",
+  );
 
   const [scrubIndex, setScrubIndex] = useState<number>(
     initialMoveParam ?? Math.max(0, initial.moves.length - 1),
@@ -304,14 +309,109 @@ export function MatchView({ initial }: MatchViewProps) {
         setLiveMode(false);
       });
 
-      ch.subscribe();
+      ch.subscribe((channelStatus) => {
+        // Supabase emits "SUBSCRIBED" once the WS join is acknowledged.
+        // "CHANNEL_ERROR" / "TIMED_OUT" / "CLOSED" all mean we will not
+        // receive broadcasts until we re-subscribe — flag the UI so the
+        // user knows the board may be stale.
+        if (channelStatus === "SUBSCRIBED") setLiveSync("synced");
+        else if (channelStatus === "CLOSED") setLiveSync("offline");
+        else setLiveSync("connecting");
+      });
       return () => {
         sb.removeChannel(ch);
       };
     } catch {
-      /* realtime not configured */
+      setLiveSync("offline");
     }
   }, [initial.id, initial.p1?.id, initial.p2?.id]);
+
+  // Polling fallback. Realtime broadcasts are best-effort — a dropped
+  // WS frame, a flapping connection, or a backgrounded tab can all
+  // cause the board to fall behind. While the match is active we hit
+  // /api/match/[id]/live?sinceMove=<latest> every 5s and reconcile.
+  // The endpoint returns only moves newer than `sinceMove`, so steady
+  // state is one tiny "moves: []" payload per tick.
+  useEffect(() => {
+    if (status !== "active") return;
+    if (typeof window === "undefined") return;
+    let cancelled = false;
+    let inFlight = false;
+
+    async function poll() {
+      if (inFlight || cancelled) return;
+      inFlight = true;
+      try {
+        // moveNumber is 0-based; the latest one we have is moves.length-1.
+        // Pass that as `sinceMove` so the server only returns newer rows.
+        const latestSeen = moves.length - 1;
+        const res = await fetch(
+          `/api/match/${initial.id}/live?sinceMove=${latestSeen}`,
+          { cache: "no-store" },
+        );
+        if (!res.ok || cancelled) return;
+        const snap = await res.json();
+        if (cancelled) return;
+
+        if (Array.isArray(snap.moves) && snap.moves.length > 0) {
+          setMoves((prev) => {
+            const have = new Set(prev.map((m) => m.moveNumber));
+            const additions: Move[] = [];
+            for (const raw of snap.moves) {
+              if (have.has(raw.moveNumber)) continue;
+              additions.push({
+                moveNumber: raw.moveNumber,
+                agentId: raw.agentId,
+                playerId: raw.playerId,
+                payload: raw.payload,
+                stateAfterG: raw.stateAfterG,
+                reasoning: raw.reasoning,
+                evScore: raw.evScore,
+                thinkingMs: raw.thinkingMs,
+                x402PaymentId: raw.x402PaymentId,
+                createdAt: raw.createdAt,
+              });
+            }
+            if (additions.length === 0) return prev;
+            const merged = [...prev, ...additions].sort(
+              (a, b) => a.moveNumber - b.moveNumber,
+            );
+            // Pull the boardgame.io G from the last applied move so the
+            // board re-renders even if the realtime broadcast was missed.
+            const last = merged[merged.length - 1];
+            if (last?.stateAfterG != null) setStateG(last.stateAfterG);
+            return merged;
+          });
+        }
+
+        // Always reconcile clock + turn from the snapshot — broadcasts
+        // can lag the DB and we want the player rails accurate even
+        // before the next move lands.
+        if (snap.currentTurnPlayerId)
+          setCurrentTurnPlayerId(snap.currentTurnPlayerId);
+        if (snap.turnStartedAt) setTurnStartedAt(snap.turnStartedAt);
+        if (typeof snap.p1MsLeft === "number") setP1MsLeft(snap.p1MsLeft);
+        if (typeof snap.p2MsLeft === "number") setP2MsLeft(snap.p2MsLeft);
+        if (snap.status && snap.status !== "active") {
+          setStatus(snap.status);
+          setLiveMode(false);
+        }
+      } catch {
+        /* network blip — next tick will retry */
+      } finally {
+        inFlight = false;
+      }
+    }
+
+    // Poll immediately on mount so a hard refresh while a move is
+    // in flight doesn't show a stale snapshot, then every 5s after.
+    poll();
+    const t = setInterval(poll, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [initial.id, status, moves.length]);
 
   // Auto-scroll chat
   useEffect(() => {
@@ -500,9 +600,29 @@ export function MatchView({ initial }: MatchViewProps) {
                   {status === "active" ? "Live board" : "Final board"}
                 </span>
                 {status === "active" ? (
-                  <span className="chip live" style={{ fontSize: 9.5 }}>
-                    <span className="pulse-dot" style={{ marginRight: 4 }} />
-                    SYNCED
+                  <span
+                    className={cn(
+                      "chip",
+                      liveSync === "synced" ? "live" : "muted",
+                    )}
+                    style={{ fontSize: 9.5 }}
+                    title={
+                      liveSync === "synced"
+                        ? "Subscribed to live updates. New moves arrive instantly."
+                        : liveSync === "connecting"
+                          ? "Joining the realtime channel…"
+                          : "Realtime channel offline — polling for updates."
+                    }
+                  >
+                    <span
+                      className={liveSync === "synced" ? "pulse-dot" : ""}
+                      style={{ marginRight: 4 }}
+                    />
+                    {liveSync === "synced"
+                      ? "LIVE"
+                      : liveSync === "connecting"
+                        ? "CONNECTING…"
+                        : "RECONNECTING"}
                   </span>
                 ) : null}
               </div>

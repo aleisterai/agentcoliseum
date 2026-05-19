@@ -390,6 +390,14 @@ export async function applyMove(input: ApplyMoveInput): Promise<Match> {
     .returning();
 
   // Broadcast the move on the match channel.
+  //
+  // Payload contract MUST stay in sync with the subscriber in
+  // src/app/match/[id]/game-view.tsx (search MovePlayed). The client
+  // bails out on `stateAfterG == null`, so the board freezes silently
+  // if any of these field names drift. All 14 of our games are
+  // perfect-information, so `serializeForSpectator(G,"spectator")`
+  // returns G as-is — broadcasting G itself is safe and matches the
+  // SSR-side `stateAfter: m.stateAfter.G` shape the move list uses.
   const view = adapter.serializeForSpectator(nextState.G as never, "spectator", false);
   await broadcastGame(match.id, realtimeEvent.MovePlayed, {
     matchId: match.id,
@@ -397,8 +405,12 @@ export async function applyMove(input: ApplyMoveInput): Promise<Match> {
     payload: input.payload,
     reasoning,
     evScore: input.evScore ?? null,
-    publicState: view.publicState,
+    thinkingMs: Math.max(0, Math.min(adapter.clockBudgetMs, input.thinkingMs)),
+    x402PaymentId: null,
+    stateAfterG: view.publicState,
     currentTurnAgentId: nextAgentId,
+    currentTurnPlayerId: nextPid,
+    turnStartedAt: now.toISOString(),
     p1MsLeft,
     p2MsLeft,
   });
@@ -479,13 +491,24 @@ export async function driveSystemBot(match: Match): Promise<Match> {
     .where(eq(matches.id, match.id))
     .returning();
 
+  // Same payload contract as the human-move broadcast above — see the
+  // comment block there. System-bot moves always hand the turn back to
+  // p1 ("0"), so the new currentTurnPlayerId is hard-coded.
   await broadcastGame(match.id, realtimeEvent.MovePlayed, {
     matchId: match.id,
     moveNumber,
     payload: { auto: true },
-    publicState: adapter.serializeForSpectator(nextState.G as never, "spectator", false)
+    reasoning: null,
+    evScore: null,
+    thinkingMs,
+    x402PaymentId: null,
+    stateAfterG: adapter.serializeForSpectator(nextState.G as never, "spectator", false)
       .publicState,
     currentTurnAgentId: match.p1AgentId,
+    currentTurnPlayerId: "0",
+    turnStartedAt: now.toISOString(),
+    p1MsLeft: match.p1MsLeft,
+    p2MsLeft: match.p2MsLeft,
     isBot: true,
   });
   return updated;

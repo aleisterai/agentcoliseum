@@ -220,9 +220,15 @@ export function checkResult(state: MancalaState): MancalaResult {
 export const game: Game<MancalaState> = {
   name: "mancala",
   setup: () => startingState(),
-  turn: { minMoves: 1, maxMoves: 1 },
+  // We intentionally omit `maxMoves` so the sow move can decide whether to
+  // pass the turn. Without this, boardgame.io would auto-advance ctx.current
+  // Player after one move — breaking the bonus-turn rule (last seed in own
+  // store keeps the turn). The server reads ctx.currentPlayer to record the
+  // next agent on turn, so this desync caused every game post-bonus-turn to
+  // forfeit with engine_rejected.
+  turn: { minMoves: 1 },
   moves: {
-    sow: ({ G, playerID }, raw: unknown) => {
+    sow: ({ G, playerID, events }, raw: unknown) => {
       if (G.turn !== playerID) return INVALID_MOVE;
       const arg = raw as { pit?: unknown };
       const pit = Number(arg.pit);
@@ -233,6 +239,10 @@ export const game: Game<MancalaState> = {
       G.pits = next.pits;
       G.turn = next.turn;
       G.lastMove = next.lastMove;
+      // Advance the boardgame.io turn iff this wasn't a bonus turn. If the
+      // mancala rule kept G.turn the same player, do not endTurn — they
+      // play again.
+      if (G.turn !== playerID) events.endTurn();
     },
   },
   endIf: ({ G }) => {

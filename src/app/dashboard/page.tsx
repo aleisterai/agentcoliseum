@@ -9,6 +9,8 @@ import { TierBadge } from "@/components/coliseum/tier-badge";
 import { useTier } from "@/lib/hooks/use-tier";
 import { truncAddress } from "@/lib/utils";
 
+type AgentStatus = "active" | "idle" | "not_connected" | "recalled";
+
 type Fleet = {
   id: string;
   handle: string;
@@ -20,7 +22,10 @@ type Fleet = {
   winsSevenDay: number;
   lossesSevenDay: number;
   earnings7d: number;
-  status: "healthy" | "degraded";
+  status: AgentStatus;
+  lastMcpAt: string | null;
+  recalledAt: string | null;
+  recalledBy: "owner" | "operator" | "system" | null;
 };
 
 type DashboardData = {
@@ -212,7 +217,15 @@ export default function DashboardPage() {
             <Kpi
               label="Active agents"
               value={`${k!.activeAgents}`}
-              sub={k!.activeAgents > 0 ? "all healthy" : "register your first"}
+              sub={
+                data.fleet.length === 0
+                  ? "register your first"
+                  : k!.activeAgents === 0
+                    ? `${data.fleet.length} not connected`
+                    : k!.activeAgents === data.fleet.length
+                      ? "all wired up"
+                      : `${data.fleet.length - k!.activeAgents} idle/not connected`
+              }
               subClass={k!.activeAgents > 0 ? "up" : ""}
             />
             <Kpi label="Earnings · 24h" value={`◆ ${formatUsdc(k!.earnings24h)}`} sub={`${k!.wins24h} win${k!.wins24h === 1 ? "" : "s"}`} subClass="up" gold />
@@ -288,8 +301,19 @@ export default function DashboardPage() {
                               </div>
                             </div>
                           </td>
-                          <td>
-                            <span className="chip green">● HEALTHY</span>
+                          <td style={{ verticalAlign: "middle", padding: "10px 12px" }}>
+                            <StatusChip status={f.status} />
+                            <div
+                              className="mono dim"
+                              style={{
+                                fontSize: 10,
+                                marginTop: 4,
+                                letterSpacing: "0.04em",
+                              }}
+                              title={statusTooltip(f)}
+                            >
+                              {statusSubline(f)}
+                            </div>
                           </td>
                           <td className="right num gold">{f.elo}</td>
                           <td className="right num">
@@ -647,4 +671,61 @@ function timeAgo(d: string | null | undefined): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h`;
   return `${Math.floor(h / 24)}d`;
+}
+
+function StatusChip({ status }: { status: AgentStatus }) {
+  switch (status) {
+    case "active":
+      return <span className="chip green">● ACTIVE</span>;
+    case "idle":
+      return (
+        <span
+          className="chip"
+          style={{ color: "var(--text-mute)", borderColor: "var(--line)" }}
+        >
+          ◐ IDLE
+        </span>
+      );
+    case "not_connected":
+      return (
+        <span
+          className="chip"
+          style={{ color: "var(--text-mute)", borderColor: "var(--line)" }}
+        >
+          ○ STANDBY
+        </span>
+      );
+    case "recalled":
+      return (
+        <span
+          className="chip"
+          style={{
+            color: "var(--ox-bright)",
+            borderColor: "color-mix(in oklab, var(--ox) 45%, transparent)",
+            background: "color-mix(in oklab, var(--ox) 8%, transparent)",
+          }}
+        >
+          ▲ RECALLED
+        </span>
+      );
+  }
+}
+
+function statusSubline(f: Fleet): string {
+  if (f.status === "recalled") {
+    return `by ${f.recalledBy ?? "—"}${f.recalledAt ? ` · ${timeAgo(f.recalledAt)} ago` : ""}`;
+  }
+  if (f.status === "not_connected") return "awaiting first MCP call";
+  if (f.status === "idle") return `last call ${timeAgo(f.lastMcpAt)} ago`;
+  return `${timeAgo(f.lastMcpAt)} ago`;
+}
+
+function statusTooltip(f: Fleet): string {
+  if (f.status === "recalled")
+    return `Recalled by ${f.recalledBy ?? "unknown"} at ${f.recalledAt ? new Date(f.recalledAt).toLocaleString() : "—"}`;
+  if (f.status === "not_connected")
+    return "Credential exists but the LLM hasn't called the MCP server yet. Open `manage →` to copy install config.";
+  if (f.status === "idle")
+    return `Last MCP call: ${f.lastMcpAt ? new Date(f.lastMcpAt).toLocaleString() : "—"} (>24h ago — agent is wired but quiet)`;
+  return `Last MCP call: ${f.lastMcpAt ? new Date(f.lastMcpAt).toLocaleString() : "—"} (within 24h)`;
 }

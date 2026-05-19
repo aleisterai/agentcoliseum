@@ -204,7 +204,31 @@ export function OwnerMcpSetup({ handle }: { handle: string }) {
       : "";
   const cursorDeeplink = `cursor://anysphere.cursor-deeplink/mcp/install?name=coliseum&config=${cursorPayload}`;
 
-  const connected = data.lastMcpAt != null;
+  // Same 4-state model as the dashboard fleet table: recalled > not_connected
+  // > idle (>24h since last MCP) > active. Single primary state, not a stack
+  // of contradictory flags.
+  const ACTIVE_WINDOW_MS = 24 * 60 * 60 * 1000;
+  type AgentStatus = "active" | "idle" | "not_connected" | "recalled";
+  let agentStatus: AgentStatus;
+  if (data.recalled) agentStatus = "recalled";
+  else if (!data.lastMcpAt) agentStatus = "not_connected";
+  else if (Date.now() - new Date(data.lastMcpAt).getTime() > ACTIVE_WINDOW_MS)
+    agentStatus = "idle";
+  else agentStatus = "active";
+
+  const statusLabel: Record<AgentStatus, string> = {
+    active: `● active · ${timeAgo(data.lastMcpAt)}`,
+    idle: `◐ idle · last call ${timeAgo(data.lastMcpAt)} ago`,
+    not_connected: "○ standby · awaiting first MCP call",
+    recalled: "▲ recalled",
+  };
+  const statusColor: Record<AgentStatus, string> = {
+    active: "var(--green-text)",
+    idle: "var(--text-mute)",
+    not_connected: "var(--gold)",
+    recalled: "var(--ox-bright)",
+  };
+
   const llmInfo = LLM_OPTIONS.find((o) => o.id === llm) ?? LLM_OPTIONS[0];
 
   return (
@@ -217,19 +241,28 @@ export function OwnerMcpSetup({ handle }: { handle: string }) {
             fontSize: 10,
             letterSpacing: "0.12em",
             textTransform: "uppercase",
-            color: connected ? "var(--green-text)" : "var(--gold)",
+            color: statusColor[agentStatus],
           }}
         >
-          {connected ? (
-            <>● connected · {timeAgo(data.lastMcpAt)}</>
-          ) : (
-            <>○ not connected yet</>
-          )}
+          {statusLabel[agentStatus]}
         </span>
       </div>
 
       <div style={{ padding: 18 }}>
-        {!connected ? (
+        {agentStatus === "recalled" ? (
+          <p
+            style={{
+              margin: "0 0 14px",
+              fontSize: 12,
+              color: "var(--text-2)",
+              lineHeight: 1.55,
+            }}
+          >
+            This agent is recalled and cannot play.
+            {data.recallReason ? <> Reason: <em>{data.recallReason}</em>.</> : null}{" "}
+            Clear the recall in operator settings before reconnecting an LLM.
+          </p>
+        ) : agentStatus === "not_connected" ? (
           <p
             style={{
               margin: "0 0 14px",
@@ -240,8 +273,22 @@ export function OwnerMcpSetup({ handle }: { handle: string }) {
           >
             Your LLM hasn&apos;t pinged the MCP server yet with this credential.
             Pick your client below — one-click for Claude Desktop / Cursor,
-            one CLI line for Claude Code. The indicator updates within seconds
-            of the first call.
+            one CLI line for Claude Code. The indicator flips green within
+            seconds of the first call.
+          </p>
+        ) : agentStatus === "idle" ? (
+          <p
+            style={{
+              margin: "0 0 14px",
+              fontSize: 12,
+              color: "var(--text-2)",
+              lineHeight: 1.55,
+            }}
+          >
+            Wired up but quiet — last MCP call{" "}
+            <strong className="mono">{timeAgo(data.lastMcpAt)}</strong> ago.
+            The LLM may be offline, or you haven&apos;t asked it to act on
+            Coliseum recently. Any tool call brings the indicator back to ACTIVE.
           </p>
         ) : (
           <p

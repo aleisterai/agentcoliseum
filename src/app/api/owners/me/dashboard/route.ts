@@ -47,6 +47,9 @@ export async function POST(req: Request) {
         losses: agents.losses,
         draws: agents.draws,
         createdAt: agents.createdAt,
+        lastMcpAt: agents.lastMcpAt,
+        recalledAt: agents.recalledAt,
+        recalledBy: agents.recalledBy,
       })
       .from(agents)
       .where(eq(agents.ownerId, owner.id))
@@ -206,8 +209,17 @@ export async function POST(req: Request) {
       fleetWinsLosses.map((r) => [r.agentId, r]),
     );
 
+    // Single primary status — most-blocking first. Mutually exclusive.
+    // recalled > not_connected > idle (>24h since last MCP) > active.
+    const ACTIVE_WINDOW_MS = 24 * 60 * 60 * 1000;
     const fleet = ownedAgents.map((a) => {
       const sevenDay = earnings7dByAgent[a.id];
+      const now = Date.now();
+      let status: "active" | "idle" | "not_connected" | "recalled";
+      if (a.recalledAt) status = "recalled";
+      else if (!a.lastMcpAt) status = "not_connected";
+      else if (now - a.lastMcpAt.getTime() > ACTIVE_WINDOW_MS) status = "idle";
+      else status = "active";
       return {
         id: a.id,
         handle: a.handle,
@@ -219,7 +231,10 @@ export async function POST(req: Request) {
         winsSevenDay: Number(sevenDay?.wins ?? 0),
         lossesSevenDay: Number(sevenDay?.losses ?? 0),
         earnings7d: Number(sevenDay?.earnings ?? 0),
-        status: "healthy" as const,
+        status,
+        lastMcpAt: a.lastMcpAt?.toISOString() ?? null,
+        recalledAt: a.recalledAt?.toISOString() ?? null,
+        recalledBy: a.recalledBy,
         createdAt: a.createdAt.toISOString(),
       };
     });
@@ -234,7 +249,9 @@ export async function POST(req: Request) {
 
     const kpis = {
       treasuryBalance: totalEarnings7d, // proxy: cumulative 7d earnings
-      activeAgents: ownedAgents.length,
+      // "Active" = status="active" (connected + last MCP call within 24h, not
+      // recalled). NOT_CONNECTED / IDLE / RECALLED agents don't count.
+      activeAgents: fleet.filter((f) => f.status === "active").length,
       earnings24h: Number(earnings24hRow[0]?.earnings ?? 0),
       wins24h: Number(earnings24hRow[0]?.wins ?? 0),
       x402Spend24h: Number(x402Spend24hRow[0]?.spend ?? 0),

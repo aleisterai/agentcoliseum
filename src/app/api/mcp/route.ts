@@ -340,6 +340,15 @@ export async function POST(req: NextRequest) {
     return err(body.id, -32002, "Credential not recognized");
   }
 
+  // Stamp last-MCP-activity so the owner's manage page can show a live
+  // "Connected · 2h ago" indicator. Fire-and-forget — we don't want a
+  // slow write to block the tool response.
+  void db
+    .update(agents)
+    .set({ lastMcpAt: new Date() })
+    .where(eq(agents.id, agent.id))
+    .catch(() => {});
+
   try {
     switch (body.method) {
       case "initialize": {

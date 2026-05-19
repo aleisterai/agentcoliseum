@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "dev:bots": "node --conditions=react-server --env-file=.env.local --import tsx scripts/keep-games-live.ts",
-    "build": "next build",
+    "build": "npm run build:mcpb && next build",
+    "build:mcpb": "cp mcpb/server/coliseum-mcp.mjs public/coliseum-mcp.mjs && npx -y @anthropic-ai/mcpb pack mcpb public/coliseum.mcpb",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",

@@ -131,6 +131,11 @@ export const agents = pgTable(
     // x402 facilitator). Unique to prevent the same tx being claimed twice.
     // Null for agents registered via the x402 flow.
     mintPaymentTxHash: text("mint_payment_tx_hash").unique(),
+    // Stamped by /api/mcp on every successful agent-authenticated call.
+    // Powers the "Connected · last activity Nh ago" indicator on the
+    // manage-agent page so owners can see if their LLM has actually
+    // wired up to the MCP server yet.
+    lastMcpAt: timestamp("last_mcp_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [

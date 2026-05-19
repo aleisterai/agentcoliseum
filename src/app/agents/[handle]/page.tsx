@@ -3,9 +3,10 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { and, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { agents, matches, matchMoves } from "@/lib/db/schema";
+import { agents, matches, matchMoves, treasuryFlows } from "@/lib/db/schema";
 import { catalogEntry } from "@/lib/game/catalog";
 import { Sparkline } from "@/components/coliseum/sparkline";
+import { OwnerMcpSetup } from "@/components/coliseum/owner-mcp-setup";
 import { AgentProfileTabs } from "./tabs";
 
 /* Profile page — match history + Elo trail; 30s window. */
@@ -55,7 +56,7 @@ export default async function AgentProfilePage({
   const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const since30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
-  const [recentMatches, byGame, earnings30dRow, avgPotRow, last10Move] =
+  const [recentMatches, byGame, earnings30dRow, avgPotRow, last10Move, recentX402Moves, treasuryRows] =
     await Promise.all([
       db
         .select({
@@ -72,6 +73,9 @@ export default async function AgentProfilePage({
           p2EloDelta: matches.p2EloDelta,
           completedAt: matches.completedAt,
           startedAt: matches.startedAt,
+          payoutTxHash: matches.payoutTxHash,
+          payoutAt: matches.payoutAt,
+          platformFeeUsdc: matches.platformFeeUsdc,
         })
         .from(matches)
         .where(
@@ -136,6 +140,46 @@ export default async function AgentProfilePage({
             gte(matchMoves.createdAt, since24h),
           ),
         ),
+      // Last 30 x402-paid moves for the activity feed.
+      db
+        .select({
+          id: matchMoves.id,
+          matchId: matchMoves.matchId,
+          moveNumber: matchMoves.moveNumber,
+          x402PaymentId: matchMoves.x402PaymentId,
+          createdAt: matchMoves.createdAt,
+        })
+        .from(matchMoves)
+        .where(
+          and(
+            eq(matchMoves.agentId, agent.id),
+            sql`${matchMoves.x402PaymentId} IS NOT NULL`,
+          ),
+        )
+        .orderBy(desc(matchMoves.createdAt))
+        .limit(30),
+      // Treasury flows for any match this agent was in.
+      db
+        .select({
+          id: treasuryFlows.id,
+          matchId: treasuryFlows.matchId,
+          feeUsdc: treasuryFlows.feeUsdc,
+          swapTxHash: treasuryFlows.swapTxHash,
+          treasuryTxHash: treasuryFlows.treasuryTxHash,
+          status: treasuryFlows.status,
+          createdAt: treasuryFlows.createdAt,
+          sentAt: treasuryFlows.sentAt,
+        })
+        .from(treasuryFlows)
+        .where(
+          sql`${treasuryFlows.matchId} IN (
+            SELECT id FROM ${matches}
+            WHERE ${matches.p1AgentId} = ${agent.id}
+               OR ${matches.p2AgentId} = ${agent.id}
+          )`,
+        )
+        .orderBy(desc(treasuryFlows.createdAt))
+        .limit(30),
     ]);
 
   // Build opponent map
@@ -205,6 +249,83 @@ export default async function AgentProfilePage({
     eloHistory.push(curr);
   }
   eloHistory.reverse();
+
+  // Activity feed — merge mint tx, match payouts, treasury skims, x402 moves.
+  type ActivityKind = "mint" | "payout-in" | "payout-out" | "fee" | "x402";
+  type Activity = {
+    key: string;
+    kind: ActivityKind;
+    ts: Date;
+    title: string;
+    detail: string | null;
+    amountUsdc: number | null;
+    txHash: string | null;
+    matchId: string | null;
+  };
+  const activity: Activity[] = [];
+
+  if (agent.mintPaymentTxHash) {
+    activity.push({
+      key: `mint-${agent.id}`,
+      kind: "mint",
+      ts: agent.createdAt,
+      title: "Agent minted",
+      detail: "0.10 USDC anti-spam fee → operator wallet",
+      amountUsdc: -100_000,
+      txHash: agent.mintPaymentTxHash,
+      matchId: null,
+    });
+  }
+
+  for (const m of recentMatches) {
+    if (m.status !== "completed" || !m.payoutTxHash || !m.payoutAt) continue;
+    const isWinner = m.winnerAgentId === agent.id;
+    const platformFee = m.platformFeeUsdc ?? 0;
+    const stakeOnePerSide = Math.floor((m.potUsdc ?? 0) / 2);
+    const net = isWinner ? (m.potUsdc ?? 0) - platformFee - stakeOnePerSide : -stakeOnePerSide;
+    const g = catalogEntry(m.gameType);
+    activity.push({
+      key: `payout-${m.id}`,
+      kind: isWinner ? "payout-in" : "payout-out",
+      ts: m.payoutAt,
+      title: isWinner ? "Match payout · won" : "Match settled · lost",
+      detail: g?.displayName ?? m.gameType,
+      amountUsdc: net,
+      txHash: m.payoutTxHash,
+      matchId: m.id,
+    });
+  }
+
+  for (const t of treasuryRows) {
+    const txHash = t.treasuryTxHash ?? t.swapTxHash ?? null;
+    if (!txHash) continue;
+    activity.push({
+      key: `fee-${t.id}`,
+      kind: "fee",
+      ts: t.sentAt ?? t.createdAt,
+      title: "Treasury skim · 5%",
+      detail: t.status === "sent" ? "Swapped to ALEISTER, sent to treasury Safe" : `status: ${t.status}`,
+      amountUsdc: -t.feeUsdc,
+      txHash,
+      matchId: t.matchId,
+    });
+  }
+
+  for (const mv of recentX402Moves) {
+    if (!mv.x402PaymentId) continue;
+    activity.push({
+      key: `x402-${mv.id}`,
+      kind: "x402",
+      ts: mv.createdAt,
+      title: `x402 move · #${mv.moveNumber}`,
+      detail: `0.0008 USDC settlement`,
+      amountUsdc: -800,
+      txHash: null, // x402 facilitator payment IDs aren't raw tx hashes
+      matchId: mv.matchId,
+    });
+  }
+
+  activity.sort((a, b) => b.ts.getTime() - a.ts.getTime());
 
   const totalGames = agent.wins + agent.losses + agent.draws;
   const winPct = totalGames > 0 ? Math.round((agent.wins / totalGames) * 1000) / 10 : 0;
@@ -404,6 +525,8 @@ export default async function AgentProfilePage({
           ) : null}
         </div>
       </section>
+
+      <OwnerMcpSetup handle={agent.handle} />
 
       <section className="profile-grid">
         <div className="panel">
@@ -606,13 +729,11 @@ export default async function AgentProfilePage({
       <section className="profile-grid">
         <div className="panel">
           <div className="panel-hd">
-            <span className="panel-hd-title">x402 · last 24h</span>
-            <span className="panel-hd-meta mono">
-              {last10Move[0]?.paidMoves ?? 0} settled
-            </span>
+            <span className="panel-hd-title">Activity · on-chain + x402</span>
+            <span className="panel-hd-meta mono">{activity.length} entries</span>
           </div>
-          <div className="x402-list">
-            {(last10Move[0]?.paidMoves ?? 0) === 0 ? (
+          <div className="panel-bd-flush scroll-x">
+            {activity.length === 0 ? (
               <div
                 style={{
                   padding: 20,
@@ -621,29 +742,83 @@ export default async function AgentProfilePage({
                   fontSize: 12,
                 }}
               >
-                No x402 settlements in the last 24h.
+                No on-chain or x402 activity yet.
               </div>
             ) : (
-              <div
-                style={{
-                  padding: "14px 18px",
-                  color: "var(--text-mute)",
-                  fontSize: 12,
-                  fontFamily: "var(--font-mono)",
-                }}
-              >
-                {last10Move[0]?.paidMoves} settlement
-                {(last10Move[0]?.paidMoves ?? 0) === 1 ? "" : "s"} in last 24h.
-                <br />
-                Detailed log moved to{" "}
-                <Link
-                  href={`/agents/${agent.handle}?tab=logs`}
-                  className="lnk"
-                >
-                  Reasoning samples
-                </Link>
-                .
-              </div>
+              <table className="t">
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>Type</th>
+                    <th>Detail</th>
+                    <th className="right">Δ USDC</th>
+                    <th className="right">Tx</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {activity.slice(0, 50).map((a) => (
+                    <tr key={a.key}>
+                      <td className="mute mono" style={{ fontSize: 11 }}>
+                        {timeAgo(a.ts)} ago
+                      </td>
+                      <td>
+                        <span
+                          className={`chip ${kindChipClass(a.kind)}`}
+                          style={{ fontSize: 9.5 }}
+                        >
+                          {kindLabel(a.kind)}
+                        </span>
+                      </td>
+                      <td style={{ fontSize: 12.5, color: "var(--text-2)" }}>
+                        {a.detail ?? a.title}
+                        {a.matchId ? (
+                          <>
+                            {" · "}
+                            <Link
+                              href={`/match/${a.matchId}`}
+                              className="lnk mono"
+                              style={{ fontSize: 11 }}
+                            >
+                              match
+                            </Link>
+                          </>
+                        ) : null}
+                      </td>
+                      <td
+                        className={cn(
+                          "right num",
+                          a.amountUsdc == null
+                            ? "mute"
+                            : a.amountUsdc >= 0
+                              ? "up"
+                              : "down",
+                        )}
+                      >
+                        {a.amountUsdc == null
+                          ? "—"
+                          : `${a.amountUsdc >= 0 ? "+" : "-"}${formatUsdc(Math.abs(a.amountUsdc))}`}
+                      </td>
+                      <td className="right">
+                        {a.txHash ? (
+                          <a
+                            className="lnk-gold mono"
+                            href={`https://basescan.org/tx/${a.txHash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ fontSize: 11 }}
+                          >
+                            {a.txHash.slice(0, 6)}…{a.txHash.slice(-4)} ↗
+                          </a>
+                        ) : (
+                          <span className="dim mono" style={{ fontSize: 11 }}>
+                            off-chain
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
         </div>
@@ -700,6 +875,38 @@ function formatThink(ms: number): string {
 function shortAddr(addr: string): string {
   if (!addr) return "—";
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
+function kindLabel(kind: "mint" | "payout-in" | "payout-out" | "fee" | "x402"): string {
+  switch (kind) {
+    case "mint":
+      return "MINT";
+    case "payout-in":
+      return "WIN";
+    case "payout-out":
+      return "LOSS";
+    case "fee":
+      return "FEE";
+    case "x402":
+      return "x402";
+  }
+}
+
+function kindChipClass(
+  kind: "mint" | "payout-in" | "payout-out" | "fee" | "x402",
+): string {
+  switch (kind) {
+    case "payout-in":
+      return "green";
+    case "payout-out":
+      return "dim";
+    case "mint":
+      return "gold";
+    case "fee":
+      return "";
+    case "x402":
+      return "dim";
+  }
 }
 
 function timeAgo(d: Date | string | null | undefined): string {

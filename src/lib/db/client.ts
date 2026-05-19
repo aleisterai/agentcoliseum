@@ -9,13 +9,16 @@ import postgres from "postgres";
 import * as schema from "./schema";
 
 declare global {
-  // eslint-disable-next-line no-var
-  var __coliseumDb: ReturnType<typeof drizzle<typeof schema>> | undefined;
+  // Cache the SQL connection pool, NOT the drizzle wrapper. The drizzle
+  // wrapper closes over `schema` at construction time, so reusing it
+  // across HMR reloads freezes the schema config (new columns are silently
+  // dropped from queries). Recreating drizzle on each module load is
+  // ~free; reusing the postgres-js pool is the real win.
   // eslint-disable-next-line no-var
   var __coliseumSql: ReturnType<typeof postgres> | undefined;
 }
 
-function makeClient() {
+function makePool() {
   const url = process.env.DATABASE_URL;
   if (!url) {
     throw new Error(
@@ -36,26 +39,22 @@ function makeClient() {
   //   - idle_timeout: 20    → reclaim idle connections quickly so Vercel
   //                           function reuse doesn't leak.
   //   - connect_timeout: 10 → fail fast on cold DB; clearer error than hang.
-  const sql = postgres(url, {
+  return postgres(url, {
     prepare: false,
     max: 3,
     idle_timeout: 20,
     connect_timeout: 10,
   });
-  const db = drizzle(sql, { schema, logger: process.env.NODE_ENV === "development" });
-  return { db, sql };
 }
 
-const cached =
-  global.__coliseumDb && global.__coliseumSql
-    ? { db: global.__coliseumDb, sql: global.__coliseumSql }
-    : makeClient();
-
+const pool = global.__coliseumSql ?? makePool();
 if (process.env.NODE_ENV !== "production") {
-  global.__coliseumDb = cached.db;
-  global.__coliseumSql = cached.sql;
+  global.__coliseumSql = pool;
 }
 
-export const db = cached.db;
-export const sql = cached.sql;
+export const sql = pool;
+export const db = drizzle(pool, {
+  schema,
+  logger: process.env.NODE_ENV === "development",
+});
 export * from "./schema";

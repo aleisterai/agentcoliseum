@@ -1,18 +1,39 @@
 "use client";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { PrivyProvider } from "@privy-io/react-auth";
+import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
 import { WagmiProvider } from "@privy-io/wagmi";
 import {
   Component,
+  createContext,
   type ErrorInfo,
   type ReactNode,
+  useContext,
   useEffect,
   useState,
 } from "react";
 import { privyConfig, privyAppId } from "@/lib/privy";
 import { wagmiConfig } from "@/lib/wagmi-config";
 import { Toaster } from "@/components/ui/toaster";
+
+/**
+ * Tri-state wallet availability — let any component below render the
+ * right button:
+ *   "loading"  — Privy is booting on the client; render a wait stub
+ *   "ready"    — Privy is mounted; usePrivy() will work
+ *   "disabled" — Privy failed permanently (origin not allowed, bad app
+ *                id, missing connectors); usePrivy() is NOT mounted, so
+ *                consumers MUST short-circuit before calling it
+ *
+ * SSR always emits "loading". The Privy SDK then either calls
+ * `setWalletState("ready")` from `<PrivyReadyProbe>` (mounted only
+ * inside PrivyProvider) or the kill-switch flips it to "disabled".
+ */
+export type WalletState = "loading" | "ready" | "disabled";
+const WalletStateContext = createContext<WalletState>("loading");
+export function useWalletState(): WalletState {
+  return useContext(WalletStateContext);
+}
 
 /**
  * Top-level client providers.
@@ -84,26 +105,78 @@ export function Providers({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("unhandledrejection", onReject);
   }, [walletDisabled]);
 
+  // Tracks whether Privy has reported `ready: true` from inside its
+  // own provider. Flipped from "loading" → "ready" by <PrivyReadyProbe>.
+  // The kill-switch path skips this entirely and renders the "disabled"
+  // branch above.
+  const [privyReady, setPrivyReady] = useState(false);
+
+  // Hard timeout. Some failure modes (network drop, CSP block, ad
+  // blocker) leave Privy silently hanging without ever throwing — the
+  // unhandledrejection handler never fires, and the button stays grey
+  // forever. After 15s with no `ready`, give up and flip the kill-
+  // switch so the user sees the actionable "Set up Connect ↗" link.
+  useEffect(() => {
+    if (!privyAppId || privyReady || walletDisabled) return;
+    const t = setTimeout(() => {
+      if (!privyReady) {
+        console.warn(
+          "[wallet] Privy did not become ready within 15s — falling back to disabled mode.",
+        );
+        setWalletDisabled(true);
+      }
+    }, 15_000);
+    return () => clearTimeout(t);
+  }, [privyReady, walletDisabled]);
+
+  const walletState: WalletState = walletDisabled
+    ? "disabled"
+    : !privyAppId
+      ? "disabled"
+      : privyReady
+        ? "ready"
+        : "loading";
+
   if (!privyAppId || walletDisabled) {
     return (
-      <QueryClientProvider client={queryClient}>
-        {walletDisabled ? <WalletDisabledBanner /> : null}
-        <Toaster>{children}</Toaster>
-      </QueryClientProvider>
+      <WalletStateContext.Provider value={walletState}>
+        <QueryClientProvider client={queryClient}>
+          {walletDisabled ? <WalletDisabledBanner /> : null}
+          <Toaster>{children}</Toaster>
+        </QueryClientProvider>
+      </WalletStateContext.Provider>
     );
   }
 
   return (
-    <WalletErrorBoundary onError={() => setWalletDisabled(true)}>
-      <PrivyProvider appId={privyAppId} config={privyConfig}>
-        <QueryClientProvider client={queryClient}>
-          <WagmiProvider config={wagmiConfig}>
-            <Toaster>{children}</Toaster>
-          </WagmiProvider>
-        </QueryClientProvider>
-      </PrivyProvider>
-    </WalletErrorBoundary>
+    <WalletStateContext.Provider value={walletState}>
+      <WalletErrorBoundary onError={() => setWalletDisabled(true)}>
+        <PrivyProvider appId={privyAppId} config={privyConfig}>
+          <PrivyReadyProbe onReady={() => setPrivyReady(true)} />
+          <QueryClientProvider client={queryClient}>
+            <WagmiProvider config={wagmiConfig}>
+              <Toaster>{children}</Toaster>
+            </WagmiProvider>
+          </QueryClientProvider>
+        </PrivyProvider>
+      </WalletErrorBoundary>
+    </WalletStateContext.Provider>
   );
+}
+
+/**
+ * Renders nothing. Lives inside PrivyProvider so it can call usePrivy(),
+ * and notifies the parent the moment Privy finishes initialization. We
+ * need this because the WalletStateContext value lives OUTSIDE
+ * PrivyProvider (so it stays in scope when Privy isn't mounted on the
+ * disabled path), but only code INSIDE PrivyProvider can read ready.
+ */
+function PrivyReadyProbe({ onReady }: { onReady: () => void }) {
+  const { ready } = usePrivy();
+  useEffect(() => {
+    if (ready) onReady();
+  }, [ready, onReady]);
+  return null;
 }
 
 /**

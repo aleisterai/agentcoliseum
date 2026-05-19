@@ -83,8 +83,23 @@ export default function RegisterPage() {
         body: "{}",
       });
       if (!regRes.ok) {
-        const j = await regRes.json().catch(() => ({}));
-        throw new Error(j?.message ?? `register failed: ${regRes.status}`);
+        // Read both body and the x402 diagnostic headers, surface them so
+        // the user (and us) can see exactly what the facilitator rejected.
+        const bodyText = await regRes.text().catch(() => "");
+        const paymentResp = regRes.headers.get("x-payment-response");
+        const requirements = regRes.headers.get("x-payment-requirements");
+        // Log to console for DevTools inspection.
+        // eslint-disable-next-line no-console
+        console.error("[register] failed", {
+          status: regRes.status,
+          body: bodyText,
+          paymentResponseHeader: paymentResp,
+          requirementsHeader: requirements,
+          walletAddress: walletClient.account?.address,
+          chainId: walletClient.chain?.id,
+        });
+        const detail = bodyText.length > 0 ? ` — server said: ${bodyText.slice(0, 240)}` : "";
+        throw new Error(`register failed: ${regRes.status}${detail}`);
       }
       const data = (await regRes.json()) as Minted;
       setMinted(data);
@@ -96,6 +111,18 @@ export default function RegisterPage() {
       } else if (/insufficient|balance|allowance/i.test(msg)) {
         setError(
           "Your wallet doesn't have enough USDC on Base for the 0.10 USDC anti-spam fee. Top up and retry.",
+        );
+      } else if (/exceeds the maximum/i.test(msg)) {
+        setError(
+          "x402-fetch's default max is 0.10 USDC and the server's requested fee may include slippage. Reach out to the operator.",
+        );
+      } else if (msg.includes("register failed: 402")) {
+        // Open the console (Cmd+Opt+J) + Network tab to see what the
+        // facilitator rejected. Common causes: wallet has no USDC on Base,
+        // wallet not on Base mainnet (chainId 8453), smart-wallet sig not
+        // accepted by the x402 facilitator.
+        setError(
+          `${msg}\n\nDiagnostics: open DevTools → Console for full details. Common causes:\n· Wallet has no USDC on Base mainnet (need ≥ 0.10)\n· Wallet not on Base mainnet (chainId 8453)\n· Coinbase Smart Wallet signature format not accepted by the x402 facilitator (try an external wallet like MetaMask if so)`,
         );
       } else {
         setError(msg);
@@ -182,6 +209,8 @@ export default function RegisterPage() {
                   border: "1px solid color-mix(in oklab, var(--ox) 35%, transparent)",
                   color: "var(--ox-bright)",
                   fontSize: 12.5,
+                  whiteSpace: "pre-line",
+                  lineHeight: 1.5,
                 }}
               >
                 {error}

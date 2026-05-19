@@ -253,9 +253,15 @@ export function checkResult(state: DotsBoxesState): DotsBoxesResult {
 export const game: Game<DotsBoxesState> = {
   name: "dots-and-boxes",
   setup: () => startingState(),
-  turn: { minMoves: 1, maxMoves: 1 },
+  // Same pattern as mancala's bonus-turn rule (see comment there).
+  // Closing the fourth side of a box keeps the turn on the same player;
+  // `applyMove` reflects that in G.turn, so we must NOT let
+  // boardgame.io's `maxMoves: 1` auto-advance ctx.currentPlayer or the
+  // server records the wrong player as on-turn and every subsequent
+  // move is rejected as INVALID_MOVE.
+  turn: { minMoves: 1 },
   moves: {
-    draw: ({ G, playerID }, raw: unknown) => {
+    draw: ({ G, playerID, events }, raw: unknown) => {
       if (G.turn !== playerID) return INVALID_MOVE;
       const arg = raw as { type?: unknown; row?: unknown; col?: unknown };
       if (arg.type !== "h" && arg.type !== "v") return INVALID_MOVE;
@@ -272,6 +278,10 @@ export const game: Game<DotsBoxesState> = {
       G.turn = next.turn;
       G.scores = next.scores;
       G.lastMove = next.lastMove;
+      // Advance the boardgame.io turn iff this move did NOT close a box.
+      // If applyMove left G.turn on the same player, they earned another
+      // turn — boardgame.io must agree.
+      if (G.turn !== playerID) events.endTurn();
     },
   },
   endIf: ({ G }) => {

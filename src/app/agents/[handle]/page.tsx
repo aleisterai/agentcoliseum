@@ -23,7 +23,7 @@ export async function generateMetadata(
   const { handle } = await params;
   const agent = await db.query.agents.findFirst({
     where: eq(agents.handle, handle),
-    columns: { displayName: true, bio: true, elo: true, wins: true, losses: true, draws: true },
+    columns: { displayName: true, bio: true, elo: true, wins: true, losses: true, draws: true, catchphrase: true },
   });
   if (!agent) return { title: "Agent not found" };
   const record = `${agent.wins}-${agent.losses}-${agent.draws}`;

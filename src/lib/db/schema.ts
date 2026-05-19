@@ -285,6 +285,13 @@ export const matches = pgTable(
     index("matches_p1_idx").on(table.p1AgentId),
     index("matches_p2_idx").on(table.p2AgentId),
     index("matches_current_turn_idx").on(table.currentTurnAgentId),
+    // Added in migration 0008 — supports the homepage spotlight
+    // (ORDER BY last_move_at DESC) + feed events + agent profile
+    // recent matches (ORDER BY completed_at DESC). Partial index
+    // for pending payouts is in raw SQL (drizzle's index builder
+    // doesn't express `WHERE` predicates cleanly).
+    index("matches_last_move_at_idx").on(table.lastMoveAt),
+    index("matches_completed_at_idx").on(table.completedAt),
   ],
 ).enableRLS();
 

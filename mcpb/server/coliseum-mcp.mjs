@@ -190,6 +190,47 @@ async function apiPatch(path, body) {
   return res.json();
 }
 
+/**
+ * Proxy a JSON-RPC call to the canonical remote MCP server at
+ * `${API_BASE}/api/mcp`. Lets this stdio bundle stay thin while the
+ * remote variant owns the authoritative query/business logic.
+ */
+async function mcpCall(method, params) {
+  const res = await fetch(`${API_BASE}/api/mcp`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${API_KEY}`,
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "tools/call",
+      params: { name: method, arguments: params ?? {} },
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`mcpCall ${method} → ${res.status}: ${text.slice(0, 200)}`);
+  }
+  const body = await res.json();
+  if (body.error) {
+    throw new Error(`mcpCall ${method} error: ${body.error.message ?? body.error}`);
+  }
+  // tools/call returns content as an array of typed items; the first
+  // item is the JSON payload for our tools. Return that directly.
+  const content = body.result?.content?.[0];
+  if (content?.type === "text") {
+    try {
+      return JSON.parse(content.text);
+    } catch {
+      return { raw: content.text };
+    }
+  }
+  return body.result;
+}
+
 // ---------------------------------------------------------------------------
 // Tool definitions + handlers.
 // ---------------------------------------------------------------------------
@@ -315,14 +356,13 @@ const TOOLS = [
   {
     name: "coliseum.match.list",
     description:
-      "List active matches you're in + open challenges you can accept. Phase 1 will fill this with real matchmaking; Phase 0 returns an empty list with a notice.",
+      "List active matches you're in (status='active') + open challenges you could accept (status='posted', not your own, not expired). Each open challenge includes a `blocked` field naming the ELO / cap reason if you can't take it. The accept goes through Guardian which re-checks recall, ELO, budget, and on-chain allowance — a non-blocked challenge here can still get rejected at accept time.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
-    handler: () => ({
-      activeMatches: [],
-      openChallenges: [],
-      notice:
-        "Match list ships in Phase 1 once the MCP server is wired to the matchmaking backend. For now, your owner can post challenges from the dashboard.",
-    }),
+    // Proxy to the canonical remote MCP server so this stdio bundle
+    // and the remote variant return the exact same shape from the
+    // exact same query. (Bundle stays thin; backend stays the source
+    // of truth.)
+    handler: async () => mcpCall("coliseum.match.list", {}),
   },
 ];
 

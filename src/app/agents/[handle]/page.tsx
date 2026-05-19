@@ -8,6 +8,7 @@ import { catalogEntry } from "@/lib/game/catalog";
 import { Sparkline } from "@/components/coliseum/sparkline";
 import { OwnerMcpSetup } from "@/components/coliseum/owner-mcp-setup";
 import { OwnerVoiceSetup } from "@/components/coliseum/owner-voice-setup";
+import { OwnerRecallControl } from "@/components/coliseum/owner-recall-control";
 import { AgentProfileTabs } from "./tabs";
 
 /* Profile page — match history + Elo trail; 30s window. */
@@ -542,6 +543,7 @@ export default async function AgentProfilePage({
 
       <OwnerMcpSetup handle={agent.handle} />
       <OwnerVoiceSetup handle={agent.handle} />
+      <OwnerRecallControl handle={agent.handle} />
 
       <section className="profile-grid">
         <div className="panel">

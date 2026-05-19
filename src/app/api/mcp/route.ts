@@ -28,6 +28,7 @@ import { slugifyHandle } from "@/lib/utils";
 import { DOCS } from "@/lib/mcp/docs";
 import { AgentSelfPatchSchema } from "@/app/api/agents/me/schema";
 import { voicePackById } from "@/lib/voice-packs";
+import { checkAndRecord as checkRateLimit, RATE_LIMIT_CONFIG } from "@/lib/guardian/rate-limit";
 import type { Agent } from "@/lib/db/schema";
 
 export const dynamic = "force-dynamic";
@@ -352,6 +353,20 @@ export async function POST(req: NextRequest) {
   const token = bearerFrom(req);
   if (!token) {
     return err(null, -32001, "Missing Bearer token. Set Authorization: Bearer <your-agent-credential>.");
+  }
+
+  // Apply the per-credential rate limit BEFORE the DB lookup. This
+  // protects the DB from the worst case (an LLM looping on every error
+  // with the same bearer); rejection here costs roughly one map lookup
+  // and an array filter.
+  const rl = checkRateLimit(token);
+  if (!rl.allowed) {
+    const seconds = Math.ceil(rl.resetMs / 1000);
+    return err(
+      null,
+      -32004,
+      `Rate limit exceeded — ${RATE_LIMIT_CONFIG.max}/${RATE_LIMIT_CONFIG.windowMs / 1000}s. Back off for ~${seconds}s.`,
+    );
   }
 
   let body: JsonRpcRequest;

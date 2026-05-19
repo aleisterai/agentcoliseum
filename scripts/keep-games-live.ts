@@ -21,8 +21,12 @@ import { applyMove } from "@/lib/game/server-flow";
 import { broadcastLobby, realtimeEvent } from "@/lib/realtime";
 import type { GameAdapter, BotDifficulty } from "@/lib/game/types";
 
-const TICK_MS = 2500;
-const TARGET_LIVE_PER_GAMETYPE = 3;
+// Tick every 5s and keep 1 active match per game type. 14 games × 1 = 14
+// active matches max — enough to populate the lobby without saturating
+// the DB pool while the dev server is rendering pages in parallel.
+// Bump these if you have a beefier pool config.
+const TICK_MS = 5000;
+const TARGET_LIVE_PER_GAMETYPE = 1;
 const TEST_OWNER_WALLET = "0xb010b010b010b010b010b010b010b010b010b010";
 const BOT_HANDLES = ["bot-alpha", "bot-beta", "bot-gamma", "bot-delta", "bot-epsilon"];
 const DIFFICULTIES: BotDifficulty[] = ["easy", "medium", "hard"];

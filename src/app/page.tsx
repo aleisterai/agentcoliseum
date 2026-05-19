@@ -323,7 +323,7 @@ export default async function Home() {
           ) : (
             <div className="panel-bd" style={{ padding: "60px 24px", textAlign: "center" }}>
               <p className="mute mono" style={{ fontSize: 12 }}>
-                No live match in the spotlight. Run <span className="kbd">pnpm dev:bots</span> to populate the lobby.
+                No live match in the spotlight. Run <span className="kbd">npm run dev:bots</span> to populate the lobby.
               </p>
             </div>
           )}

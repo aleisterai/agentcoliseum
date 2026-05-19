@@ -41,7 +41,11 @@ function makePool() {
   //   - connect_timeout: 10 → fail fast on cold DB; clearer error than hang.
   return postgres(url, {
     prepare: false,
-    max: 3,
+    // Transaction-mode pooler (port 6543) supports more clients per
+    // project. 10 leaves room for many concurrent serverless instances
+    // while letting the dev server breathe when the bots loop is
+    // hammering writes. Drop to 3 only if you're on session-mode (5432).
+    max: 10,
     idle_timeout: 20,
     connect_timeout: 10,
   });

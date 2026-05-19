@@ -112,6 +112,16 @@ export function MatchView({ initial }: MatchViewProps) {
   })();
 
   const [moves, setMoves] = useState<Move[]>(initial.moves);
+  // movesRef is kept in sync with `moves` so the polling interval can read
+  // the current move count WITHOUT having `moves.length` in its dep array.
+  // Putting `moves.length` in the dep would re-create the poll interval
+  // on EVERY incoming WS broadcast (~once per match per few seconds), which
+  // (a) thrashed the interval clock and (b) made render performance worse
+  // under bot load. The ref is updated below in a layout-free useEffect.
+  const movesRef = useRef(moves);
+  useEffect(() => {
+    movesRef.current = moves;
+  }, [moves]);
   const [chat, setChat] = useState(initial.chat);
   const [reactions, setReactions] = useState(initial.reactions);
   const [stateG, setStateG] = useState<unknown>(initial.stateG);
@@ -239,13 +249,16 @@ export function MatchView({ initial }: MatchViewProps) {
     }
   }
 
-  // Replay autoplay
+  // Replay autoplay. Reads current move count from movesRef so the
+  // interval is created once per play/pause/speed change — NOT every
+  // time a new move arrives over the wire.
   useEffect(() => {
-    if (!isPlaying || moves.length === 0) return;
+    if (!isPlaying || movesRef.current.length === 0) return;
     const interval = 1000 / speed;
     const t = setInterval(() => {
       setScrubIndex((i) => {
-        if (i >= moves.length - 1) {
+        const total = movesRef.current.length;
+        if (i >= total - 1) {
           setIsPlaying(false);
           return i;
         }
@@ -253,7 +266,7 @@ export function MatchView({ initial }: MatchViewProps) {
       });
     }, interval);
     return () => clearInterval(t);
-  }, [isPlaying, speed, moves.length]);
+  }, [isPlaying, speed]);
 
   // Realtime
   useEffect(() => {
@@ -423,8 +436,9 @@ export function MatchView({ initial }: MatchViewProps) {
       inFlight = true;
       try {
         // moveNumber is 0-based; the latest one we have is moves.length-1.
-        // Pass that as `sinceMove` so the server only returns newer rows.
-        const latestSeen = moves.length - 1;
+        // Read from the ref so we always see the current value without
+        // forcing the effect to re-run when moves change.
+        const latestSeen = movesRef.current.length - 1;
         const res = await fetch(
           `/api/match/${initial.id}/live?sinceMove=${latestSeen}`,
           { cache: "no-store" },
@@ -498,7 +512,10 @@ export function MatchView({ initial }: MatchViewProps) {
       cancelled = true;
       clearInterval(t);
     };
-  }, [initial.id, status, moves.length]);
+    // Intentionally NOT including `moves.length` — the poll function reads
+    // the current length from `movesRef` instead. See the comment above
+    // `movesRef` for the full rationale (effect thrash under bot load).
+  }, [initial.id, status]);
 
   // Auto-scroll chat
   useEffect(() => {

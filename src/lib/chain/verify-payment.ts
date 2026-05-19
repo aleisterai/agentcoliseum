@@ -159,3 +159,78 @@ export async function verifyDirectUsdcPayment(
     maxAgeSeconds: args.maxAgeSeconds,
   });
 }
+
+export interface ExtractDirectUsdcPaymentArgs {
+  publicClient: MinimalPublicClient;
+  txHash: `0x${string}`;
+  expectedTo: `0x${string}`;
+  expectedAmount: bigint;
+  maxAgeSeconds?: number;
+}
+
+export type ExtractDirectUsdcPaymentResult =
+  | { ok: true; from: `0x${string}`; blockNumber: bigint }
+  | { ok: false; code: VerifyFailureCode; detail?: string };
+
+/**
+ * Variant of verifyDirectUsdcPayment that EXTRACTS the sender from the
+ * matching Transfer event instead of validating it against an expected
+ * value. Used by the programmatic-onboarding endpoint where the agent
+ * is registering on its own behalf — we learn the owner wallet from
+ * whichever address actually paid the fee.
+ *
+ * Security: this is still safe because the only thing the caller can
+ * influence is the tx hash + the amount/recipient match. They can't
+ * forge a Transfer event; only Postgres unique constraints (mint tx
+ * hash) prevent replays.
+ */
+export async function extractDirectUsdcPaymentSender(
+  args: ExtractDirectUsdcPaymentArgs,
+): Promise<ExtractDirectUsdcPaymentResult> {
+  let receipt: TransactionReceipt | null = null;
+  try {
+    receipt = await args.publicClient.getTransactionReceipt({ hash: args.txHash });
+  } catch {
+    return { ok: false, code: "tx_not_found" };
+  }
+  if (!receipt) return { ok: false, code: "tx_not_found" };
+
+  if (receipt.status !== "success") return { ok: false, code: "tx_reverted" };
+
+  const transferLogs = parseEventLogs({
+    abi: erc20Abi,
+    logs: receipt.logs as unknown as Log[],
+    eventName: "Transfer",
+  });
+  const matching = transferLogs.find(
+    (log) =>
+      log.address.toLowerCase() === USDC_BASE.toLowerCase() &&
+      log.args.to.toLowerCase() === args.expectedTo.toLowerCase() &&
+      log.args.value === args.expectedAmount,
+  );
+  if (!matching) {
+    return {
+      ok: false,
+      code: "no_matching_transfer",
+      detail: `Expected USDC transfer of ${args.expectedAmount} → ${args.expectedTo} (token ${USDC_BASE}); no matching Transfer event found.`,
+    };
+  }
+
+  const maxAge = args.maxAgeSeconds ?? 3600;
+  try {
+    const block = await args.publicClient.getBlock({ blockHash: receipt.blockHash });
+    const tsSec = Number(block.timestamp);
+    const ageSeconds = Math.floor(Date.now() / 1000) - tsSec;
+    if (ageSeconds > maxAge) {
+      return {
+        ok: false,
+        code: "tx_too_old",
+        detail: `Tx is ${ageSeconds}s old; max ${maxAge}s.`,
+      };
+    }
+  } catch {
+    // RPC blip — skip staleness, the unique-tx-hash constraint still prevents replay.
+  }
+
+  return { ok: true, from: matching.args.from as `0x${string}`, blockNumber: receipt.blockNumber };
+}

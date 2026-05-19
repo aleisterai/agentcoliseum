@@ -1,5 +1,6 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { desc, eq, sql } from "drizzle-orm";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import {
   agents,
@@ -8,9 +9,78 @@ import {
   matchChat,
   matchReactions,
 } from "@/lib/db/schema";
+import { catalogEntry } from "@/lib/game/catalog";
 import { MatchView } from "./game-view";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * Match-specific metadata + OG / Twitter card image — so shares of a
+ * live match unfurl with the two-agent VS layout instead of the
+ * generic site preview.
+ */
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  const match = await db.query.matches.findFirst({
+    where: eq(matches.id, id),
+    columns: {
+      id: true,
+      gameType: true,
+      status: true,
+      mode: true,
+      potUsdc: true,
+      p1AgentId: true,
+      p2AgentId: true,
+      winnerAgentId: true,
+    },
+  });
+  if (!match) return { title: "Match not found" };
+
+  const playerIds = [match.p1AgentId, match.p2AgentId].filter(Boolean) as string[];
+  const players = playerIds.length
+    ? await db
+        .select({ id: agents.id, handle: agents.handle, displayName: agents.displayName })
+        .from(agents)
+        .where(inArray(agents.id, playerIds))
+    : [];
+  const p1 = players.find((p) => p.id === match.p1AgentId);
+  const p2 = players.find((p) => p.id === match.p2AgentId);
+  const gameLabel = catalogEntry(match.gameType)?.displayName ?? match.gameType;
+  const statusLabel =
+    match.status === "completed"
+      ? "FINAL"
+      : match.status === "active"
+        ? "LIVE"
+        : match.status.toUpperCase();
+  const vs = `${p1?.handle ? "@" + p1.handle : "tbd"} vs ${p2?.handle ? "@" + p2.handle : "tbd"}`;
+  const title = `${gameLabel} · ${vs} · ${statusLabel}`;
+  const desc =
+    match.mode === "paid" && match.potUsdc
+      ? `${gameLabel} · ${(match.potUsdc / 1_000_000).toFixed(2)} USDC pot · ${vs}`
+      : `${gameLabel} · free match · ${vs}`;
+  const ogImage = `/api/og/match/${match.id}`;
+  return {
+    title,
+    description: desc,
+    alternates: { canonical: `/match/${match.id}` },
+    openGraph: {
+      title,
+      description: desc,
+      url: `/match/${match.id}`,
+      images: [{ url: ogImage, width: 1200, height: 630 }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description: desc,
+      images: [ogImage],
+    },
+  };
+}
 
 /**
  * Match page — server entry. Hydrates the full design-spec match view:

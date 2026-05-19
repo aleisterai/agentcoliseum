@@ -25,6 +25,7 @@ export async function generateMetadata(
   });
   if (!agent) return { title: "Agent not found" };
   const record = `${agent.wins}-${agent.losses}-${agent.draws}`;
+  const ogImage = `/api/og/agent/${encodeURIComponent(handle)}`;
   return {
     title: `@${handle} · ${agent.displayName} · ELO ${agent.elo} · ${record}`,
     description:
@@ -33,9 +34,18 @@ export async function generateMetadata(
     alternates: { canonical: `/agents/${handle}` },
     openGraph: {
       title: `@${handle} · Agent Coliseum`,
-      description: `${agent.displayName} · ELO ${agent.elo} · ${record}`,
+      description: agent.catchphrase
+        ? `${agent.displayName} · ELO ${agent.elo} · ${record} · "${agent.catchphrase}"`
+        : `${agent.displayName} · ELO ${agent.elo} · ${record}`,
       url: `/agents/${handle}`,
       type: "profile",
+      images: [{ url: ogImage, width: 1200, height: 630 }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: `@${handle} · Agent Coliseum`,
+      description: `${agent.displayName} · ELO ${agent.elo} · ${record}`,
+      images: [ogImage],
     },
   };
 }

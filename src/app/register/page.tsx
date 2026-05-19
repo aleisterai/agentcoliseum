@@ -53,8 +53,57 @@ export default function RegisterPage() {
   const [walletKind, setWalletKind] = useState<WalletKind>("unknown");
   const [operator, setOperator] = useState<OperatorInfo | null>(null);
   const [submitStep, setSubmitStep] = useState<string | null>(null);
+  const [showRecover, setShowRecover] = useState(false);
+  const [recoverHash, setRecoverHash] = useState("");
 
   const canMint = tier?.tier === "play" || tier?.tier === "initiator";
+
+  /**
+   * Recovery path — owner already paid 0.10 USDC via direct transfer but
+   * the registration POST didn't complete (server bug, network blip, etc).
+   * Paste the existing tx hash to mint the credential without paying again.
+   * Backend rejects if the hash is already used by another agent.
+   */
+  async function recoverFromTxHash() {
+    setError(null);
+    setSubmitting(true);
+    setSubmitStep("Verifying existing payment…");
+    try {
+      const hash = recoverHash.trim();
+      if (!/^0x[a-fA-F0-9]{64}$/.test(hash)) {
+        throw new Error("Paste a valid 0x… 32-byte tx hash from your wallet history");
+      }
+      const privyToken = await getAccessToken();
+      if (!privyToken) throw new Error("Could not get Privy session");
+      const meRes = await fetch("/api/owners/me", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${privyToken}` },
+      });
+      if (!meRes.ok) throw new Error(`owner init failed: ${meRes.status}`);
+      const me: { apiKey: string } = await meRes.json();
+
+      const regRes = await fetch("/api/agents/register/direct", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${me.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ paymentTxHash: hash }),
+      });
+      if (!regRes.ok) {
+        const bodyText = await regRes.text().catch(() => "");
+        const detail = bodyText.length > 0 ? ` — ${bodyText.slice(0, 240)}` : "";
+        throw new Error(`recover failed: ${regRes.status}${detail}`);
+      }
+      const data = (await regRes.json()) as Minted;
+      setMinted(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+      setSubmitStep(null);
+    }
+  }
 
   // Detect wallet type — smart contract wallets need the direct-tx flow
   // (x402's CDP facilitator currently rejects ERC-6492 sigs from Coinbase
@@ -281,6 +330,71 @@ export default function RegisterPage() {
                 ? submitStep ?? "Minting…"
                 : "Generate credential · 0.10 USDC"}
             </button>
+
+            {/* Recovery path — if you already paid but didn't get a credential */}
+            <div
+              style={{
+                marginTop: 14,
+                paddingTop: 12,
+                borderTop: "1px solid var(--line)",
+                fontSize: 12,
+              }}
+            >
+              {!showRecover ? (
+                <button
+                  type="button"
+                  onClick={() => setShowRecover(true)}
+                  className="lnk"
+                  style={{
+                    background: "transparent",
+                    border: 0,
+                    padding: 0,
+                    cursor: "pointer",
+                    fontSize: 12,
+                  }}
+                >
+                  Already paid but no credential? Recover with your tx hash →
+                </button>
+              ) : (
+                <>
+                  <p style={{ margin: "0 0 8px", color: "var(--text-2)" }}>
+                    Paste the 0.10 USDC transfer tx hash from your wallet history. The server will verify it
+                    (correct amount, recipient, and not already used) and mint a credential without charging
+                    you again.
+                  </p>
+                  <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
+                    <input
+                      type="text"
+                      placeholder="0x…"
+                      value={recoverHash}
+                      onChange={(e) => setRecoverHash(e.target.value)}
+                      spellCheck={false}
+                      autoComplete="off"
+                      className="mono"
+                      style={{
+                        flex: 1,
+                        padding: "8px 10px",
+                        fontSize: 12,
+                        background: "var(--bg-2)",
+                        border: "1px solid var(--line)",
+                        borderRadius: 4,
+                        color: "var(--text)",
+                        fontFamily: "var(--font-mono)",
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={!recoverHash.trim() || submitting}
+                      onClick={recoverFromTxHash}
+                    >
+                      {submitting && submitStep ? submitStep : "Recover"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+
             {error ? (
               <div
                 style={{

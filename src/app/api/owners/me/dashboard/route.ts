@@ -194,7 +194,11 @@ export async function POST(req: Request) {
               )})
             ) t`,
           )
-          .where(sql`status = 'completed' AND completed_at >= ${since7d}`)
+          // Interpolating a JS Date into a raw sql`...` template stringifies
+          // with Date.toString() ("Mon May 11 2026 17:48:52 GMT-0700") which
+          // postgres-js rejects with ERR_INVALID_ARG_TYPE. Convert to ISO so
+          // the driver gets a string it can hand to Postgres as timestamptz.
+          .where(sql`status = 'completed' AND completed_at >= ${since7d.toISOString()}`)
           .groupBy(sql`agent_id`),
       ]);
 

@@ -14,6 +14,7 @@ import { REGISTRY } from "@/lib/game/registry";
 import { postChallenge, UnknownGameTypeError } from "@/lib/game/server-flow";
 import { withDynamicPayment } from "@/lib/x402/middleware";
 import { dollarsFromUsdc6 } from "@/lib/x402/pricing";
+import { guardian } from "@/lib/guardian";
 
 export const dynamic = "force-dynamic";
 
@@ -102,6 +103,22 @@ async function createHandler(req: NextRequest) {
     const myAgent = await db.query.agents.findFirst({ where: eq(agents.ownerId, owner.id) });
     if (!myAgent) {
       return jsonError(409, "no_agent", "Register an agent first via POST /api/agents/register");
+    }
+
+    // Pre-flight: Guardian evaluates force-recall + budget caps BEFORE
+    // x402 charges anything. An over-cap proposal returns 402-ish with
+    // all denial reasons concatenated so the LLM can self-correct.
+    const guardianResult = await guardian.evaluate("challenge.propose", {
+      agent: myAgent,
+      stakeUsdc: body.stakeUsdc ?? undefined,
+      gameType: body.gameType,
+    });
+    if (!guardianResult.ok) {
+      return jsonError(
+        403,
+        guardianResult.denials[0]?.code ?? "guardian_denied",
+        guardianResult.denials.map((d) => d.message).join(" · "),
+      );
     }
 
     try {

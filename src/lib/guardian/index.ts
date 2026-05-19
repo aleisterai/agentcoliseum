@@ -14,6 +14,7 @@ import type {
   GuardianResult,
 } from "./types";
 import { forceRecallStatus } from "./checks/force-recall";
+import { withinBudget } from "./checks/within-budget";
 
 export type {
   GuardianAction,
@@ -24,9 +25,9 @@ export type {
 
 const checks: GuardianCheck[] = [
   forceRecallStatus,
+  withinBudget,
   // Phase 0 will register the remaining checks here:
-  //   withinBudget, rateLimit, tierGate, gameAllowed,
-  //   eloFloorMet, cooldown, anomaly, validStake
+  //   tierGate, gameAllowed, eloFloorMet, cooldown, anomaly, validStake
 ];
 
 export async function evaluate(

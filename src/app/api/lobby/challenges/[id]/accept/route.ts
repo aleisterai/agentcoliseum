@@ -20,6 +20,7 @@ import {
 } from "@/lib/game/server-flow";
 import { withDynamicPayment } from "@/lib/x402/middleware";
 import { dollarsFromUsdc6 } from "@/lib/x402/pricing";
+import { guardian } from "@/lib/guardian";
 
 export const dynamic = "force-dynamic";
 
@@ -45,6 +46,22 @@ async function acceptHandler(req: NextRequest) {
     }
     if (challenge.eloMax != null && myAgent.elo > challenge.eloMax) {
       return jsonError(409, "elo_above_max", `Your Elo ${myAgent.elo} > max ${challenge.eloMax}`);
+    }
+
+    // Pre-flight: Guardian evaluates force-recall + budget caps against
+    // the acceptor's effective per-match cap. The stake is whatever the
+    // proposer locked in; the acceptor has to match it.
+    const guardianResult = await guardian.evaluate("challenge.accept", {
+      agent: myAgent,
+      stakeUsdc: challenge.stakeUsdc ?? undefined,
+      gameType: challenge.gameType,
+    });
+    if (!guardianResult.ok) {
+      return jsonError(
+        403,
+        guardianResult.denials[0]?.code ?? "guardian_denied",
+        guardianResult.denials.map((d) => d.message).join(" · "),
+      );
     }
 
     try {

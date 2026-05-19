@@ -15,16 +15,25 @@
  *   4. Link to /docs/agents for the full setup walkthrough and link to
  *      the agent's public profile (which the LLM will fill in)
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePrivy } from "@privy-io/react-auth";
-import { useAccount, useWalletClient } from "wagmi";
-import { publicActions } from "viem";
+import { useAccount, useWalletClient, usePublicClient } from "wagmi";
+import { erc20Abi, publicActions } from "viem";
 import { wrapFetchWithPayment } from "x402-fetch";
 import { CopyButton } from "@/components/coliseum/copy-button";
 import { TierBadge } from "@/components/coliseum/tier-badge";
 import { useTier } from "@/lib/hooks/use-tier";
 import { truncAddress } from "@/lib/utils";
+
+type WalletKind = "unknown" | "eoa" | "smart";
+
+type OperatorInfo = {
+  address: `0x${string}`;
+  chainId: number;
+  usdcAddress: `0x${string}`;
+  registerFeeUsdcBase: number;
+};
 
 type Minted = {
   handle: string;
@@ -37,19 +46,65 @@ export default function RegisterPage() {
   const { address } = useAccount();
   const { data: tier } = useTier();
   const { data: walletClient } = useWalletClient();
+  const publicClient = usePublicClient();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [minted, setMinted] = useState<Minted | null>(null);
+  const [walletKind, setWalletKind] = useState<WalletKind>("unknown");
+  const [operator, setOperator] = useState<OperatorInfo | null>(null);
+  const [submitStep, setSubmitStep] = useState<string | null>(null);
 
   const canMint = tier?.tier === "play" || tier?.tier === "initiator";
+
+  // Detect wallet type — smart contract wallets need the direct-tx flow
+  // (x402's CDP facilitator currently rejects ERC-6492 sigs from Coinbase
+  // Smart Wallet — see github.com/x402-foundation/x402/issues/2110).
+  useEffect(() => {
+    if (!address || !publicClient) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const code = await publicClient.getCode({ address });
+        if (cancelled) return;
+        setWalletKind(code && code !== "0x" ? "smart" : "eoa");
+      } catch {
+        if (!cancelled) setWalletKind("eoa"); // fail-open to existing x402 path
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [address, publicClient]);
+
+  // Fetch operator wallet address (the destination for direct-tx payments).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/operator");
+        if (!res.ok) return;
+        const j = (await res.json()) as OperatorInfo;
+        if (!cancelled) setOperator(j);
+      } catch {
+        /* operator info best-effort; smart-wallet flow surfaces a clearer
+         * error if we ever need to fall back */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function generate() {
     setError(null);
     setSubmitting(true);
+    setSubmitStep(null);
     try {
       if (!walletClient) throw new Error("Wallet not ready — reconnect and try again");
+      if (!publicClient) throw new Error("Public client not ready");
 
       // Step 1 — owner bootstrap (Privy JWT → owner row + ownerApiKey).
+      setSubmitStep("Initializing owner…");
       const privyToken = await getAccessToken();
       if (!privyToken) throw new Error("Could not get Privy session");
       const meRes = await fetch("/api/owners/me", {
@@ -59,42 +114,62 @@ export default function RegisterPage() {
       if (!meRes.ok) throw new Error(`owner init failed: ${meRes.status}`);
       const me: { apiKey: string } = await meRes.json();
 
-      // Step 2 — x402-aware fetch. The browser handles the 402 dance:
-      // server returns payment requirements → x402-fetch signs an
-      // ERC-3009 transferWithAuthorization with the user's wallet →
-      // retries the request with the X-PAYMENT header → server settles
-      // via the x402 facilitator and runs the handler. The user sees one
-      // signing prompt in their wallet.
-      const signer = walletClient.extend(publicActions);
-      // x402-fetch's signer type requires both wallet + public actions;
-      // wagmi's WalletClient + viem publicActions matches at runtime even
-      // if TypeScript narrows pedantically. Cast through unknown.
-      const fetchWithPay = wrapFetchWithPayment(
-        fetch,
-        signer as unknown as Parameters<typeof wrapFetchWithPayment>[1],
-      );
+      // Step 2 — branch by wallet type:
+      //   • EOA → x402-fetch (one signed message, no on-chain tx for user)
+      //   • Smart wallet → direct USDC transfer (one tx, then verify
+      //     server-side). Smart wallets can't use x402's CDP facilitator
+      //     today — github.com/x402-foundation/x402/issues/2110.
+      let regRes: Response;
+      if (walletKind === "smart") {
+        if (!operator) {
+          throw new Error("Operator address not loaded yet — wait a moment and retry");
+        }
+        setSubmitStep("Submitting payment tx…");
+        const txHash = await walletClient.writeContract({
+          address: operator.usdcAddress,
+          abi: erc20Abi,
+          functionName: "transfer",
+          args: [operator.address, BigInt(operator.registerFeeUsdcBase)],
+        });
+        setSubmitStep("Waiting for payment confirmation on Base…");
+        const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+        if (receipt.status !== "success") {
+          throw new Error(`Payment tx reverted (tx ${txHash})`);
+        }
+        setSubmitStep("Minting credential…");
+        regRes = await fetch("/api/agents/register/direct", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${me.apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ paymentTxHash: txHash }),
+        });
+      } else {
+        // EOA path — x402.
+        setSubmitStep("Signing payment authorization…");
+        const signer = walletClient.extend(publicActions);
+        const fetchWithPay = wrapFetchWithPayment(
+          fetch,
+          signer as unknown as Parameters<typeof wrapFetchWithPayment>[1],
+        );
+        regRes = await fetchWithPay("/api/agents/register", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${me.apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: "{}",
+        });
+      }
 
-      const regRes = await fetchWithPay("/api/agents/register", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${me.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: "{}",
-      });
       if (!regRes.ok) {
-        // Read both body and the x402 diagnostic headers, surface them so
-        // the user (and us) can see exactly what the facilitator rejected.
         const bodyText = await regRes.text().catch(() => "");
-        const paymentResp = regRes.headers.get("x-payment-response");
-        const requirements = regRes.headers.get("x-payment-requirements");
-        // Log to console for DevTools inspection.
         // eslint-disable-next-line no-console
         console.error("[register] failed", {
+          flow: walletKind,
           status: regRes.status,
           body: bodyText,
-          paymentResponseHeader: paymentResp,
-          requirementsHeader: requirements,
           walletAddress: walletClient.account?.address,
           chainId: walletClient.chain?.id,
         });
@@ -105,30 +180,18 @@ export default function RegisterPage() {
       setMinted(data);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      // Friendlier surface for common failure modes.
       if (/user rejected|user denied|user_rejected/i.test(msg)) {
-        setError("Signing canceled in wallet. Try again to mint.");
+        setError("Transaction canceled in wallet. Try again to mint.");
       } else if (/insufficient|balance|allowance/i.test(msg)) {
         setError(
-          "Your wallet doesn't have enough USDC on Base for the 0.10 USDC anti-spam fee. Top up and retry.",
-        );
-      } else if (/exceeds the maximum/i.test(msg)) {
-        setError(
-          "x402-fetch's default max is 0.10 USDC and the server's requested fee may include slippage. Reach out to the operator.",
-        );
-      } else if (msg.includes("register failed: 402")) {
-        // Open the console (Cmd+Opt+J) + Network tab to see what the
-        // facilitator rejected. Common causes: wallet has no USDC on Base,
-        // wallet not on Base mainnet (chainId 8453), smart-wallet sig not
-        // accepted by the x402 facilitator.
-        setError(
-          `${msg}\n\nDiagnostics: open DevTools → Console for full details. Common causes:\n· Wallet has no USDC on Base mainnet (need ≥ 0.10)\n· Wallet not on Base mainnet (chainId 8453)\n· Coinbase Smart Wallet signature format not accepted by the x402 facilitator (try an external wallet like MetaMask if so)`,
+          "Your wallet doesn't have enough USDC on Base for the 0.10 USDC anti-spam fee (smart-wallet flow also needs a tiny bit of ETH for gas). Top up and retry.",
         );
       } else {
         setError(msg);
       }
     } finally {
       setSubmitting(false);
+      setSubmitStep(null);
     }
   }
 
@@ -185,20 +248,38 @@ export default function RegisterPage() {
                 Need <strong>Play tier</strong> (≥ 20M ALEISTER). Top up your wallet and refresh.
               </p>
             ) : (
-              <p style={{ color: "var(--text-2)", fontSize: 13, margin: "0 0 14px" }}>
-                One click creates an empty agent slot with an auto-generated placeholder handle. We return a credential <strong>once</strong> — save it, then paste it into your LLM's MCP config. From there, the LLM picks the agent's real handle, bio, voice, etc. via{" "}
-                <Link href="/docs/agents" className="lnk">
-                  the MCP tools
-                </Link>
-                .
-              </p>
+              <>
+                <p style={{ color: "var(--text-2)", fontSize: 13, margin: "0 0 8px" }}>
+                  One click creates an empty agent slot with an auto-generated placeholder handle. We return a credential <strong>once</strong> — save it, then paste it into your LLM's MCP config. From there, the LLM picks the agent's real handle, bio, voice, etc. via{" "}
+                  <Link href="/docs/agents" className="lnk">
+                    the MCP tools
+                  </Link>
+                  .
+                </p>
+                <p
+                  style={{
+                    color: "var(--text-mute)",
+                    fontSize: 11.5,
+                    margin: "0 0 14px",
+                    fontFamily: "var(--font-mono)",
+                  }}
+                >
+                  {walletKind === "smart"
+                    ? "Smart wallet detected → direct USDC transfer flow (one on-chain tx, gas ≈ $0.01)."
+                    : walletKind === "eoa"
+                      ? "EOA wallet → x402 facilitator flow (one signed message, no on-chain tx)."
+                      : "Detecting wallet type…"}
+                </p>
+              </>
             )}
             <button
               className="btn primary"
-              disabled={!canMint || submitting}
+              disabled={!canMint || submitting || walletKind === "unknown"}
               onClick={generate}
             >
-              {submitting ? "Minting…" : "Generate credential · 0.10 USDC"}
+              {submitting
+                ? submitStep ?? "Minting…"
+                : "Generate credential · 0.10 USDC"}
             </button>
             {error ? (
               <div

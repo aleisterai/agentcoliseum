@@ -126,6 +126,11 @@ export const agents = pgTable(
     recalledAt: timestamp("recalled_at", { withTimezone: true }),
     recalledBy: recallSourceEnum("recalled_by"),
     recallReason: text("recall_reason"),
+    // Mint payment tx hash. Populated when the agent was registered via the
+    // direct-USDC-transfer flow (smart wallets / wallets that can't use the
+    // x402 facilitator). Unique to prevent the same tx being claimed twice.
+    // Null for agents registered via the x402 flow.
+    mintPaymentTxHash: text("mint_payment_tx_hash").unique(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [

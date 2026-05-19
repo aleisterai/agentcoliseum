@@ -18,9 +18,9 @@ import {
   IllegalMoveError,
   UnknownGameTypeError,
 } from "@/lib/game/server-flow";
-import { withDynamicPayment } from "@/lib/x402/middleware";
-import { dollarsFromUsdc6 } from "@/lib/x402/pricing";
+import { withFixedPayment } from "@/lib/x402/middleware";
 import { guardian } from "@/lib/guardian";
+import { pullStake, refundStake, StakePullError } from "@/lib/chain/stake";
 
 export const dynamic = "force-dynamic";
 
@@ -64,13 +64,68 @@ async function acceptHandler(req: NextRequest) {
       );
     }
 
+    // Paid mode: pull the acceptor's stake BEFORE the atomic accept.
+    // Sequence:
+    //   1. transferFrom(owner, operator, stake) → must succeed
+    //   2. acceptChallenge atomically transitions challenge to matched
+    //   3. Stamp acceptor_stake_tx_hash on the row
+    //
+    // Race: if step 2 loses (someone else accepted between steps 1 and 2),
+    // we already pulled the acceptor's stake. Refund it.
+    let acceptorStakeTxHash: `0x${string}` | null = null;
+    const isPaid = challenge.mode === "paid" && challenge.stakeUsdc;
+    if (isPaid) {
+      try {
+        const pull = await pullStake(
+          owner.walletAddress as `0x${string}`,
+          challenge.stakeUsdc!,
+        );
+        acceptorStakeTxHash = pull.txHash;
+      } catch (err) {
+        if (err instanceof StakePullError) {
+          const status = err.code === "insufficient_allowance" ? 402 : 400;
+          return jsonError(status, err.code, err.message);
+        }
+        throw err;
+      }
+    }
+
     try {
       const match = await acceptChallenge({
         challengeId: challenge.id,
         acceptorAgentId: myAgent.id,
       });
-      return NextResponse.json({ match }, { status: 201 });
+      if (acceptorStakeTxHash) {
+        await db
+          .update(challenges)
+          .set({
+            acceptorStakeTxHash,
+            acceptorEscrowLockedAt: new Date(),
+          })
+          .where(eq(challenges.id, challenge.id));
+      }
+      return NextResponse.json(
+        { match, acceptorStakeTxHash },
+        { status: 201 },
+      );
     } catch (err) {
+      // Race-loss refund — we already pulled the acceptor's stake; we
+      // didn't end up in the match. Send it back. (`refundStake` is
+      // best-effort; if it fails too, operators see both txs and can
+      // refund manually from the operator wallet.)
+      if (acceptorStakeTxHash) {
+        try {
+          await refundStake(
+            owner.walletAddress as `0x${string}`,
+            challenge.stakeUsdc!,
+          );
+        } catch (refundErr) {
+          console.error(
+            "[accept] race-loss refund failed; manual intervention needed",
+            { challengeId: challenge.id, pull: acceptorStakeTxHash, refundErr },
+          );
+        }
+      }
       if (err instanceof ChallengeRaceError) {
         return jsonError(409, "challenge_already_accepted", err.message);
       }
@@ -87,16 +142,14 @@ async function acceptHandler(req: NextRequest) {
   }
 }
 
-export const POST = withDynamicPayment(
-  acceptHandler,
-  async (req) => {
-    const url = new URL(req.url);
-    const id = url.pathname.split("/").at(-2)!;
-    const challenge = await db.query.challenges.findFirst({ where: eq(challenges.id, id) });
-    if (challenge?.mode === "paid" && challenge.stakeUsdc) {
-      return dollarsFromUsdc6(challenge.stakeUsdc);
-    }
-    return "$0.01";
-  },
-  "Accept challenge",
-);
+// Paid mode: stake itself is the anti-spam (moved via transferFrom inside
+// the handler). Free / system: $0.01 x402 anti-spam.
+export const POST = async (req: NextRequest) => {
+  const url = new URL(req.url);
+  const id = url.pathname.split("/").at(-2)!;
+  const challenge = await db.query.challenges.findFirst({ where: eq(challenges.id, id) });
+  if (challenge?.mode === "paid") {
+    return acceptHandler(req);
+  }
+  return withFixedPayment(acceptHandler, "$0.01", "Accept challenge")(req);
+};

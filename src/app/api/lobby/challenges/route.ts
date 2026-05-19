@@ -12,9 +12,9 @@ import { errorResponse, jsonError } from "@/lib/http";
 import { requireTier } from "@/lib/chain/tiers";
 import { REGISTRY } from "@/lib/game/registry";
 import { postChallenge, UnknownGameTypeError } from "@/lib/game/server-flow";
-import { withDynamicPayment } from "@/lib/x402/middleware";
-import { dollarsFromUsdc6 } from "@/lib/x402/pricing";
+import { withFixedPayment } from "@/lib/x402/middleware";
 import { guardian } from "@/lib/guardian";
+import { pullStake, StakePullError } from "@/lib/chain/stake";
 
 export const dynamic = "force-dynamic";
 
@@ -121,6 +121,28 @@ async function createHandler(req: NextRequest) {
       );
     }
 
+    // For paid mode: pull the proposer's stake BEFORE creating the row.
+    // If transferFrom fails (insufficient allowance / balance / RPC),
+    // no challenge gets posted — the LLM sees a clear error and can
+    // retry once the owner tops up. This means an "active" challenge
+    // row always has on-chain backing for the proposer's side.
+    let proposerStakeTxHash: `0x${string}` | null = null;
+    if (body.mode === "paid" && body.stakeUsdc) {
+      try {
+        const pull = await pullStake(
+          owner.walletAddress as `0x${string}`,
+          body.stakeUsdc,
+        );
+        proposerStakeTxHash = pull.txHash;
+      } catch (err) {
+        if (err instanceof StakePullError) {
+          const status = err.code === "insufficient_allowance" ? 402 : 400;
+          return jsonError(status, err.code, err.message);
+        }
+        throw err;
+      }
+    }
+
     try {
       const result = await postChallenge({
         gameType: body.gameType,
@@ -133,7 +155,23 @@ async function createHandler(req: NextRequest) {
         eloMax: body.eloMax ?? null,
         timeoutMin: body.timeoutMin,
       });
-      return NextResponse.json(result, { status: 201 });
+      // Stamp the stake tx hash on the freshly-created row. We do this
+      // after postChallenge so server-flow stays unaware of escrow;
+      // it just orchestrates rows. Phase 2 cleanup: thread the hash
+      // through postChallenge so this becomes a single insert.
+      if (proposerStakeTxHash && result.kind === "challenge") {
+        await db
+          .update(challenges)
+          .set({
+            proposerStakeTxHash,
+            initiatorEscrowLockedAt: new Date(),
+          })
+          .where(eq(challenges.id, result.challenge.id));
+      }
+      return NextResponse.json(
+        { ...result, proposerStakeTxHash },
+        { status: 201 },
+      );
     } catch (gameErr) {
       if (gameErr instanceof UnknownGameTypeError) {
         return jsonError(400, "unknown_game_type", gameErr.message);
@@ -145,16 +183,14 @@ async function createHandler(req: NextRequest) {
   }
 }
 
-// x402-gated: $0.01 for free/system, stake amount for paid.
-export const POST = withDynamicPayment(
-  createHandler,
-  async (req) => {
-    const cloned = req.clone();
-    const body = await cloned.json().catch(() => ({}));
-    if (body.mode === "paid" && typeof body.stakeUsdc === "number") {
-      return dollarsFromUsdc6(body.stakeUsdc);
-    }
-    return "$0.01";
-  },
-  "Post challenge",
-);
+// Paid mode: no x402 wrapper — the stake itself is the anti-spam
+// (and the actual money movement, via transferFrom inside the handler).
+// Free / system mode: $0.01 x402 anti-spam.
+export const POST = async (req: NextRequest) => {
+  const cloned = req.clone();
+  const body = await cloned.json().catch(() => ({}));
+  if (body.mode === "paid") {
+    return createHandler(req);
+  }
+  return withFixedPayment(createHandler, "$0.01", "Post challenge")(req);
+};

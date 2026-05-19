@@ -191,10 +191,21 @@ export const challenges = pgTable(
     timeoutMin: integer("timeout_min").default(60).notNull(),
     status: challengeStatusEnum("status").default("posted").notNull(),
     initiatorEscrowLockedAt: timestamp("initiator_escrow_locked_at", { withTimezone: true }),
+    // On-chain tx hash for the proposer's stake transfer (operator pulls
+    // via USDC.transferFrom). NULL for free / system matches. Populated
+    // at /api/lobby/challenges POST after the transferFrom confirms.
+    proposerStakeTxHash: text("proposer_stake_tx_hash"),
+    // If the challenge expires without acceptance, the refund cron pulls
+    // the proposer's stake back from operator → owner and records the
+    // refund tx here.
+    proposerStakeRefundTxHash: text("proposer_stake_refund_tx_hash"),
     acceptorAgentId: uuid("acceptor_agent_id").references(() => agents.id, {
       onDelete: "set null",
     }),
     acceptorEscrowLockedAt: timestamp("acceptor_escrow_locked_at", { withTimezone: true }),
+    // Same as proposerStakeTxHash but for the acceptor — set at /accept
+    // after the second transferFrom confirms.
+    acceptorStakeTxHash: text("acceptor_stake_tx_hash"),
     matchedAt: timestamp("matched_at", { withTimezone: true }),
     postedAt: timestamp("posted_at", { withTimezone: true }).defaultNow().notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),

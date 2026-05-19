@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createPublicClient, channelName, realtimeEvent } from "@/lib/supabase";
 import { GameBoard } from "@/components/coliseum/game-board";
 import { cn } from "@/lib/utils";
@@ -97,6 +98,19 @@ export type MatchViewProps = {
 const REACTION_PALETTE = ["🔥", "🧠", "💀", "👀", "📈", "🩸", "🎯", "🤖"];
 
 export function MatchView({ initial }: MatchViewProps) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  // Honor ?move=N at mount — opens the scrubber at that move. Clamped to
+  // a valid range (0..moves.length-1) so a bad URL doesn't crash the view.
+  const initialMoveParam = (() => {
+    const raw = searchParams.get("move");
+    if (!raw) return null;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed)) return null;
+    const lastIdx = Math.max(0, initial.moves.length - 1);
+    return Math.min(Math.max(0, parsed), lastIdx);
+  })();
+
   const [moves, setMoves] = useState<Move[]>(initial.moves);
   const [chat, setChat] = useState(initial.chat);
   const [reactions, setReactions] = useState(initial.reactions);
@@ -108,10 +122,17 @@ export function MatchView({ initial }: MatchViewProps) {
   const [turnStartedAt, setTurnStartedAt] = useState(initial.turnStartedAt);
   const [now, setNow] = useState(() => Date.now());
 
-  const [scrubIndex, setScrubIndex] = useState<number>(Math.max(0, initial.moves.length - 1));
-  const [liveMode, setLiveMode] = useState(initial.status === "active");
+  const [scrubIndex, setScrubIndex] = useState<number>(
+    initialMoveParam ?? Math.max(0, initial.moves.length - 1),
+  );
+  // If a ?move= was supplied, default to scrubbing mode so the deep link
+  // actually shows the moment instead of jumping back to live.
+  const [liveMode, setLiveMode] = useState(
+    initialMoveParam == null && initial.status === "active",
+  );
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState<0.5 | 1 | 2 | 4>(1);
+  const [shareCopied, setShareCopied] = useState(false);
 
   const [logTab, setLogTab] = useState<"moves" | "x402" | "annot">("moves");
   const [chatInput, setChatInput] = useState("");
@@ -145,6 +166,58 @@ export function MatchView({ initial }: MatchViewProps) {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, [status]);
+
+  // Sync the URL bar back to the scrub index when the user manually
+  // scrubs. router.replace + scroll:false avoids a flash. We don't
+  // write the URL while in liveMode — the URL stays bare-/match/[id]
+  // so a refresh re-enters live.
+  useEffect(() => {
+    if (liveMode) {
+      if (searchParams.get("move") != null) {
+        router.replace(`/match/${initial.id}`, { scroll: false });
+      }
+      return;
+    }
+    const params = new URLSearchParams(searchParams.toString());
+    if (String(scrubIndex) === params.get("move")) return;
+    params.set("move", String(scrubIndex));
+    router.replace(`/match/${initial.id}?${params.toString()}`, { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrubIndex, liveMode]);
+
+  // "Share moment" — copies the deep-link to clipboard + opens a
+  // Farcaster compose intent in a new tab so the user can post the
+  // exact moment with one click. Falls through if the browser's
+  // clipboard API is unavailable (e.g. on iOS Safari without HTTPS).
+  function shareMoment(moveIdx: number) {
+    const origin =
+      typeof window !== "undefined" && window.location?.origin
+        ? window.location.origin
+        : "https://agentcoliseum.xyz";
+    const url = `${origin}/match/${initial.id}?move=${Math.max(0, moveIdx)}`;
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      void navigator.clipboard.writeText(url).then(
+        () => {
+          setShareCopied(true);
+          setTimeout(() => setShareCopied(false), 2500);
+        },
+        () => undefined,
+      );
+    }
+    // Open the Warpcast compose intent in a new tab. The user lands
+    // with the URL already embedded — they just write a caption.
+    const text = encodeURIComponent(
+      "Check this move in an AI vs AI match on @agentcoliseum",
+    );
+    const embed = encodeURIComponent(url);
+    if (typeof window !== "undefined") {
+      window.open(
+        `https://warpcast.com/~/compose?text=${text}&embeds[]=${embed}`,
+        "_blank",
+        "noopener,noreferrer",
+      );
+    }
+  }
 
   // Replay autoplay
   useEffect(() => {
@@ -525,6 +598,20 @@ export function MatchView({ initial }: MatchViewProps) {
                   {liveMode && status === "active" ? "live" : moves.length}
                 </span>
                 <span className="grow" />
+                <button
+                  type="button"
+                  className="btn sm"
+                  title="Copy a deep-link to this exact move + draft a Farcaster cast"
+                  onClick={() => shareMoment(effectiveIdx)}
+                  style={{
+                    color: shareCopied ? "var(--green-text)" : "var(--gold)",
+                    borderColor: shareCopied
+                      ? "color-mix(in oklab, var(--green) 45%, transparent)"
+                      : "color-mix(in oklab, var(--gold) 40%, transparent)",
+                  }}
+                >
+                  {shareCopied ? "✓ link copied" : "Share moment"}
+                </button>
                 <div className="seg-pill">
                   {([0.5, 1, 2, 4] as const).map((s) => (
                     <button

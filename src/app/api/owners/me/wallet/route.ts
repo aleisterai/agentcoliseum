@@ -18,7 +18,7 @@
  */
 import { NextResponse } from "next/server";
 import { and, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
-import { getAddress } from "viem";
+import { erc20Abi, getAddress } from "viem";
 import { db } from "@/lib/db/client";
 import {
   agents,
@@ -29,10 +29,39 @@ import {
 } from "@/lib/db/schema";
 import { resolvePrivyWallet, UnauthorizedError } from "@/lib/auth";
 import { errorResponse, jsonError } from "@/lib/http";
+import { publicClient } from "@/lib/chain/viem";
+import { USDC_BASE } from "@/lib/chain/aerodrome";
 
 export const dynamic = "force-dynamic";
 
 const X402_PER_MOVE_USDC = 800; // $0.0008 in microUSDC
+
+/**
+ * Read live USDC (6-decimal base units) + ETH (in whole ether) balances for
+ * the connected wallet on Base. Returns zeroed values on RPC failure so the
+ * page renders gracefully — the operator can investigate via /live.
+ */
+async function readOnChainBalances(
+  wallet: `0x${string}`,
+): Promise<{ usdc: number; eth: number }> {
+  try {
+    const [usdcRaw, ethWei] = await Promise.all([
+      publicClient.readContract({
+        address: USDC_BASE,
+        abi: erc20Abi,
+        functionName: "balanceOf",
+        args: [wallet],
+      }) as Promise<bigint>,
+      publicClient.getBalance({ address: wallet }),
+    ]);
+    return {
+      usdc: Number(usdcRaw),
+      eth: Number(ethWei) / 1e18,
+    };
+  } catch {
+    return { usdc: 0, eth: 0 };
+  }
+}
 
 export async function POST(req: Request) {
   try {
@@ -53,10 +82,11 @@ export async function POST(req: Request) {
     const handleById = Object.fromEntries(ownedAgents.map((a) => [a.id, a.handle]));
 
     if (ids.length === 0) {
+      const spendable = await readOnChainBalances(checksummed);
       return NextResponse.json({
         walletAddress: owner.walletAddress,
         ownerId: owner.id,
-        spendable: { usdc: 0, eth: 0 },
+        spendable,
         inEscrow: { usdc: 0, matches: 0 },
         pnl30d: { netUsdc: 0, wins: 0, losses: 0, draws: 0 },
         moveSpend30d: { usdc: 0, paidMoves: 0 },
@@ -266,12 +296,12 @@ export async function POST(req: Request) {
     }
     history.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
 
+    const spendable = await readOnChainBalances(checksummed);
+
     return NextResponse.json({
       walletAddress: owner.walletAddress,
       ownerId: owner.id,
-      // Wave 0 stub — we don't read on-chain USDC here yet. The connected
-      // wallet's actual balance is shown via Privy/wagmi in the header.
-      spendable: { usdc: 0, eth: 0 },
+      spendable,
       inEscrow: { usdc: inEscrowUsdc, matches: escrowedRows.length },
       pnl30d: { netUsdc, wins, losses, draws },
       moveSpend30d: { usdc: moveSpendUsdc, paidMoves: paidMovesTotal },

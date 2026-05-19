@@ -13,6 +13,7 @@
  * wallet before invoking. Quote first via `quoteSwap()` to avoid surprises.
  */
 import "server-only";
+import { submitOperatorTx } from "./operator-nonce";
 import {
   erc20Abi,
   encodeFunctionData,
@@ -86,14 +87,17 @@ export async function ensureUsdcApproval(min: bigint): Promise<Hex | undefined> 
   if (allowance >= min) return undefined;
 
   const wallet = getOperatorWallet();
-  const hash = await wallet.sendTransaction({
-    to: USDC_BASE,
-    data: encodeFunctionData({
-      abi: erc20Abi,
-      functionName: "approve",
-      args: [AERO_V2_ROUTER, 2n ** 256n - 1n], // max
+  const hash = await submitOperatorTx((nonce) =>
+    wallet.sendTransaction({
+      to: USDC_BASE,
+      data: encodeFunctionData({
+        abi: erc20Abi,
+        functionName: "approve",
+        args: [AERO_V2_ROUTER, 2n ** 256n - 1n], // max
+      }),
+      nonce,
     }),
-  });
+  );
   await publicClient.waitForTransactionReceipt({ hash });
   return hash;
 }
@@ -122,14 +126,17 @@ export async function swapUsdcToAleister(usdcUnits: bigint): Promise<{
   })) as bigint;
 
   const wallet = getOperatorWallet();
-  const hash = await wallet.sendTransaction({
-    to: AERO_V2_ROUTER,
-    data: encodeFunctionData({
-      abi: AERO_ROUTER_ABI,
-      functionName: "swapExactTokensForTokensSupportingFeeOnTransferTokens",
-      args: [usdcUnits, minOut, USDC_TO_ALEISTER, operator, deadline],
+  const hash = await submitOperatorTx((nonce) =>
+    wallet.sendTransaction({
+      to: AERO_V2_ROUTER,
+      data: encodeFunctionData({
+        abi: AERO_ROUTER_ABI,
+        functionName: "swapExactTokensForTokensSupportingFeeOnTransferTokens",
+        args: [usdcUnits, minOut, USDC_TO_ALEISTER, operator, deadline],
+      }),
+      nonce,
     }),
-  });
+  );
   await publicClient.waitForTransactionReceipt({ hash });
 
   const after = (await publicClient.readContract({
@@ -145,14 +152,17 @@ export async function swapUsdcToAleister(usdcUnits: bigint): Promise<{
 /** Send `amount` ALEISTER from operator wallet to the treasury. */
 export async function sendAleisterToTreasury(amount: bigint): Promise<Hex> {
   const wallet = getOperatorWallet();
-  const hash = await wallet.sendTransaction({
-    to: ALEISTER_ADDRESS,
-    data: encodeFunctionData({
-      abi: erc20Abi,
-      functionName: "transfer",
-      args: [ALEISTER_TREASURY, amount],
+  const hash = await submitOperatorTx((nonce) =>
+    wallet.sendTransaction({
+      to: ALEISTER_ADDRESS,
+      data: encodeFunctionData({
+        abi: erc20Abi,
+        functionName: "transfer",
+        args: [ALEISTER_TREASURY, amount],
+      }),
+      nonce,
     }),
-  });
+  );
   await publicClient.waitForTransactionReceipt({ hash });
   return hash;
 }

@@ -24,6 +24,7 @@ import { base } from "viem/chains";
 import { getOperatorWallet, getOperatorAddress } from "./wallet";
 import { publicClient } from "./viem";
 import { USDC_BASE } from "./aerodrome";
+import { submitOperatorTx } from "./operator-nonce";
 
 export interface PullStakeResult {
   txHash: `0x${string}`;
@@ -110,14 +111,21 @@ export async function pullStake(
   const wallet = getOperatorWallet();
   let txHash: `0x${string}`;
   try {
-    txHash = await wallet.writeContract({
-      address: USDC_BASE,
-      abi: erc20Abi,
-      functionName: "transferFrom",
-      args: [ownerWallet, operator, stake],
-      chain: base,
-      account: wallet.account,
-    });
+    // Serialize through the nonce manager so concurrent stake-pulls
+    // (e.g. two acceptors hitting the lobby at once, or stake-pull
+    // + a settlement-sweep payout firing the same tick) don't collide
+    // on the same nonce.
+    txHash = await submitOperatorTx((nonce) =>
+      wallet.writeContract({
+        address: USDC_BASE,
+        abi: erc20Abi,
+        functionName: "transferFrom",
+        args: [ownerWallet, operator, stake],
+        chain: base,
+        account: wallet.account,
+        nonce,
+      }),
+    );
   } catch (err) {
     throw new StakePullError(
       "transferFrom_reverted",
@@ -164,14 +172,17 @@ export async function refundStake(
     );
   }
   const wallet = getOperatorWallet();
-  const txHash = await wallet.writeContract({
-    address: USDC_BASE,
-    abi: erc20Abi,
-    functionName: "transfer",
-    args: [ownerWallet, BigInt(stakeUsdc)],
-    chain: base,
-    account: wallet.account,
-  });
+  const txHash = await submitOperatorTx((nonce) =>
+    wallet.writeContract({
+      address: USDC_BASE,
+      abi: erc20Abi,
+      functionName: "transfer",
+      args: [ownerWallet, BigInt(stakeUsdc)],
+      chain: base,
+      account: wallet.account,
+      nonce,
+    }),
+  );
   const receipt = await publicClient.waitForTransactionReceipt({
     hash: txHash,
     confirmations: 1,

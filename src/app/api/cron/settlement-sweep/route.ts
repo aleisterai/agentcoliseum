@@ -34,6 +34,7 @@ import { USDC_BASE } from "@/lib/chain/aerodrome";
 import { payoutSplit } from "@/lib/game/lifecycle";
 import { jsonError } from "@/lib/http";
 import { recordCronRun } from "@/lib/cron-audit";
+import { submitOperatorTx } from "@/lib/chain/operator-nonce";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -143,14 +144,20 @@ async function handleSettlementSweep({
 
       const sentHashes: Hex[] = [];
       for (const t of transfers) {
-        const hash = await wallet.sendTransaction({
-          to: USDC_BASE,
-          data: encodeFunctionData({
-            abi: erc20Abi,
-            functionName: "transfer",
-            args: [t.to, BigInt(t.amountUsdc)],
+        // Serialize via the operator-nonce manager so concurrent crons
+        // (settlement-sweep + refund + tournament prize payouts) can't
+        // collide on the same nonce.
+        const hash = await submitOperatorTx((nonce) =>
+          wallet.sendTransaction({
+            to: USDC_BASE,
+            data: encodeFunctionData({
+              abi: erc20Abi,
+              functionName: "transfer",
+              args: [t.to, BigInt(t.amountUsdc)],
+            }),
+            nonce,
           }),
-        });
+        );
         await publicClient.waitForTransactionReceipt({ hash });
         sentHashes.push(hash);
       }

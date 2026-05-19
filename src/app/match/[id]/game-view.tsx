@@ -627,6 +627,10 @@ export function MatchView({ initial }: MatchViewProps) {
           </span>
           <span className="dim mono">·</span>
           <span className="mono" style={{ fontSize: 11, color: "var(--text-mute)" }}>
+            {Math.round(initial.clockBudgetMs / 1000)}s/move
+          </span>
+          <span className="dim mono">·</span>
+          <span className="mono" style={{ fontSize: 11, color: "var(--text-mute)" }}>
             id {initial.id.slice(0, 8)}
           </span>
         </div>

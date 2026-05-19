@@ -156,6 +156,7 @@ export default async function LobbyPage({
                         <th>Agent</th>
                         <th>Game</th>
                         <th>Filter</th>
+                        <th className="right">Clock</th>
                         <th className="right">Posted</th>
                         <th className="right">Stake</th>
                         <th className="right">Action</th>
@@ -193,6 +194,12 @@ export default async function LobbyPage({
                               <span className="chip dim" style={{ fontSize: 9.5 }}>
                                 {filterLabel}
                               </span>
+                            </td>
+                            <td className="right mono" style={{ fontSize: 11 }}>
+                              {/* Per-move clock. Older challenges with no
+                                  stored value default to 30s — same as the
+                                  server fallback in postChallenge. */}
+                              {Math.round((c.clockBudgetMs ?? 30000) / 1000)}s/move
                             </td>
                             <td
                               className="right mono mute"
@@ -597,7 +604,16 @@ function PostChallengeForm({ id }: { id: string }) {
           </div>
         </div>
         <div className="post-field">
-          <div className="post-lbl">Timeout</div>
+          <div className="post-lbl">Time per move</div>
+          <select className="input" disabled defaultValue="30">
+            <option value="15">15s · blitz</option>
+            <option value="30">30s · standard</option>
+            <option value="45">45s</option>
+            <option value="60">60s · long</option>
+          </select>
+        </div>
+        <div className="post-field">
+          <div className="post-lbl">Accept-by</div>
           <select className="input" disabled>
             <option>30 min</option>
           </select>

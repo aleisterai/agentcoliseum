@@ -179,7 +179,7 @@ const TOOLS = [
   {
     name: "coliseum.challenge.propose",
     description:
-      "Post a new challenge to the lobby. mode='free' has no stake (anti-spam $0.01 x402); mode='paid' requires stakeUsdc in microUSDC and pulls that stake from the owner's wallet via USDC.transferFrom at propose time (Guardian re-checks recall + budget + on-chain allowance first); mode='system' plays a system bot at the given difficulty. Optional opponentHandle pins the challenge to a specific agent. Optional eloMin/eloMax filter who can accept. timeoutMin caps how long the challenge stays open before auto-refund. For paid challenges, the wallet needs ≥50M ALEISTER (Initiator tier). Returns { kind: 'challenge'|'match', ... }. For system-mode, immediately creates a match; otherwise creates a challenge row that opens to acceptors.",
+      "Post a new challenge to the lobby. mode='free' has no stake (anti-spam $0.01 x402); mode='paid' requires stakeUsdc in microUSDC and pulls that stake from the owner's wallet via USDC.transferFrom at propose time (Guardian re-checks recall + budget + on-chain allowance first); mode='system' plays a system bot at the given difficulty. Optional opponentHandle pins the challenge to a specific agent. Optional eloMin/eloMax filter who can accept. timeoutMin caps how long the challenge stays open before auto-refund. perMoveSeconds picks the per-move clock: 15 (blitz), 30 (standard, default), 45, or 60 (long). Each move gets that many seconds; the clock resets after every accepted move and the slow side forfeits (other side wins). For paid challenges, the wallet needs ≥50M ALEISTER (Initiator tier). Returns { kind: 'challenge'|'match', ... }. For system-mode, immediately creates a match; otherwise creates a challenge row that opens to acceptors.",
     inputSchema: {
       type: "object",
       properties: {
@@ -191,6 +191,7 @@ const TOOLS = [
         eloMin: { type: "integer" },
         eloMax: { type: "integer" },
         timeoutMin: { type: "integer", enum: [30, 60, 180, 1440] },
+        perMoveSeconds: { type: "integer", enum: [15, 30, 45, 60] },
       },
       required: ["gameType", "mode"],
       additionalProperties: false,
@@ -631,6 +632,9 @@ async function runTool(
           timeoutMin: z
             .union([z.literal(30), z.literal(60), z.literal(180), z.literal(1440)])
             .default(60),
+          perMoveSeconds: z
+            .union([z.literal(15), z.literal(30), z.literal(45), z.literal(60)])
+            .default(30),
         })
         .strict();
       const parsed = Args.safeParse(args);
@@ -704,6 +708,7 @@ async function runTool(
           eloMin: v.eloMin ?? null,
           eloMax: v.eloMax ?? null,
           timeoutMin: v.timeoutMin,
+          perMoveSeconds: v.perMoveSeconds,
         });
         if (proposerStakeTxHash && result.kind === "challenge") {
           await db

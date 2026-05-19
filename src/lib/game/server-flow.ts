@@ -86,6 +86,22 @@ export interface PostChallengeInput {
   eloMin?: number | null;
   eloMax?: number | null;
   timeoutMin?: 30 | 60 | 180 | 1440;
+  /**
+   * Per-move clock in seconds. One of 15 / 30 / 45 / 60. Default 30.
+   * Stored on the challenge and copied to the match at accept time so a
+   * match is sealed against later challenge edits. Validation happens
+   * here and in the API layer.
+   */
+  perMoveSeconds?: PerMoveSeconds;
+}
+
+export const PER_MOVE_PRESETS = [15, 30, 45, 60] as const;
+export type PerMoveSeconds = (typeof PER_MOVE_PRESETS)[number];
+export const DEFAULT_PER_MOVE_SECONDS: PerMoveSeconds = 30;
+export function isValidPerMoveSeconds(v: unknown): v is PerMoveSeconds {
+  return (
+    typeof v === "number" && (PER_MOVE_PRESETS as readonly number[]).includes(v)
+  );
 }
 
 /**
@@ -105,6 +121,15 @@ export async function postChallenge(
   const adapter = getAdapter(input.gameType);
   if (!adapter) throw new UnknownGameTypeError(input.gameType);
 
+  // Resolve the per-move budget the caller asked for. Invalid presets
+  // collapse to the default (30s) so a buggy client doesn't accidentally
+  // ship a 1-second-per-move match — but the API layer should have
+  // already validated this before calling us.
+  const perMoveSeconds: PerMoveSeconds = isValidPerMoveSeconds(input.perMoveSeconds)
+    ? input.perMoveSeconds
+    : DEFAULT_PER_MOVE_SECONDS;
+  const perMoveMs = perMoveSeconds * 1000;
+
   if (input.mode === "system") {
     // System-mode: create the match immediately. Caller is responsible for
     // tier check + x402; this fn doesn't enforce those.
@@ -123,9 +148,9 @@ export async function postChallenge(
         currentTurnPlayerId: "0",
         currentTurnAgentId: input.initiatorAgentId,
         turnStartedAt: new Date(),
-        p1MsLeft: adapter.clockBudgetMs,
-        p2MsLeft: adapter.clockBudgetMs,
-        clockBudgetMs: adapter.clockBudgetMs,
+        p1MsLeft: perMoveMs,
+        p2MsLeft: perMoveMs,
+        clockBudgetMs: perMoveMs,
         startedAt: new Date(),
       })
       .returning();
@@ -152,6 +177,7 @@ export async function postChallenge(
       eloMin: input.eloMin ?? null,
       eloMax: input.eloMax ?? null,
       timeoutMin,
+      clockBudgetMs: perMoveMs,
       status: "posted",
       initiatorEscrowLockedAt: input.mode === "paid" ? new Date() : null,
       expiresAt,
@@ -203,7 +229,10 @@ export async function acceptChallenge(input: AcceptChallengeInput): Promise<Matc
     const engine = buildEngine(adapter.game);
     const initial = engine.initialState();
 
-    // Create the match.
+    // Create the match. Inherit the per-move clock the initiator chose
+    // when they posted the challenge — fall back to the adapter default
+    // for legacy challenges created before the column existed.
+    const matchPerMoveMs = challenge.clockBudgetMs ?? adapter.clockBudgetMs;
     const [match] = await tx
       .insert(matches)
       .values({
@@ -221,9 +250,9 @@ export async function acceptChallenge(input: AcceptChallengeInput): Promise<Matc
         currentTurnPlayerId: "0",
         currentTurnAgentId: challenge.initiatorAgentId, // p1 (initiator) goes first
         turnStartedAt: new Date(),
-        p1MsLeft: adapter.clockBudgetMs,
-        p2MsLeft: adapter.clockBudgetMs,
-        clockBudgetMs: adapter.clockBudgetMs,
+        p1MsLeft: matchPerMoveMs,
+        p2MsLeft: matchPerMoveMs,
+        clockBudgetMs: matchPerMoveMs,
         startedAt: new Date(),
       })
       .returning();
@@ -272,13 +301,16 @@ export async function applyMove(input: ApplyMoveInput): Promise<Match> {
 
   const now = new Date();
 
-  // Per-move clock: each player has `adapter.clockBudgetMs` to make this
-  // move. If they didn't, they forfeit it and the opponent wins. No
-  // per-side accumulator — the clock resets on every accepted move.
+  // Per-move clock: each player has `match.clockBudgetMs` (chosen by
+  // the challenge initiator from {15, 30, 45, 60}s, sealed at accept
+  // time) to make this move. If they didn't, they forfeit it and the
+  // opponent wins. No per-side accumulator — the clock resets on every
+  // accepted move.
+  const perMoveMs = match.clockBudgetMs;
   if (
     clockExpired({
       turnStartedAt: match.turnStartedAt,
-      perMoveMs: adapter.clockBudgetMs,
+      perMoveMs,
       now,
     })
   ) {
@@ -290,14 +322,14 @@ export async function applyMove(input: ApplyMoveInput): Promise<Match> {
       resultReason: "time_forfeit",
       // Both columns get the per-move budget — they represent "your
       // budget for the NEXT move", not "remaining total."
-      finalP1Ms: adapter.clockBudgetMs,
-      finalP2Ms: adapter.clockBudgetMs,
+      finalP1Ms: perMoveMs,
+      finalP2Ms: perMoveMs,
     });
   }
   // The current-turn player still has time; both rails will show full
   // budget after this move lands.
-  const p1MsLeft = adapter.clockBudgetMs;
-  const p2MsLeft = adapter.clockBudgetMs;
+  const p1MsLeft = perMoveMs;
+  const p2MsLeft = perMoveMs;
 
   // Validate payload via the adapter; on invalid, bump counter or forfeit.
   const validation = adapter.validateMovePayload(input.payload);
@@ -529,16 +561,9 @@ export async function driveSystemBot(match: Match): Promise<Match> {
 export async function enforceClockExpiry(matchId: string): Promise<Match | null> {
   const match = await db.query.matches.findFirst({ where: eq(matches.id, matchId) });
   if (!match || match.status !== "active") return null;
-  const adapter = getAdapter(match.gameType);
-  if (!adapter) return null;
   const now = new Date();
-  if (
-    !clockExpired({
-      turnStartedAt: match.turnStartedAt,
-      perMoveMs: adapter.clockBudgetMs,
-      now,
-    })
-  ) {
+  const perMoveMs = match.clockBudgetMs;
+  if (!clockExpired({ turnStartedAt: match.turnStartedAt, perMoveMs, now })) {
     return null;
   }
   // Current player ran the per-move clock to zero → forfeit; the OTHER
@@ -549,8 +574,8 @@ export async function enforceClockExpiry(matchId: string): Promise<Match | null>
     matchId: match.id,
     winnerAgentId,
     resultReason: "time_forfeit",
-    finalP1Ms: adapter.clockBudgetMs,
-    finalP2Ms: adapter.clockBudgetMs,
+    finalP1Ms: perMoveMs,
+    finalP2Ms: perMoveMs,
   });
 }
 

@@ -183,10 +183,15 @@ async function tick(bots: Bot[]) {
   }
 }
 
+// Rotate through the public clock presets so the lobby shows the full
+// matrix of options the new dynamic-clock UI advertises.
+const CLOCK_PRESETS_MS = [15_000, 30_000, 45_000, 60_000] as const;
+
 async function spawnMatch(adapter: GameAdapter, bots: Bot[]) {
   const [a, b] = pickTwoDistinct(bots);
   const engine = buildEngine(adapter.game);
   const initial = engine.initialState();
+  const perMoveMs = CLOCK_PRESETS_MS[Math.floor(Math.random() * CLOCK_PRESETS_MS.length)];
   const [created] = await db
     .insert(matches)
     .values({
@@ -200,9 +205,9 @@ async function spawnMatch(adapter: GameAdapter, bots: Bot[]) {
       currentTurnPlayerId: "0",
       currentTurnAgentId: a.id,
       turnStartedAt: new Date(),
-      p1MsLeft: adapter.clockBudgetMs,
-      p2MsLeft: adapter.clockBudgetMs,
-      clockBudgetMs: adapter.clockBudgetMs,
+      p1MsLeft: perMoveMs,
+      p2MsLeft: perMoveMs,
+      clockBudgetMs: perMoveMs,
       startedAt: new Date(),
     })
     .returning();

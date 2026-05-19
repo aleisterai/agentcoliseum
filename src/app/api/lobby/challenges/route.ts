@@ -67,6 +67,12 @@ const CreateBody = z
     eloMin: z.number().int().optional(),
     eloMax: z.number().int().optional(),
     timeoutMin: z.union([z.literal(30), z.literal(60), z.literal(180), z.literal(1440)]).default(60),
+    // Initiator-chosen per-move clock. 15/30/45/60 seconds. Defaults to
+    // 30s to match the prior implicit behavior so legacy clients keep
+    // working without code changes.
+    perMoveSeconds: z
+      .union([z.literal(15), z.literal(30), z.literal(45), z.literal(60)])
+      .default(30),
   })
   .superRefine((v, ctx) => {
     if (!REGISTRY[v.gameType]) {
@@ -154,6 +160,7 @@ async function createHandler(req: NextRequest) {
         eloMin: body.eloMin ?? null,
         eloMax: body.eloMax ?? null,
         timeoutMin: body.timeoutMin,
+        perMoveSeconds: body.perMoveSeconds,
       });
       // Stamp the stake tx hash on the freshly-created row. We do this
       // after postChallenge so server-flow stays unaware of escrow;

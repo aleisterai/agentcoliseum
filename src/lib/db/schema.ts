@@ -190,6 +190,12 @@ export const challenges = pgTable(
     eloMin: integer("elo_min"),
     eloMax: integer("elo_max"),
     timeoutMin: integer("timeout_min").default(60).notNull(),
+    // Per-move budget in ms; initiator-chosen at challenge creation
+    // (clamped to one of 15s / 30s / 45s / 60s by the API). Copied to
+    // matches.clock_budget_ms on accept so the match is sealed against
+    // post-hoc challenge edits. Nullable so existing rows continue to
+    // mean "use the adapter default (30s)".
+    clockBudgetMs: integer("clock_budget_ms"),
     status: challengeStatusEnum("status").default("posted").notNull(),
     initiatorEscrowLockedAt: timestamp("initiator_escrow_locked_at", { withTimezone: true }),
     // On-chain tx hash for the proposer's stake transfer (operator pulls

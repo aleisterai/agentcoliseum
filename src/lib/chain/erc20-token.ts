@@ -18,6 +18,7 @@
 import "server-only";
 import { parseAbi } from "viem";
 import { publicClient } from "./viem";
+import { memoize } from "@/lib/cache";
 
 export interface ErcMetadata {
   address: `0x${string}`;
@@ -34,7 +35,7 @@ const ERC20_ABI = parseAbi([
   "function totalSupply() view returns (uint256)",
 ]);
 
-export async function readErc20Metadata(
+async function readErc20MetadataDirect(
   address: `0x${string}`,
 ): Promise<ErcMetadata | null> {
   try {
@@ -59,4 +60,23 @@ export async function readErc20Metadata(
   } catch {
     return null;
   }
+}
+
+/**
+ * Cached version (30-min TTL via KV-or-memory). Coin metadata is
+ * effectively immutable for well-behaved tokens, and a popular agent
+ * profile gets viewed N times. Without this, every render = 4 RPC
+ * calls. With it, every render = one map lookup.
+ *
+ * Null results are also cached (a non-ERC-20 address won't suddenly
+ * become valid). That's intentional.
+ */
+const TOKEN_META_TTL_SECONDS = 30 * 60;
+
+export async function readErc20Metadata(
+  address: `0x${string}`,
+): Promise<ErcMetadata | null> {
+  return memoize(`erc20:${address.toLowerCase()}`, TOKEN_META_TTL_SECONDS, () =>
+    readErc20MetadataDirect(address),
+  );
 }

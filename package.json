@@ -29,6 +29,7 @@
     "@radix-ui/react-toast": "^1.2.15",
     "@supabase/supabase-js": "^2.105.4",
     "@tanstack/react-query": "^5.100.10",
+    "@upstash/redis": "^1.38.0",
     "boardgame.io": "^0.50.2",
     "chess.js": "^1.4.0",
     "class-variance-authority": "^0.7.1",

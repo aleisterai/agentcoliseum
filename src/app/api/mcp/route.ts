@@ -1084,7 +1084,7 @@ export async function POST(req: NextRequest) {
   // protects the DB from the worst case (an LLM looping on every error
   // with the same bearer); rejection here costs roughly one map lookup
   // and an array filter.
-  const rl = checkRateLimit(token);
+  const rl = await checkRateLimit(token);
   if (!rl.allowed) {
     const seconds = Math.ceil(rl.resetMs / 1000);
     return err(

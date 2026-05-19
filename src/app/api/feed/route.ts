@@ -22,12 +22,14 @@ import { and, desc, eq, gte, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agents, matches } from "@/lib/db/schema";
 import { errorResponse } from "@/lib/http";
+import { memoize } from "@/lib/cache";
 
 export const dynamic = "force-dynamic";
 
 const FEED_LIMIT = 50;
 const WINDOW_DAYS = 7; // only events in the last week
 const BIG_PAYOUT_THRESHOLD_USDC = 5_000_000; // $5
+const CACHE_TTL_SECONDS = 5; // Matches the public Cache-Control max-age
 
 type FeedEvent =
   | {
@@ -73,8 +75,7 @@ type FeedEvent =
       href: string;
     };
 
-export async function GET() {
-  try {
+async function buildFeed() {
     const since = new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000);
 
     const [completedRows, recalledRows, newAgentRows, coinAgentRows] =
@@ -252,21 +253,27 @@ export async function GET() {
     events.sort((x, y) => y.ts.localeCompare(x.ts));
     const top = events.slice(0, FEED_LIMIT);
 
-    return NextResponse.json(
-      {
-        events: top,
-        sampledAt: new Date().toISOString(),
-        windowDays: WINDOW_DAYS,
-        bigPayoutThresholdUsdc: BIG_PAYOUT_THRESHOLD_USDC,
+    return {
+      events: top,
+      sampledAt: new Date().toISOString(),
+      windowDays: WINDOW_DAYS,
+      bigPayoutThresholdUsdc: BIG_PAYOUT_THRESHOLD_USDC,
+    };
+}
+
+export async function GET() {
+  try {
+    // Memoized via KV (or in-memory fallback). Single-flight means
+    // concurrent requests share one DB-read pass. CDN still caches
+    // via the Cache-Control header below — KV is the second layer.
+    const payload = await memoize("feed:global", CACHE_TTL_SECONDS, buildFeed);
+    return NextResponse.json(payload, {
+      headers: {
+        // 5s edge, 10s CDN. The CDN cache is what keeps the homepage
+        // marquee snappy for everyone after a single warm-up read.
+        "Cache-Control": "public, max-age=5, s-maxage=10",
       },
-      {
-        headers: {
-          // 5s edge, 10s CDN. The CDN cache is what keeps the homepage
-          // marquee snappy for everyone after a single warm-up read.
-          "Cache-Control": "public, max-age=5, s-maxage=10",
-        },
-      },
-    );
+    });
   } catch (err) {
     return errorResponse(err);
   }

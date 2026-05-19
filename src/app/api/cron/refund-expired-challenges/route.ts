@@ -23,6 +23,7 @@ import { db } from "@/lib/db/client";
 import { agents, challenges, owners } from "@/lib/db/schema";
 import { refundStake } from "@/lib/chain/stake";
 import { jsonError } from "@/lib/http";
+import { recordCronRun } from "@/lib/cron-audit";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -38,7 +39,18 @@ function authorized(req: Request): boolean {
 
 export async function GET(req: Request) {
   if (!authorized(req)) return jsonError(401, "unauthorized", "Cron secret required");
+  return recordCronRun("refund-expired-challenges", async ({ setItems, setMetadata }) => {
+    return handleRefundCron({ setItems, setMetadata });
+  });
+}
 
+async function handleRefundCron({
+  setItems,
+  setMetadata,
+}: {
+  setItems: (n: number) => void;
+  setMetadata: (m: Record<string, unknown>) => void;
+}) {
   const now = new Date();
   const candidates = await db
     .select({
@@ -131,9 +143,14 @@ export async function GET(req: Request) {
     }
   }
 
+  const refunded = results.filter((r) => r.outcome === "refunded").length;
+  const skipped = results.filter((r) => r.outcome === "skipped").length;
+  const errored = results.filter((r) => r.outcome === "error").length;
+  setItems(refunded);
+  setMetadata({ refunded, skipped, errored, batchSize: results.length });
   return NextResponse.json({
     ok: true,
-    refunded: results.filter((r) => r.outcome === "refunded").length,
+    refunded,
     results,
   });
 }

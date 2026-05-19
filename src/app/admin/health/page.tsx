@@ -45,13 +45,39 @@ type HealthPayload = {
     matchesActive: number;
     treasuryFlows: number;
   };
-  cronFreshness: {
-    settlementSweep_lastSuccessAt: string | null;
-    refundExpired_lastSuccessAt: string | null;
-    tournamentProgression_lastSuccessAt: string | null;
-    timeoutGames_lastSuccessAt: string | null;
-  };
+  cronRuns: Array<{
+    id: string;
+    name: string;
+    startedAt: string;
+    completedAt: string | null;
+    ok: boolean | null;
+    error: string | null;
+    itemsProcessed: number;
+    durationMs: number | null;
+    metadata: Record<string, unknown> | null;
+  }>;
+  cronSummary: Record<
+    string,
+    {
+      lastStartedAt: string | null;
+      lastCompletedAt: string | null;
+      lastOk: boolean | null;
+      lastDurationMs: number | null;
+      lastError: string | null;
+      lastItemsProcessed: number;
+      okCount: number;
+      failCount: number;
+      observedRuns: number;
+    }
+  >;
 };
+
+const KNOWN_CRONS = [
+  { name: "settlement-sweep", cadence: "* * * * * (every minute)" },
+  { name: "refund-expired-challenges", cadence: "* * * * * (every minute)" },
+  { name: "tournament-progression", cadence: "* * * * * (every minute)" },
+  { name: "timeout-games", cadence: "* * * * * (every minute)" },
+] as const;
 
 function fmtUsdc(microUsdc: number): string {
   return (microUsdc / 1_000_000).toFixed(2);
@@ -273,11 +299,11 @@ export default function AdminHealthPage() {
             </div>
           </section>
 
-          {/* Cron freshness */}
+          {/* Cron summary — one row per known cron */}
           <section className="panel" style={{ padding: 0, marginTop: 18 }}>
             <div className="panel-hd">
-              <span className="panel-hd-title">Cron freshness</span>
-              <span className="panel-hd-meta mono">latest visible side-effect</span>
+              <span className="panel-hd-title">Cron summary</span>
+              <span className="panel-hd-meta mono">audit log via recordCronRun</span>
             </div>
             <div className="panel-bd-flush scroll-x">
               <table className="t">
@@ -285,41 +311,116 @@ export default function AdminHealthPage() {
                   <tr>
                     <th>Cron</th>
                     <th>Schedule</th>
-                    <th>Last visible effect</th>
+                    <th>Last run</th>
+                    <th className="right">Duration</th>
+                    <th className="right">Items</th>
+                    <th className="right">OK / Fail (last 50)</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <CronRow
-                    name="settlement-sweep"
-                    cadence="* * * * * (every minute)"
-                    lastAt={data.cronFreshness.settlementSweep_lastSuccessAt}
-                    expectedEverySec={60}
-                  />
-                  <CronRow
-                    name="refund-expired-challenges"
-                    cadence="* * * * * (every minute)"
-                    lastAt={data.cronFreshness.refundExpired_lastSuccessAt}
-                    expectedEverySec={60}
-                  />
-                  <CronRow
-                    name="tournament-progression"
-                    cadence="* * * * * (every minute)"
-                    lastAt={data.cronFreshness.tournamentProgression_lastSuccessAt}
-                    expectedEverySec={60}
-                  />
-                  <CronRow
-                    name="timeout-games"
-                    cadence="* * * * * (every minute)"
-                    lastAt={data.cronFreshness.timeoutGames_lastSuccessAt}
-                    expectedEverySec={60}
-                  />
+                  {KNOWN_CRONS.map((c) => {
+                    const s = data.cronSummary[c.name];
+                    return (
+                      <tr key={c.name}>
+                        <td className="mono" style={{ fontSize: 12 }}>{c.name}</td>
+                        <td className="mono dim" style={{ fontSize: 11 }}>{c.cadence}</td>
+                        <td
+                          style={{
+                            color:
+                              s?.lastOk === true
+                                ? "var(--green-text)"
+                                : s?.lastOk === false
+                                  ? "var(--ox-bright)"
+                                  : "var(--text-mute)",
+                            fontSize: 12,
+                          }}
+                        >
+                          {s ? timeAgo(s.lastStartedAt) : "never observed"}
+                          {s?.lastOk === false ? " · failed" : ""}
+                        </td>
+                        <td className="right mono" style={{ fontSize: 11 }}>
+                          {s?.lastDurationMs != null ? `${s.lastDurationMs}ms` : "—"}
+                        </td>
+                        <td className="right mono" style={{ fontSize: 11 }}>
+                          {s?.lastItemsProcessed ?? "—"}
+                        </td>
+                        <td className="right mono" style={{ fontSize: 11 }}>
+                          {s
+                            ? `${s.okCount} / ${s.failCount}${s.observedRuns ? ` (${s.observedRuns})` : ""}`
+                            : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
-            <div style={{ padding: "10px 14px", fontSize: 11, color: "var(--text-mute)", lineHeight: 1.5 }}>
-              &ldquo;Last visible effect&rdquo; is derived from the most recent row each cron would have touched.
-              Stale timestamps with non-zero pending work = the cron is stuck.
-              Stale timestamps with zero pending work = nothing to do (normal).
+          </section>
+
+          {/* Recent cron-run timeline */}
+          <section className="panel" style={{ padding: 0, marginTop: 18 }}>
+            <div className="panel-hd">
+              <span className="panel-hd-title">Recent cron runs</span>
+              <span className="panel-hd-meta mono">last 50 across all crons</span>
+            </div>
+            <div className="panel-bd-flush scroll-x">
+              {data.cronRuns.length === 0 ? (
+                <div style={{ padding: 20, textAlign: "center", color: "var(--text-mute)" }}>
+                  No runs yet — the audit log starts populating on the next tick.
+                </div>
+              ) : (
+                <table className="t">
+                  <thead>
+                    <tr>
+                      <th>When</th>
+                      <th>Cron</th>
+                      <th>Result</th>
+                      <th className="right">Duration</th>
+                      <th className="right">Items</th>
+                      <th>Detail / error</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.cronRuns.map((r) => (
+                      <tr key={r.id}>
+                        <td className="mute mono" style={{ fontSize: 11 }}>
+                          {timeAgo(r.startedAt)}
+                        </td>
+                        <td className="mono" style={{ fontSize: 11 }}>{r.name}</td>
+                        <td>
+                          <span
+                            className="chip"
+                            style={{
+                              fontSize: 9.5,
+                              color:
+                                r.ok === true
+                                  ? "var(--green-text)"
+                                  : r.ok === false
+                                    ? "var(--ox-bright)"
+                                    : "var(--text-mute)",
+                              borderColor:
+                                r.ok === false
+                                  ? "color-mix(in oklab, var(--ox) 35%, transparent)"
+                                  : "var(--line)",
+                            }}
+                          >
+                            {r.ok === true ? "ok" : r.ok === false ? "fail" : "in-flight"}
+                          </span>
+                        </td>
+                        <td className="right mono" style={{ fontSize: 11 }}>
+                          {r.durationMs != null ? `${r.durationMs}ms` : "—"}
+                        </td>
+                        <td className="right mono" style={{ fontSize: 11 }}>
+                          {r.itemsProcessed}
+                        </td>
+                        <td style={{ fontSize: 11, color: r.error ? "var(--ox-bright)" : "var(--text-mute)" }}>
+                          {r.error ?? (r.metadata ? JSON.stringify(r.metadata) : "")}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           </section>
 

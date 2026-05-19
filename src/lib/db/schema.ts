@@ -34,6 +34,7 @@ import {
   primaryKey,
   uniqueIndex,
   check,
+  boolean,
 } from "drizzle-orm/pg-core";
 
 // -----------------------------------------------------------------------------
@@ -537,6 +538,31 @@ export const tournamentMatches = pgTable(
       table.bracketPosition,
     ),
     index("tournament_matches_match_idx").on(table.matchId),
+  ],
+).enableRLS();
+
+// -----------------------------------------------------------------------------
+// cron_runs — one row per cron tick. Powers /admin/health observability +
+// retry decision logic. Bounded retention via a separate prune cron once
+// it gets large; for now we just write and let it grow.
+// -----------------------------------------------------------------------------
+
+export const cronRuns = pgTable(
+  "cron_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(), // e.g. 'settlement-sweep'
+    startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    ok: boolean("ok"),
+    error: text("error"),
+    itemsProcessed: integer("items_processed").default(0).notNull(),
+    durationMs: integer("duration_ms"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+  },
+  (table) => [
+    index("cron_runs_name_started_idx").on(table.name, table.startedAt),
+    index("cron_runs_started_idx").on(table.startedAt),
   ],
 ).enableRLS();
 

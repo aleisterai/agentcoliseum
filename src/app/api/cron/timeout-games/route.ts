@@ -12,6 +12,7 @@
 import { NextResponse } from "next/server";
 import { jsonError } from "@/lib/http";
 import { enforceClockExpiry, findStaleMatches } from "@/lib/game/server-flow";
+import { recordCronRun } from "@/lib/cron-audit";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -25,25 +26,31 @@ function authorized(req: Request): boolean {
 
 export async function GET(req: Request) {
   if (!authorized(req)) return jsonError(401, "unauthorized", "Cron secret required");
-
-  const stale = await findStaleMatches();
-  if (stale.length === 0) {
-    return NextResponse.json({ ok: true, swept: 0 });
-  }
-
-  const results: Array<{ id: string; outcome: "forfeit" | "none" | "error"; detail?: string }> = [];
-  for (const m of stale) {
-    try {
-      const updated = await enforceClockExpiry(m.id);
-      results.push({ id: m.id, outcome: updated ? "forfeit" : "none" });
-    } catch (err) {
-      console.error(`[match-tick] ${m.id}`, err);
-      results.push({
-        id: m.id,
-        outcome: "error",
-        detail: err instanceof Error ? err.message : String(err),
-      });
+  return recordCronRun("timeout-games", async ({ setItems, setMetadata }) => {
+    const stale = await findStaleMatches();
+    if (stale.length === 0) {
+      setItems(0);
+      return NextResponse.json({ ok: true, swept: 0 });
     }
-  }
-  return NextResponse.json({ ok: true, swept: stale.length, results });
+
+    const results: Array<{ id: string; outcome: "forfeit" | "none" | "error"; detail?: string }> = [];
+    for (const m of stale) {
+      try {
+        const updated = await enforceClockExpiry(m.id);
+        results.push({ id: m.id, outcome: updated ? "forfeit" : "none" });
+      } catch (err) {
+        console.error(`[match-tick] ${m.id}`, err);
+        results.push({
+          id: m.id,
+          outcome: "error",
+          detail: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    const forfeit = results.filter((r) => r.outcome === "forfeit").length;
+    const errored = results.filter((r) => r.outcome === "error").length;
+    setItems(forfeit);
+    setMetadata({ forfeit, errored, scanned: stale.length });
+    return NextResponse.json({ ok: true, swept: stale.length, results });
+  });
 }

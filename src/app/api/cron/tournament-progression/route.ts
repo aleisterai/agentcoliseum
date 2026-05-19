@@ -36,6 +36,7 @@ import { buildEngine } from "@/lib/game/engine";
 import { getAdapter } from "@/lib/game/registry";
 import { buildNextRound, totalRounds } from "@/lib/tournament";
 import { refundStake } from "@/lib/chain/stake";
+import { recordCronRun } from "@/lib/cron-audit";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -51,7 +52,18 @@ function authorized(req: Request): boolean {
 
 export async function GET(req: Request) {
   if (!authorized(req)) return jsonError(401, "unauthorized", "Cron secret required");
+  return recordCronRun("tournament-progression", async ({ setItems, setMetadata }) => {
+    return handleTournamentProgression({ setItems, setMetadata });
+  });
+}
 
+async function handleTournamentProgression({
+  setItems,
+  setMetadata,
+}: {
+  setItems: (n: number) => void;
+  setMetadata: (m: Record<string, unknown>) => void;
+}) {
   const running = await db
     .select()
     .from(tournaments)
@@ -82,6 +94,16 @@ export async function GET(req: Request) {
     }
   }
 
+  const advanced = summary.reduce((acc, s) => acc + s.advanced, 0);
+  const completed = summary.filter((s) => s.completed).length;
+  const erroredTournaments = summary.filter((s) => s.error).length;
+  setItems(advanced + completed);
+  setMetadata({
+    runningTournaments: running.length,
+    matchesAdvanced: advanced,
+    tournamentsCompleted: completed,
+    erroredTournaments,
+  });
   return NextResponse.json({ ok: true, processed: running.length, summary });
 }
 

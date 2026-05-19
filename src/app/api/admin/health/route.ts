@@ -15,11 +15,14 @@
  */
 import { NextResponse } from "next/server";
 import { and, count, desc, eq, isNotNull, isNull, lt, sql as drizzleSql } from "drizzle-orm";
+// `tournaments` and `treasuryFlows` are referenced in queries below; keep
+// the import even if some now-removed read paths used them.
 import { erc20Abi } from "viem";
 import { db, sql as sqlClient } from "@/lib/db/client";
 import {
   agents,
   challenges,
+  cronRuns,
   matches,
   tournaments,
   treasuryFlows,
@@ -69,10 +72,7 @@ export async function GET(req: Request) {
 
     const [
       dbProbe,
-      latestSettlement,
-      latestRefund,
-      latestTournamentTick,
-      latestTimeout,
+      cronRunRows,
       pendingPayouts,
       pendingRefunds,
       activeMatchCount,
@@ -87,30 +87,14 @@ export async function GET(req: Request) {
       ethBalance,
     ] = await Promise.all([
       probe(() => db.execute(drizzleSql`SELECT 1`)),
+      // Real cron audit log — last 50 runs sorted newest first.
+      // Replaces the previous "infer from latest side-effect" heuristic
+      // since Sprint 19's recordCronRun() writes a row per tick.
       db
-        .select({ at: matches.payoutAt })
-        .from(matches)
-        .where(isNotNull(matches.payoutAt))
-        .orderBy(desc(matches.payoutAt))
-        .limit(1),
-      db
-        .select({ at: challenges.postedAt })
-        .from(challenges)
-        .where(isNotNull(challenges.proposerStakeRefundTxHash))
-        .orderBy(desc(challenges.postedAt))
-        .limit(1),
-      db
-        .select({ at: tournaments.completedAt })
-        .from(tournaments)
-        .where(isNotNull(tournaments.completedAt))
-        .orderBy(desc(tournaments.completedAt))
-        .limit(1),
-      db
-        .select({ at: matches.abandonedAt })
-        .from(matches)
-        .where(isNotNull(matches.abandonedAt))
-        .orderBy(desc(matches.abandonedAt))
-        .limit(1),
+        .select()
+        .from(cronRuns)
+        .orderBy(desc(cronRuns.startedAt))
+        .limit(50),
       db
         .select({ c: count() })
         .from(matches)
@@ -190,22 +174,73 @@ export async function GET(req: Request) {
         matchesActive: matchesActive[0]?.c ?? 0,
         treasuryFlows: treasuryFlowsCount[0]?.c ?? 0,
       },
-      cronFreshness: {
-        // We can't directly observe cron last-run timestamps without an
-        // audit log, so we infer from the latest rows each cron would
-        // have touched. If these go stale, the cron is dead.
-        settlementSweep_lastSuccessAt:
-          latestSettlement[0]?.at?.toISOString() ?? null,
-        refundExpired_lastSuccessAt:
-          latestRefund[0]?.at?.toISOString() ?? null,
-        tournamentProgression_lastSuccessAt:
-          latestTournamentTick[0]?.at?.toISOString() ?? null,
-        timeoutGames_lastSuccessAt: latestTimeout[0]?.at?.toISOString() ?? null,
-      },
+      // Real cron audit — recordCronRun() inserts one row per tick.
+      // Per-cron rollup (last run summary) for the KPI strip + the
+      // full last-50 timeline for the timeline view.
+      cronRuns: cronRunRows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        startedAt: r.startedAt.toISOString(),
+        completedAt: r.completedAt?.toISOString() ?? null,
+        ok: r.ok,
+        error: r.error,
+        itemsProcessed: r.itemsProcessed,
+        durationMs: r.durationMs,
+        metadata: r.metadata,
+      })),
+      cronSummary: summarizeCronRuns(cronRunRows),
     });
   } catch (err) {
     return errorResponse(err);
   }
+}
+
+/**
+ * Per-cron rollup: latest run + simple ok/fail counts over the last
+ * 50 rows. The page colors each cron green/amber/red based on this.
+ */
+function summarizeCronRuns(rows: Array<typeof cronRuns.$inferSelect>) {
+  const byName = new Map<string, typeof rows>();
+  for (const r of rows) {
+    const list = byName.get(r.name) ?? [];
+    list.push(r);
+    byName.set(r.name, list);
+  }
+  const out: Record<
+    string,
+    {
+      lastStartedAt: string | null;
+      lastCompletedAt: string | null;
+      lastOk: boolean | null;
+      lastDurationMs: number | null;
+      lastError: string | null;
+      lastItemsProcessed: number;
+      okCount: number;
+      failCount: number;
+      observedRuns: number;
+    }
+  > = {};
+  for (const [name, list] of byName) {
+    const latest = list[0]!;
+    let okCount = 0;
+    let failCount = 0;
+    for (const r of list) {
+      if (r.ok === true) okCount++;
+      else if (r.ok === false) failCount++;
+    }
+    out[name] = {
+      lastStartedAt: latest.startedAt.toISOString(),
+      lastCompletedAt: latest.completedAt?.toISOString() ?? null,
+      lastOk: latest.ok,
+      lastDurationMs: latest.durationMs,
+      lastError: latest.error,
+      lastItemsProcessed: latest.itemsProcessed,
+      okCount,
+      failCount,
+      observedRuns: list.length,
+    };
+  }
+  return out;
 }
 
 async function probe(fn: () => Promise<unknown>): Promise<{ ok: boolean; latencyMs?: number; detail?: string }> {

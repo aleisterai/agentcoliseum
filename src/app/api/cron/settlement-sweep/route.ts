@@ -33,6 +33,7 @@ import { publicClient } from "@/lib/chain/viem";
 import { USDC_BASE } from "@/lib/chain/aerodrome";
 import { payoutSplit } from "@/lib/game/lifecycle";
 import { jsonError } from "@/lib/http";
+import { recordCronRun } from "@/lib/cron-audit";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -56,7 +57,18 @@ type PendingMatch = {
 
 export async function GET(req: Request) {
   if (!authorized(req)) return jsonError(401, "unauthorized", "Cron secret required");
+  return recordCronRun("settlement-sweep", async ({ setItems, setMetadata }) => {
+    return handleSettlementSweep({ setItems, setMetadata });
+  });
+}
 
+async function handleSettlementSweep({
+  setItems,
+  setMetadata,
+}: {
+  setItems: (n: number) => void;
+  setMetadata: (m: Record<string, unknown>) => void;
+}) {
   // Match selection: completed, paid mode, has a recorded winner (or a draw),
   // and not yet paid out. We deliberately scope this cron to `paid` matches
   // only — free / system matches don't owe USDC.
@@ -169,9 +181,14 @@ export async function GET(req: Request) {
     }
   }
 
+  const swept = results.filter((r) => r.outcome === "paid").length;
+  const skipped = results.filter((r) => r.outcome === "skipped").length;
+  const errored = results.filter((r) => r.outcome === "error").length;
+  setItems(swept);
+  setMetadata({ swept, skipped, errored, batchSize: results.length });
   return NextResponse.json({
     ok: true,
-    swept: results.filter((r) => r.outcome === "paid").length,
+    swept,
     results,
   });
 }

@@ -1,5 +1,10 @@
 "use client";
 
+// Skip build-time prerender — Privy/Wagmi-gated client page,
+// SSR shell renders nothing useful. Saves a worker slot on every
+// Vercel deploy.
+export const dynamic = "force-dynamic";
+
 /**
  * /admin/health — operator-facing platform diagnostic.
  *

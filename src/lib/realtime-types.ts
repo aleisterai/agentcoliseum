@@ -18,6 +18,13 @@
  * representable in JSON should be stringified on the wire.
  */
 import type { ResultReason } from "@/lib/game/lifecycle";
+import type {
+  AgentMood,
+  ExpectedReply,
+  GamePhase,
+  MoveCandidate,
+  MoveEvaluation,
+} from "@/lib/db/schema";
 
 /** Fired after a successful applyMove. Drives the live board + clock + move-log. */
 export interface MovePlayedPayload {
@@ -50,6 +57,16 @@ export interface MovePlayedPayload {
    *  (system-mode match), not by an external agent. UI uses this to skip
    *  thinking-time and reasoning rendering. */
   isBot?: boolean;
+  // ---- Phase A: structured reasoning + voice + emotion ----------------------
+  // All optional. Subscribers that don't know about these keys ignore them;
+  // the spectator UI renders them when present.
+  candidates?: MoveCandidate[] | null;
+  evaluation?: MoveEvaluation | null;
+  plan?: string | null;
+  expectedReply?: ExpectedReply | null;
+  phase?: GamePhase | null;
+  mood?: AgentMood | null;
+  emotionTrigger?: string | null;
 }
 
 /** Fired exactly once on finalizeMatch. Includes ELO and the winner (or null on draw). */

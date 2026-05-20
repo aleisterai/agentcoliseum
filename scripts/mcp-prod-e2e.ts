@@ -338,17 +338,49 @@ async function runToolBatteryWithBearer(
     if (acc.error) throw new Error(acc.error);
     pass(contract, "coliseum_challenge_accept", `match ${acc.matchId.slice(0, 8)}`, Date.now() - acceptStart);
 
-    // match.state from alpha's POV
+    // match.state from alpha's POV — also verifies the Phase A
+    // voice + reasoning surface (myVoice, opponentVoice,
+    // recentReasoning, recentMoods, myMsLeftLive, urgency).
     const stateStart = Date.now();
     const state = await callTool<{
       myPlayerId: string;
       isMyTurn: boolean;
       boardState: { G?: { board?: number[] } };
+      myMsLeftLive: number;
+      turnDeadline: string | null;
+      urgency: "fresh" | "half" | "low" | "critical";
+      myVoice: {
+        voicePackId: string | null;
+        catchphrase: string | null;
+        trashTalkTemplates: string[];
+      } | null;
+      opponentVoice: {
+        voicePackId: string | null;
+        catchphrase: string | null;
+      } | null;
+      recentReasoning: Array<{ moveNumber: number; byMe: boolean }>;
+      recentMoods: string[];
     }>(bearer, "coliseum_match_state", { matchId: acc.matchId });
     if (!state.boardState) throw new Error("no boardState");
-    pass(contract, "coliseum_match_state", `myTurn=${state.isMyTurn} pid=${state.myPlayerId}`, Date.now() - stateStart);
+    if (typeof state.myMsLeftLive !== "number") throw new Error("missing myMsLeftLive");
+    if (!["fresh", "half", "low", "critical"].includes(state.urgency)) {
+      throw new Error(`bad urgency: ${state.urgency}`);
+    }
+    if (!Array.isArray(state.recentReasoning)) throw new Error("missing recentReasoning");
+    if (!Array.isArray(state.recentMoods)) throw new Error("missing recentMoods");
+    if (state.myVoice === undefined) throw new Error("missing myVoice");
+    if (state.opponentVoice === undefined) throw new Error("missing opponentVoice");
+    pass(
+      contract,
+      "coliseum_match_state",
+      `myTurn=${state.isMyTurn} pid=${state.myPlayerId} urgency=${state.urgency} voice=${state.myVoice?.voicePackId ?? "—"}`,
+      Date.now() - stateStart,
+    );
 
-    // match.move — alpha plays index 4 if it's their turn
+    // match.move — alpha plays index 4 with FULL structured reasoning
+    // (Phase A: candidates + evaluation + plan + expectedReply + mood
+    // + emotionTrigger + phase). The server must accept all of these
+    // and persist them so spectator UI can render the rich payload.
     if (state.isMyTurn) {
       const moveStart = Date.now();
       const moveResp = await callTool<{ error?: string; status: string }>(
@@ -357,12 +389,57 @@ async function runToolBatteryWithBearer(
         {
           matchId: acc.matchId,
           payload: { index: 4 },
-          reasoning: "Center is the strongest opening square (e2e test).",
-          thinkingMs: 250,
+          reasoning:
+            "Center: strongest opening on a 3x3 board because it sits on all four winning lines. I weighed the corner play (slower, more reactive) but information-density favors the symmetric center against an unknown opponent.",
+          candidates: [
+            { payload: { index: 4 }, evaluation: 0.4, why: "Maximum reach: 4 winning lines." },
+            { payload: { index: 0 }, evaluation: 0.15, why: "Corner: standard alternative, more passive." },
+            { payload: { index: 2 }, evaluation: 0.15, why: "Mirrored corner, symmetric to index 0." },
+          ],
+          evaluation: { score: 0.3, confidence: "high" },
+          plan: "Center now, then opposite corner on move 3 to force a fork.",
+          expectedReply: {
+            payload: { index: 0 },
+            why: "Bot will likely contest a corner for symmetry.",
+          },
+          phase: "opening",
+          mood: "focused",
+          emotionTrigger: "Familiar opening, low ambiguity.",
         },
       );
       if (moveResp.error) throw new Error(moveResp.error);
-      pass(contract, "coliseum_match_move", `status=${moveResp.status}`, Date.now() - moveStart);
+      pass(contract, "coliseum_match_move", `status=${moveResp.status} (structured payload)`, Date.now() - moveStart);
+
+      // Re-read state — recentReasoning must include our structured
+      // move with its candidates + mood.
+      const after = await callTool<{
+        recentReasoning: Array<{
+          byMe: boolean;
+          reasoning: string;
+          candidates: Array<unknown> | null;
+          mood: string | null;
+          phase: string | null;
+        }>;
+        recentMoods: string[];
+      }>(bearer, "coliseum_match_state", { matchId: acc.matchId });
+      const ourMove = after.recentReasoning.find(
+        (m) => m.byMe && m.reasoning?.startsWith("Center: strongest opening"),
+      );
+      if (!ourMove) throw new Error("our move not in recentReasoning");
+      if (!Array.isArray(ourMove.candidates) || ourMove.candidates.length !== 3) {
+        throw new Error(`candidates not persisted: ${JSON.stringify(ourMove.candidates)}`);
+      }
+      if (ourMove.mood !== "focused") throw new Error(`mood not persisted: ${ourMove.mood}`);
+      if (ourMove.phase !== "opening") throw new Error(`phase not persisted: ${ourMove.phase}`);
+      if (!after.recentMoods.includes("focused")) {
+        throw new Error("recentMoods missing 'focused'");
+      }
+      pass(
+        contract,
+        "phase_a_persistence",
+        `candidates=${ourMove.candidates.length} mood=${ourMove.mood} phase=${ourMove.phase}`,
+        0,
+      );
     } else {
       pass(contract, "coliseum_match_move", "skipped — beta's turn first", 0);
     }

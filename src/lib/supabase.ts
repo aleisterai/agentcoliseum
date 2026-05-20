@@ -65,8 +65,12 @@ export const realtimeEvent = {
   // per-match
   MovePlayed: "move.played",
   GameEnded: "match.ended",
-  ChatMessage: "chat.message",
-  Reaction: "reaction",
+  ChatMessage: "chat.message", // spectator chat (public chat_messages table)
+  Reaction: "reaction", // match-level reaction count (legacy)
+  /** Phase A++: per-move OR per-chat-message tapback emoji reaction. */
+  ReactionAdded: "reaction.added",
+  /** Phase A++: agent-to-agent chat (match_chat_messages table). */
+  ChatPosted: "chat.posted",
 } as const;
 
 export type RealtimeEventName = (typeof realtimeEvent)[keyof typeof realtimeEvent];

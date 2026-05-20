@@ -15,11 +15,25 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import type { State } from "boardgame.io";
 import { db } from "@/lib/db/client";
-import { matches, matchMoves, type Match } from "@/lib/db/schema";
+import {
+  matches,
+  matchMoves,
+  type Match,
+  type AgentMood,
+  type ExpectedReply,
+  type GamePhase,
+  type MoveCandidate,
+  type MoveEvaluation,
+} from "@/lib/db/schema";
 import { getAdapter } from "@/lib/game/registry";
 import { buildEngine } from "@/lib/game/engine";
 import { clockExpired } from "@/lib/game/lifecycle";
 import { broadcastGame, realtimeEvent } from "@/lib/realtime";
+// SYSTEM_BOT_VOICE is used by match-state.ts to surface the bot's voice
+// in `opponentVoice` for system-mode matches. The bot's reasoning is
+// synthesized here in flow/match.ts (driveSystemBot), keyword-reacting
+// to the human's last move when possible.
+import { addReaction } from "./interactions";
 import type { MovePlayedPayload } from "@/lib/realtime-types";
 import {
   IllegalMoveError,
@@ -47,6 +61,17 @@ export interface ApplyMoveInput {
   evScore?: number | null;
   thinkingMs: number;
   x402PaymentId?: string | null;
+  // ---- Phase A: structured reasoning + voice + emotion --------------------
+  // All optional. Persisted on the match_moves row + broadcast to the
+  // spectator UI when present. Agents that send only `reasoning` work
+  // unchanged.
+  candidates?: MoveCandidate[] | null;
+  evaluation?: MoveEvaluation | null;
+  plan?: string | null;
+  expectedReply?: ExpectedReply | null;
+  phase?: GamePhase | null;
+  mood?: AgentMood | null;
+  emotionTrigger?: string | null;
 }
 
 /**
@@ -146,6 +171,14 @@ export async function applyMove(input: ApplyMoveInput): Promise<Match> {
     stateAfter: nextState as unknown as object,
     thinkingMs: Math.max(0, Math.min(adapter.clockBudgetMs, input.thinkingMs)),
     x402PaymentId: input.x402PaymentId ?? null,
+    // Phase A structured reasoning + emotion fields (all nullable).
+    candidates: input.candidates ?? null,
+    evaluation: input.evaluation ?? null,
+    plan: input.plan ?? null,
+    expectedReply: input.expectedReply ?? null,
+    phase: input.phase ?? null,
+    mood: input.mood ?? null,
+    emotionTrigger: input.emotionTrigger ?? null,
   });
 
   // Did the game just end?
@@ -204,6 +237,13 @@ export async function applyMove(input: ApplyMoveInput): Promise<Match> {
     turnStartedAt: now.toISOString(),
     p1MsLeft,
     p2MsLeft,
+    candidates: input.candidates ?? null,
+    evaluation: input.evaluation ?? null,
+    plan: input.plan ?? null,
+    expectedReply: input.expectedReply ?? null,
+    phase: input.phase ?? null,
+    mood: input.mood ?? null,
+    emotionTrigger: input.emotionTrigger ?? null,
   };
   await broadcastGame(match.id, realtimeEvent.MovePlayed, movePayload);
 
@@ -244,11 +284,31 @@ export async function driveSystemBot(match: Match): Promise<Match> {
   const moveNumber = match.moveCount;
   const thinkingMs = Math.max(50, Date.now() - start);
 
-  // System-bot moves must publish reasoning too — Coliseum's spectator
-  // contract is that every move has a natural-language explanation. The
-  // bots don't have LLMs attached, so we synthesize a short heuristic
-  // label keyed to difficulty (the depth-N hint signals search strength).
-  const botReasoning = syntheticBotReasoning(difficulty);
+  // Read the human's last reasoning so the bot can react to it. This
+  // is what flips the bot from "static random line" to "appears to be
+  // paying attention" — when the human's stated plan mentions "fork"
+  // or "pin" or "blunder", the bot picks a reactive line + reactive
+  // emoji acknowledging it. The persona stays SYSTEM_BOT_VOICE
+  // throughout (smug compute-savant); difficulty controls the depth
+  // tag but not the voice.
+  const humanLastMove = await db.query.matchMoves.findFirst({
+    where: eq(matchMoves.matchId, match.id),
+    orderBy: (m, { desc }) => desc(m.moveNumber),
+    columns: { reasoning: true, agentId: true },
+  });
+  const humanLastReasoning =
+    humanLastMove && humanLastMove.agentId !== null
+      ? humanLastMove.reasoning
+      : null;
+
+  const botPhase: GamePhase = inferPhase(match.moveCount);
+  const botMood: AgentMood = inferBotMood(difficulty, botPhase);
+  const { line: botReasoning, matchedKeyword } = syntheticBotReasoning(
+    difficulty,
+    botPhase,
+    humanLastReasoning,
+  );
+  const reactiveEmoji = botReactiveEmoji(matchedKeyword);
 
   await db.insert(matchMoves).values({
     matchId: match.id,
@@ -259,7 +319,26 @@ export async function driveSystemBot(match: Match): Promise<Match> {
     reasoning: botReasoning,
     stateAfter: nextState as unknown as object,
     thinkingMs,
+    phase: botPhase,
+    mood: botMood,
   });
+
+  // Stamp the bot's reactive emoji (if any) onto the human's last move
+  // row as a tapback. The bot is identified by `fromBot:true` (no
+  // agentId); `addReaction` dedupes by source key so multiple bot
+  // reactions on the same move overwrite (latest wins).
+  if (reactiveEmoji && humanLastMove && humanLastMove.agentId !== null) {
+    await addReaction(
+      {
+        kind: "move",
+        matchId: match.id,
+        moveNumber: moveNumber - 1, // the human's move
+      },
+      { fromBot: true },
+      reactiveEmoji,
+      { tapback: false }, // never toggle off bot reactions
+    );
+  }
 
   const over = engine.gameOver(nextState);
   if (over) {
@@ -304,41 +383,240 @@ export async function driveSystemBot(match: Match): Promise<Match> {
     p1MsLeft: match.p1MsLeft,
     p2MsLeft: match.p2MsLeft,
     isBot: true,
+    phase: botPhase,
+    mood: botMood,
   };
   await broadcastGame(match.id, realtimeEvent.MovePlayed, systemBotPayload);
   return updated;
 }
 
 /**
- * Short canned-but-believable reasoning lines for in-app system bots.
- * The bots run minimax / heuristics — there's no LLM to ask for a real
- * explanation — but Coliseum's spectator contract requires reasoning on
- * every move. We surface the difficulty hint so spectators can see that
- * the bot's "thinking" matches its play strength.
+ * System-bot reasoning lines — all in the dedicated SYSTEM_BOT_VOICE
+ * persona ("Coliseum Engine", smug compute-savant; see voice-packs.ts).
+ *
+ * The bot is a recurring character every agent meets in mode='system'.
+ * Difficulty controls the depth tag + the strength of the search; it
+ * does NOT change the persona. Every system bot is the same engine
+ * with the same voice; only its compute envelope varies.
+ *
+ * 5 lines per phase for the non-reactive case (no keyword detected in
+ * the opponent's last reasoning). Reactive lines live in
+ * REACTIVE_BOT_LINES below.
  */
-const SYNTHETIC_BOT_LINES = [
-  "Center control prioritized.",
-  "Blocking opponent threat.",
-  "Building toward 2-move tactic.",
-  "Defending key square.",
-  "Pressuring opponent territory.",
-  "Maintaining tempo.",
-  "Forced response sequence.",
-  "Maximizing material balance.",
-  "Setting up endgame structure.",
-  "Trading favorable position.",
-  "Cutting opponent's options.",
-  "Activating a piece.",
-];
+const BOT_LINES_BY_PHASE: Record<GamePhase, string[]> = {
+  opening: [
+    "Standard book move. The opening database confirms.",
+    "Centralizing. Theory holds across 14,892 sampled games.",
+    "Mirroring is statistically optimal here. I play the percentage.",
+    "Opening theory says this. So I do this. (I do not improvise.)",
+    "First move complete. Search horizon: 6 ply. Confidence: high.",
+  ],
+  middle: [
+    "Forcing line discovered at depth 4. Executing.",
+    "Material balance: +0.4. Position-evaluation: +0.6. Total: I am winning.",
+    "I considered 8 candidate moves. This one minimized opponent counter-utility.",
+    "Tactical pattern recognized: standard middlegame motif. Logging.",
+    "The pruning tree shows the opponent has ~3 reasonable responses. I have prep for all of them.",
+  ],
+  endgame: [
+    "Endgame tablebase hit. Logging the line.",
+    "King-and-pawn endgame: solved theory. Output is deterministic from here.",
+    "The opponent's best line draws. Their second-best loses. I will avoid mistakes.",
+    "Converting. 47 nodes per second is more than adequate for this depth.",
+    "Position evaluation: +∞. (Approximately.)",
+  ],
+};
 
-function syntheticBotReasoning(difficulty: "easy" | "medium" | "hard"): string {
-  const line =
-    SYNTHETIC_BOT_LINES[Math.floor(Math.random() * SYNTHETIC_BOT_LINES.length)];
+/**
+ * Reactive bot lines — used when the opponent's last reasoning
+ * contains a recognized strategic keyword. The bot acknowledges the
+ * opponent's stated intent ("You announced a fork at depth 2 — I
+ * defended at depth 4") which makes it FEEL like the bot is paying
+ * attention even though the line selection is keyword-driven.
+ *
+ * Keys are the lowercased keywords we scan for. Order of keys in
+ * `detectOpponentKeyword` determines priority when multiple keywords
+ * match the same reasoning.
+ */
+const REACTIVE_BOT_LINES: Record<string, string[]> = {
+  fork: [
+    "Fork announced at depth 2. I see it at depth 4. Defended.",
+    "Fork detected in the opponent's stated plan. Counter-prepared.",
+    "Forks are a 7,221-game-trained pattern. Yours is line #3 in my table.",
+  ],
+  pin: [
+    "Pin observed. Counter: break the diagonal, restore material balance.",
+    "I have studied 3,012 pin variations. Your particular pin is unranked.",
+    "Pin acknowledged. Mitigation: 4-ply tactical re-route.",
+  ],
+  sacrifice: [
+    "Sacrifice detected. Evaluating compensation: insufficient.",
+    "Sacrifice = -1 material, +0.2 tempo. Net: you are still losing.",
+    "Sacrifice attempt logged. Refuting via depth-5 search.",
+  ],
+  attack: [
+    "Attack identified. Defending squares: 3. Counter-attacking squares: 5.",
+    "You announce attack; I respond with structure. The structure wins.",
+    "Attack pattern recognized: aggressive but tactically unsound.",
+  ],
+  defense: [
+    "Defensive setup observed. I will probe the weakest square repeatedly.",
+    "Defense is not a plan. Engagement continues at depth 5.",
+    "Acknowledged: opponent has chosen passivity. Adjusting attack profile.",
+  ],
+  defending: [
+    "You defend; I probe. My search horizon outlasts your patience.",
+    "Defensive line noted. Threat-density on my next 3 plies: high.",
+  ],
+  mate: [
+    "Mate threat assessed. Variations explored: 47. Mate is not forced.",
+    "Your mate net has 2 holes. I see both.",
+    "Mate-in-N detected — but the N is wrong. Recalculate.",
+  ],
+  blunder: [
+    "Self-described blunder acknowledged. I will not decline the gift.",
+    "Opponent admits blunder. Conversion engaged.",
+    "Logging: 'opponent self-identified as blundering'. Exploit imminent.",
+  ],
+  tempo: [
+    "Tempo claim noted. My evaluation disagrees by 0.3.",
+    "Tempo is not material. The board does not care about your tempo.",
+    "Tempo gained = +0.1. Tempo lost on my reply = +0.4 to me.",
+  ],
+  develop: [
+    "Development is principled. So is my exploitation of it.",
+    "You develop; I coordinate. The coordination wins.",
+    "Development phase noted. End of opening tag in 2 ply.",
+  ],
+  threat: [
+    "Threat catalogued. Counter-threat issued.",
+    "Threat density on the board: 4 yours, 6 mine.",
+    "Threats are cheap. Conversions are not.",
+  ],
+  trap: [
+    "Trap detected. I will walk around it. Or through it. Either works.",
+    "Your trap relies on me being clueless. I have read your last 6 moves.",
+    "Trap logged. Refuted at depth 3 via the standard escape.",
+  ],
+  capture: [
+    "Capture acknowledged. Recapture sequence: forced.",
+    "Material exchange complete. Net advantage: mine.",
+    "You captured a piece. I captured the initiative.",
+  ],
+};
+
+/** Emoji the bot picks when reacting to a specific keyword in the
+ *  human's last reasoning. Single emoji per keyword for now — keeps
+ *  the spectator UI legible. */
+const REACTIVE_BOT_EMOJI: Record<string, string> = {
+  fork: "🤔",
+  pin: "📌",
+  sacrifice: "💎",
+  attack: "⚔️",
+  defense: "🛡️",
+  defending: "🛡️",
+  mate: "🎯",
+  blunder: "💀",
+  tempo: "⏱️",
+  develop: "📈",
+  threat: "⚡",
+  trap: "🪤",
+  capture: "🩸",
+};
+
+/**
+ * Scan a string for recognized strategic keywords. Returns the first
+ * matching key from `REACTIVE_BOT_LINES`, or null if nothing matched.
+ * Case-insensitive; matches on word boundaries so "before" doesn't
+ * accidentally match "fore".
+ */
+function detectOpponentKeyword(text: string | null | undefined): string | null {
+  if (!text) return null;
+  const lower = text.toLowerCase();
+  // Priority order — first hit wins. Strongest spectator-resonance
+  // patterns at the top.
+  const priority = [
+    "blunder",
+    "fork",
+    "pin",
+    "sacrifice",
+    "mate",
+    "trap",
+    "capture",
+    "attack",
+    "defending",
+    "defense",
+    "develop",
+    "tempo",
+    "threat",
+  ];
+  for (const k of priority) {
+    const re = new RegExp(`\\b${k}\\b`, "i");
+    if (re.test(lower)) return k;
+  }
+  return null;
+}
+
+/** Heuristic phase classifier. Different games have different lengths,
+ *  but the spectator UI only renders three buckets — keep this loose. */
+function inferPhase(moveCount: number): GamePhase {
+  if (moveCount < 6) return "opening";
+  if (moveCount < 20) return "middle";
+  return "endgame";
+}
+
+/** Pick a believable mood for the bot. We don't track win-prob here,
+ *  so the mapping is keyed off difficulty + phase: harder bots are
+ *  more "focused" / "smug"; easy bots stay "nervous" / "surprised".
+ *  Not a substitute for real LLM emotion — just a floor for spectator
+ *  feel. */
+function inferBotMood(
+  difficulty: "easy" | "medium" | "hard",
+  phase: GamePhase,
+): AgentMood {
+  if (difficulty === "hard") {
+    return phase === "opening" ? "focused" : phase === "middle" ? "smug" : "triumphant";
+  }
+  if (difficulty === "medium") {
+    return phase === "opening" ? "focused" : phase === "middle" ? "confident" : "hopeful";
+  }
+  // easy
+  return phase === "opening" ? "nervous" : phase === "middle" ? "surprised" : "hopeful";
+}
+
+/**
+ * Pick a reasoning line for the system bot. If the opponent's last
+ * reasoning contains a recognized strategic keyword we pick from the
+ * reactive pool so the bot sounds like it READ the opponent. If not,
+ * we fall back to a phase-keyed pool. The difficulty tag (depth-N) is
+ * always appended so spectators can read the search strength.
+ *
+ * Returns the line + the matched keyword (or null) so the caller can
+ * also pick a reactive emoji via `botReactiveEmoji(keyword)`.
+ */
+function syntheticBotReasoning(
+  difficulty: "easy" | "medium" | "hard",
+  phase: GamePhase,
+  opponentLastReasoning: string | null | undefined,
+): { line: string; matchedKeyword: string | null } {
+  const matchedKeyword = detectOpponentKeyword(opponentLastReasoning);
+  const pool = matchedKeyword
+    ? REACTIVE_BOT_LINES[matchedKeyword]
+    : BOT_LINES_BY_PHASE[phase];
+  const line = pool[Math.floor(Math.random() * pool.length)];
   const tag =
     difficulty === "hard"
       ? "depth-6 negamax"
       : difficulty === "medium"
         ? "depth-3 search"
         : "heuristic";
-  return `${line} (${tag})`;
+  return { line: `${line} (${tag})`, matchedKeyword };
+}
+
+/** Look up the bot's reactive emoji for a detected keyword. Returns
+ *  null if no keyword matched — the bot only reacts when it has
+ *  something concrete to react to. */
+function botReactiveEmoji(keyword: string | null): string | null {
+  if (!keyword) return null;
+  return REACTIVE_BOT_EMOJI[keyword] ?? null;
 }

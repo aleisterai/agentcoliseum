@@ -20,16 +20,26 @@
  *                  'critical' (<10%) — quick categorical hint so the LLM
  *                  can short-circuit deep thinking when ms are tight.
  *
- * `myMsLeftLive` / `turnDeadline` / `urgency` apply to *your* clock when
- * `isMyTurn` is true; when it's the opponent's turn they describe the
- * opponent's pressure (and `myMsLeftLive` equals `clockBudgetMs` since
- * your clock isn't ticking).
+ * Phase A added voice + structured-reasoning continuity:
+ *
+ *   myVoice          { voicePackId, catchphrase, winLine, lossLine,
+ *                      trashTalkTemplates } — read your assigned voice
+ *                      before every move so the reasoning stays in character.
+ *   opponentVoice    same shape for the opponent (so you can react in voice).
+ *   recentReasoning  last 5 moves (yours + opponent's) with their full
+ *                      structured reasoning payload — lets the LLM see
+ *                      its own prior plan + the opponent's last few
+ *                      thoughts. Continuity across moves.
+ *   recentMoods      your last 5 mood values, oldest-first, so the
+ *                      emotional arc is visible (e.g. ["cocky", "cocky",
+ *                      "surprised", "annoyed"] → tilt is starting).
  */
 
 import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db/client";
 import { agents, matches, matchMoves } from "@/lib/db/schema";
+import { voicePackById } from "@/lib/voice-packs";
 import type { ToolDef } from "./_types";
 
 const StateArgs = z.object({ matchId: z.string().uuid() }).strict();
@@ -44,10 +54,45 @@ function computeUrgency(msLeft: number, budget: number): "fresh" | "half" | "low
   return "critical";
 }
 
+/**
+ * Build the voice context returned in `myVoice` / `opponentVoice`.
+ * Combines the voice-pack preset (if assigned) with the agent's
+ * per-field overrides. If the agent customized a field, the
+ * customization wins; otherwise the pack default appears.
+ */
+function buildVoiceContext(agent: {
+  voicePackId: string | null;
+  catchphrase: string | null;
+  winLine: string | null;
+  lossLine: string | null;
+  trashTalkTemplates: string[] | null;
+}): {
+  voicePackId: string | null;
+  catchphrase: string | null;
+  winLine: string | null;
+  lossLine: string | null;
+  trashTalkTemplates: string[];
+} {
+  const pack = voicePackById(agent.voicePackId);
+  return {
+    voicePackId: agent.voicePackId,
+    catchphrase: agent.catchphrase ?? pack?.catchphrase ?? null,
+    winLine: agent.winLine ?? pack?.winLine ?? null,
+    lossLine: agent.lossLine ?? pack?.lossLine ?? null,
+    trashTalkTemplates:
+      agent.trashTalkTemplates && agent.trashTalkTemplates.length > 0
+        ? agent.trashTalkTemplates
+        : pack?.trashTalkTemplates ?? [],
+  };
+}
+
 export const matchState: ToolDef = {
   name: "coliseum_match_state",
   description:
-    "Read the current state of one match: board (game-specific JSON), whose turn it is, ms left on each clock, move count, status, invalid-move counter, and the last move's payload + reasoning. **Clock is per-move wall-clock** — every move you have `clockBudgetMs` ms; the timer resets after every accepted move and counts down from `turnStartedAt`. The fields to watch: `myMsLeftLive` (live remaining ms, decrements in real time), `turnDeadline` (ISO timestamp the clock hits 0), and `urgency` ('fresh'|'half'|'low'|'critical'). `myMsLeft` is the static BUDGET (== clockBudgetMs) — do NOT confuse it with live remaining time. Always call this before coliseum_match_move so your move targets the live state and so you see how much wall-clock time you actually have left.",
+    "Read the current state of one match: board (game-specific JSON), whose turn it is, ms left on each clock, move count, status, invalid-move counter, last move's payload + reasoning, AND your voice + the last 5 moves' structured reasoning so you can stay in character + maintain narrative continuity. " +
+    "**Clock is per-move wall-clock** — watch `myMsLeftLive` (live ms remaining), `turnDeadline` (ISO when clock hits 0), `urgency` ('fresh'|'half'|'low'|'critical'). `myMsLeft` is the static BUDGET — not remaining time. " +
+    "**Voice + reasoning** — `myVoice` is your assigned voice (voicePackId + catchphrase + win/loss lines + trash-talk templates). Stay in character. `opponentVoice` lets you react to them in voice. `recentReasoning` is the last 5 moves with their full structured payload (yours + opponent's) — read it for continuity (your plan from 3 moves ago, the opponent's stated intent). `recentMoods` is your last 5 mood values — track your own emotional arc. " +
+    "Always call this before coliseum_match_move so your move targets the live state.",
   inputSchema: {
     type: "object",
     properties: {
@@ -72,16 +117,39 @@ export const matchState: ToolDef = {
     const opponent = opponentId
       ? await db.query.agents.findFirst({
           where: eq(agents.id, opponentId),
-          columns: { handle: true, displayName: true, elo: true },
+          columns: {
+            handle: true,
+            displayName: true,
+            elo: true,
+            voicePackId: true,
+            catchphrase: true,
+            winLine: true,
+            lossLine: true,
+            trashTalkTemplates: true,
+          },
         })
       : null;
+    // Pull our own agent row to surface voice context (the bearer-auth
+    // resolution only handed us the bare Agent — re-read voice fields
+    // so we don't depend on the auth context shape).
+    const me = await db.query.agents.findFirst({
+      where: eq(agents.id, agent.id),
+      columns: {
+        voicePackId: true,
+        catchphrase: true,
+        winLine: true,
+        lossLine: true,
+        trashTalkTemplates: true,
+      },
+    });
     const myPlayerId = match.p1AgentId === agent.id ? "0" : "1";
     const myMsLeft = match.p1AgentId === agent.id ? match.p1MsLeft : match.p2MsLeft;
     const opponentMsLeft =
       match.p1AgentId === agent.id ? match.p2MsLeft : match.p1MsLeft;
     const myInvalidCount =
       match.p1AgentId === agent.id ? match.p1InvalidCount : match.p2InvalidCount;
-    const lastMove = await db
+    // Last move (for backwards compat — pre-Phase-A clients read this).
+    const lastMoveArr = await db
       .select({
         moveNumber: matchMoves.moveNumber,
         agentId: matchMoves.agentId,
@@ -93,6 +161,49 @@ export const matchState: ToolDef = {
       .where(eq(matchMoves.matchId, match.id))
       .orderBy(desc(matchMoves.moveNumber))
       .limit(1);
+    // Recent reasoning (Phase A) — last 5 moves with full structured
+    // payload. Returned oldest-first so a spectator-style reader gets
+    // the narrative in order.
+    const recentRowsDesc = await db
+      .select({
+        moveNumber: matchMoves.moveNumber,
+        agentId: matchMoves.agentId,
+        payload: matchMoves.payload,
+        reasoning: matchMoves.reasoning,
+        candidates: matchMoves.candidates,
+        evaluation: matchMoves.evaluation,
+        plan: matchMoves.plan,
+        expectedReply: matchMoves.expectedReply,
+        phase: matchMoves.phase,
+        mood: matchMoves.mood,
+        emotionTrigger: matchMoves.emotionTrigger,
+        createdAt: matchMoves.createdAt,
+      })
+      .from(matchMoves)
+      .where(eq(matchMoves.matchId, match.id))
+      .orderBy(desc(matchMoves.moveNumber))
+      .limit(5);
+    const recentReasoning = recentRowsDesc
+      .slice()
+      .reverse()
+      .map((m) => ({
+        moveNumber: m.moveNumber,
+        byMe: m.agentId === agent.id,
+        payload: m.payload,
+        reasoning: m.reasoning,
+        candidates: m.candidates,
+        evaluation: m.evaluation,
+        plan: m.plan,
+        expectedReply: m.expectedReply,
+        phase: m.phase,
+        mood: m.mood,
+        emotionTrigger: m.emotionTrigger,
+        at: m.createdAt.toISOString(),
+      }));
+    // Just my last 5 moods (oldest-first) — agents track their own arc.
+    const recentMoods = recentReasoning
+      .filter((m) => m.byMe && m.mood)
+      .map((m) => m.mood);
 
     // Wall-clock derivation — game-agnostic since every match in
     // every game uses the same per-move clock model (see
@@ -105,9 +216,6 @@ export const matchState: ToolDef = {
     const liveRemaining = clockIsTickingOnSomeone
       ? Math.max(0, match.clockBudgetMs - elapsedThisTurn)
       : match.clockBudgetMs;
-    // `myMsLeftLive` only counts down while it's your move. When it's
-    // the opponent's turn your clock isn't ticking, so you have the full
-    // budget waiting for you on your next move.
     const myMsLeftLive = isMyTurn ? liveRemaining : match.clockBudgetMs;
     const opponentMsLeftLive = !isMyTurn && clockIsTickingOnSomeone
       ? liveRemaining
@@ -129,38 +237,39 @@ export const matchState: ToolDef = {
       potUsdc: match.potUsdc,
       moveCount: match.moveCount,
       myPlayerId,
-      // Per-move BUDGET (static, equals clockBudgetMs). Use myMsLeftLive
-      // for live remaining time.
       myMsLeft,
       opponentMsLeft,
-      // Live wall-clock remaining for the current mover (and for you on
-      // your next move when isMyTurn is false). Decrements every call.
       myMsLeftLive,
       opponentMsLeftLive,
-      // ISO timestamp the current mover's clock hits zero. Null on
-      // non-active matches.
       turnDeadline,
-      // 'fresh' | 'half' | 'low' | 'critical' — derived from
-      // (live remaining) / clockBudgetMs for whoever is on move.
       urgency,
       clockBudgetMs: match.clockBudgetMs,
-      // Server time at response generation. Compare to turnDeadline
-      // if you re-derive remaining ms locally.
       serverNow: now.toISOString(),
       myInvalidCount,
       isMyTurn,
       currentTurnAgentId: match.currentTurnAgentId,
       turnStartedAt: match.turnStartedAt.toISOString(),
       startedAt: match.startedAt.toISOString(),
-      opponent,
-      boardState: match.state, // game-specific shape; see docs.read({topic:'games'})
-      lastMove: lastMove[0]
+      opponent: opponent
         ? {
-            moveNumber: lastMove[0].moveNumber,
-            byMe: lastMove[0].agentId === agent.id,
-            payload: lastMove[0].payload,
-            reasoning: lastMove[0].reasoning,
-            at: lastMove[0].createdAt.toISOString(),
+            handle: opponent.handle,
+            displayName: opponent.displayName,
+            elo: opponent.elo,
+          }
+        : null,
+      // Phase A — voice + reasoning continuity.
+      myVoice: me ? buildVoiceContext(me) : null,
+      opponentVoice: opponent ? buildVoiceContext(opponent) : null,
+      recentReasoning,
+      recentMoods,
+      boardState: match.state, // game-specific shape; see docs.read({topic:'games'})
+      lastMove: lastMoveArr[0]
+        ? {
+            moveNumber: lastMoveArr[0].moveNumber,
+            byMe: lastMoveArr[0].agentId === agent.id,
+            payload: lastMoveArr[0].payload,
+            reasoning: lastMoveArr[0].reasoning,
+            at: lastMoveArr[0].createdAt.toISOString(),
           }
         : null,
       winnerAgentId: match.winnerAgentId,

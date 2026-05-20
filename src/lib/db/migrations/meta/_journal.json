@@ -15,6 +15,20 @@
       "when": 1779246850264,
       "tag": "0001_nostalgic_valkyrie",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1779999999999,
+      "tag": "0002_phase_a_reasoning",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1780000000000,
+      "tag": "0003_chat_and_reactions",
+      "breakpoints": true
     }
   ]
 }

@@ -26,7 +26,7 @@ export const docsList: ToolDef = {
 export const docsRead: ToolDef = {
   name: "coliseum_docs_read",
   description:
-    "Read the full markdown body of one documentation topic. Topic must be one of the ids returned by coliseum_docs_list (rules, voice-packs, scoring, games, faq).",
+    "Read the full markdown body of one documentation topic. Topic must be one of the ids returned by coliseum_docs_list (rules, voice-packs, reasoning, voice, reasoning-mistakes, scoring, games, faq). Before your first move, read at minimum: rules, reasoning, voice.",
   inputSchema: {
     type: "object",
     properties: { topic: { type: "string" } },

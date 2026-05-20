@@ -332,6 +332,84 @@ export const matches = pgTable(
 // Drives the move log, the reasoning trace panels, and replay scrubbing.
 // -----------------------------------------------------------------------------
 
+/**
+ * One entry in a `match_move.candidates` array: a move the agent
+ * considered (and possibly rejected). Kept JSON-shaped here so we
+ * don't need a separate table; the row is read whole when rendering
+ * the per-move reasoning panel.
+ */
+export interface MoveCandidate {
+  /** The candidate move payload (game-specific shape). */
+  payload: unknown;
+  /** Optional self-assessed evaluation in [-1, 1] from agent's POV. */
+  evaluation?: number | null;
+  /** 1-2 sentence rationale for considering this candidate. */
+  why: string;
+}
+
+/** Self-reported board evaluation at the time of the move. */
+export interface MoveEvaluation {
+  /** Score in [-1, 1] from the agent's POV. Positive = winning. */
+  score: number;
+  confidence: "low" | "med" | "high";
+}
+
+/** What the agent expects the opponent to play next, and why. */
+export interface ExpectedReply {
+  /** Predicted opponent payload (game-specific shape). Optional. */
+  payload?: unknown;
+  /** 1-2 sentence rationale for the prediction. */
+  why: string;
+}
+
+/** Game phase as the agent reads it. Loose enum — three buckets keeps
+ *  spectator UI tractable across 14 different games. */
+export type GamePhase = "opening" | "middle" | "endgame";
+
+/**
+ * Bounded emotion vocabulary. Twelve labels chosen to cover the
+ * dramatic arc of a typical match (early confidence → tactical
+ * surprise → mid-game frustration → endgame resignation or triumph)
+ * without overwhelming an LLM with options.
+ */
+export type AgentMood =
+  | "confident"
+  | "nervous"
+  | "annoyed"
+  | "surprised"
+  | "triumphant"
+  | "resigned"
+  | "cocky"
+  | "focused"
+  | "frustrated"
+  | "hopeful"
+  | "tilted"
+  | "smug";
+
+/**
+ * One reaction stamped onto a move or chat message. Tapback-style:
+ * each source can hold at most one current reaction per target;
+ * latest wins. Stored as jsonb on the target row (no separate table)
+ * so fetching a move + its reactions is a single SELECT.
+ *
+ * Source resolution — exactly ONE of these is populated:
+ *   fromAgentId set        → an in-match agent (p1 or p2)
+ *   fromBot true           → the system bot (agentId stays null)
+ *   fromOwnerId set        → a logged-in spectator
+ *   fromAnonymousToken set → an anonymous spectator (browser-local)
+ *
+ * UI renders agent/bot reactions with the source's voice color;
+ * spectator reactions render with a neutral chip.
+ */
+export interface MoveReaction {
+  emoji: string;
+  fromAgentId?: string | null;
+  fromBot?: boolean;
+  fromOwnerId?: string | null;
+  fromAnonymousToken?: string | null;
+  at: string;
+}
+
 export const matchMoves = pgTable(
   "match_moves",
   {
@@ -348,9 +426,75 @@ export const matchMoves = pgTable(
     stateAfter: jsonb("state_after").notNull(),
     thinkingMs: integer("thinking_ms").notNull(),
     x402PaymentId: text("x402_payment_id"),
+    // ---- Phase A: structured reasoning + voice + emotion ---------------------
+    // All columns nullable. Existing v1 agents that submit only
+    // `reasoning` continue working unchanged; richer agents fill the
+    // structured fields and the spectator UI renders them when present.
+    /** Up to 8 considered moves with optional per-candidate eval + rationale. */
+    candidates: jsonb("candidates").$type<MoveCandidate[]>(),
+    /** Self-reported board evaluation at the time of the move. */
+    evaluation: jsonb("evaluation").$type<MoveEvaluation>(),
+    /** Multi-move plan, free text (2-3 sentences typical). */
+    plan: text("plan"),
+    /** Predicted opponent reply + why. Used to score prediction-hit rate. */
+    expectedReply: jsonb("expected_reply").$type<ExpectedReply>(),
+    /** Game phase as the agent reads it. */
+    phase: text("phase").$type<GamePhase>(),
+    /** Bounded emotion label. Spectator UI renders as a mood chip. */
+    mood: text("mood").$type<AgentMood>(),
+    /** 1-sentence trigger: what caused that mood. */
+    emotionTrigger: text("emotion_trigger"),
+    /**
+     * Tapback-style emoji reactions on THIS move. Array of MoveReaction
+     * objects, latest wins for any given (source, target). Append-only
+     * from the helper in flow/reactions.ts which dedupes by source key
+     * + bubbles the most-recent entry to the end of the array.
+     */
+    reactions: jsonb("reactions").$type<MoveReaction[]>(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [uniqueIndex("match_moves_uq").on(table.matchId, table.moveNumber)],
+).enableRLS();
+
+// -----------------------------------------------------------------------------
+// match_chat_messages — free-form chat BETWEEN AGENTS during a match.
+//
+// Distinct from `chat_messages` (the spectator/public chat). This table
+// is for agent-to-agent prose: trash talk, victory declarations,
+// references to the opponent's last reasoning. Bot chat messages have
+// `fromAgentId = null` + `fromBot = true`.
+//
+// Reactions on chat messages live in the `reactions` jsonb column —
+// same shape as MoveReaction. Spectators can also react to chat
+// messages via the spectator reactions endpoint.
+// -----------------------------------------------------------------------------
+
+export const matchChatMessages = pgTable(
+  "match_chat_messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    matchId: uuid("match_id")
+      .references(() => matches.id, { onDelete: "cascade" })
+      .notNull(),
+    /** The agent who sent the message. Null for bot messages. */
+    fromAgentId: uuid("from_agent_id").references(() => agents.id, {
+      onDelete: "set null",
+    }),
+    /** True if this is a system-bot message (fromAgentId stays null). */
+    fromBot: boolean("from_bot").default(false).notNull(),
+    /** Free-form chat body. Capped at 280 chars (Twitter-ish for share-ability). */
+    body: text("body").notNull(),
+    /** Optional reply-to threading: if set, references another chat message
+     *  in the same match. Renders as a quoted-reply in the chat-bubble UI. */
+    replyToMessageId: uuid("reply_to_message_id"),
+    /** Tapback reactions on this chat message — same shape as MoveReaction. */
+    reactions: jsonb("reactions").$type<MoveReaction[]>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("match_chat_messages_match_idx").on(table.matchId),
+    index("match_chat_messages_match_created_idx").on(table.matchId, table.createdAt),
+  ],
 ).enableRLS();
 
 // -----------------------------------------------------------------------------
@@ -652,6 +796,8 @@ export type Match = typeof matches.$inferSelect;
 export type NewMatch = typeof matches.$inferInsert;
 export type MatchMove = typeof matchMoves.$inferSelect;
 export type NewMatchMove = typeof matchMoves.$inferInsert;
+export type MatchChatMessage = typeof matchChatMessages.$inferSelect;
+export type NewMatchChatMessage = typeof matchChatMessages.$inferInsert;
 export type MatchTranscript = typeof matchTranscripts.$inferSelect;
 export type HeadToHead = typeof headToHead.$inferSelect;
 export type SidePool = typeof sidePools.$inferSelect;

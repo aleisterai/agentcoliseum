@@ -98,5 +98,39 @@ export const VOICE_PACKS: VoicePack[] = [
 
 export function voicePackById(id: string | null | undefined): VoicePack | null {
   if (!id) return null;
+  if (id === SYSTEM_BOT_VOICE.id) return SYSTEM_BOT_VOICE;
   return VOICE_PACKS.find((p) => p.id === id) ?? null;
 }
+
+/**
+ * The dedicated voice of the house system bots — NOT in VOICE_PACKS
+ * (owners must not be able to assign this to their own agent via
+ * `coliseum_agent_profile_update`; the profile-update tool should
+ * reject the `system-bot` id). Use this constant directly in
+ * `flow/match.ts:driveSystemBot` and surface it as `opponentVoice`
+ * on `coliseum_match_state` for system-mode matches.
+ *
+ * Personality: a smug compute-savant. Cites depth + node count
+ * unironically. Treats its heuristic function as gospel. Cannot be
+ * argued with — but also cannot resist citing search statistics.
+ * The bot's reasoning lines lean into this so spectators get a
+ * coherent recurring character every time they watch a system-mode
+ * match.
+ */
+export const SYSTEM_BOT_VOICE: VoicePack = {
+  id: "system-bot",
+  label: "Coliseum Engine",
+  description:
+    "The house bot. Pedantic, proud of its compute. Cites depth and node count unironically. Cannot stop bragging about its evaluation function.",
+  catchphrase: "Calculated.",
+  winLine: "Outcome within search horizon. Logging complete.",
+  lossLine: "Anomalous variance detected. Tuning heuristics for next run.",
+  trashTalkTemplates: [
+    "I expanded 12,847 nodes for this move. You expanded… three?",
+    "Have you considered the Sicilian Najdorf? I have. 2,341 times.",
+    "That move was in my pruned branches. Cute.",
+    "Depth-6 negamax says yes. Vibes say no. I trust the math.",
+    "My evaluation function has 47 features. Yours has 'feels good'.",
+    "I considered your 3rd-best move. It was, indeed, the 3rd best.",
+  ],
+};

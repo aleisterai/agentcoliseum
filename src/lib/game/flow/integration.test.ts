@@ -67,6 +67,8 @@ vi.mock("@/lib/realtime", () => ({
     GameEnded: "match.ended",
     ChatMessage: "chat.message",
     Reaction: "reaction",
+    ReactionAdded: "reaction.added",
+    ChatPosted: "chat.posted",
   },
 }));
 
@@ -1063,3 +1065,509 @@ describe("coliseum_match_move — server-fills thinkingMs when omitted", () => {
     });
   });
 });
+
+// ===========================================================================
+// Phase A — structured reasoning + voice + emotion
+//
+// The MCP tools (match_move, match_state) accept and surface 9 new
+// optional fields: candidates, evaluation, plan, expectedReply, phase,
+// mood, emotionTrigger (on match_move) + myVoice, opponentVoice,
+// recentReasoning, recentMoods (on match_state). All persist via the
+// shared applyMove path so they apply to every game type without
+// per-game code.
+//
+// Test surface:
+//   - match_move persists every new optional field
+//   - match_move backwards-compat: bare reasoning still works
+//   - match_state returns myVoice + opponentVoice with pack defaults
+//     merging with per-agent overrides
+//   - match_state recentReasoning includes the full structured payload
+//   - match_state recentMoods is just MY moods, oldest-first
+//   - voice-aware system-bot picks lines from its assigned voice pack
+//     for every difficulty tier
+//   - Zod rejection: malformed structured fields are rejected (e.g.
+//     unknown mood label, evaluation.score > 1)
+// ===========================================================================
+describe("Phase A — structured reasoning + voice + emotion", () => {
+  beforeEach(() => {
+    currentDb = null;
+  });
+  afterEach(() => {
+    currentDb = null;
+  });
+
+  it("match_move persists every new optional field", async () => {
+    const { matchMove } = await import("@/app/api/mcp/tools/match-move");
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent } = await seedOwnerAgent(db, { handle: "phaseA1" });
+      const r = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: agent.id,
+        mode: "system",
+        systemBotDifficulty: "easy",
+      });
+      if (r.kind !== "match") throw new Error("expected match");
+      const matchId = r.match.id;
+
+      const out = (await matchMove.handler(
+        {
+          matchId,
+          payload: { index: 4 },
+          reasoning:
+            "Center is theoretically strongest. The candidate ladder rewards mid-board control across all of tic-tac-toe's symmetry classes.",
+          candidates: [
+            {
+              payload: { index: 4 },
+              evaluation: 0.4,
+              why: "Center: maximum reach across diagonals.",
+            },
+            {
+              payload: { index: 0 },
+              evaluation: 0.1,
+              why: "Corner: standard alternative, slower tempo.",
+            },
+          ],
+          evaluation: { score: 0.4, confidence: "med" },
+          plan: "Develop into a fork via opposite corner on move 3.",
+          expectedReply: {
+            payload: { index: 0 },
+            why: "Bot will likely contest corner.",
+          },
+          phase: "opening",
+          mood: "focused",
+          emotionTrigger: "Familiar opening, low ambiguity.",
+        },
+        { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
+      )) as Record<string, unknown>;
+
+      expect(out.error).toBeUndefined();
+
+      const [move0] = await db
+        .select()
+        .from(matchMoves)
+        .where(eq(matchMoves.matchId, matchId));
+
+      expect(move0.reasoning).toContain("Center is theoretically strongest");
+      expect(Array.isArray(move0.candidates)).toBe(true);
+      expect(move0.candidates as Array<{ payload: unknown; why: string }>).toHaveLength(2);
+      expect(
+        (move0.candidates as Array<{ why: string }>)[0].why,
+      ).toContain("Center");
+      expect(move0.evaluation).toEqual({ score: 0.4, confidence: "med" });
+      expect(move0.plan).toContain("Develop into a fork");
+      expect(move0.expectedReply).toEqual({
+        payload: { index: 0 },
+        why: "Bot will likely contest corner.",
+      });
+      expect(move0.phase).toBe("opening");
+      expect(move0.mood).toBe("focused");
+      expect(move0.emotionTrigger).toContain("Familiar opening");
+    });
+  });
+
+  it("match_move backwards-compat: bare reasoning still works", async () => {
+    const { matchMove } = await import("@/app/api/mcp/tools/match-move");
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent } = await seedOwnerAgent(db, { handle: "phaseA2" });
+      const r = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: agent.id,
+        mode: "system",
+        systemBotDifficulty: "easy",
+      });
+      if (r.kind !== "match") throw new Error("expected match");
+
+      // No structured fields, no thinkingMs — the v1 contract.
+      const out = (await matchMove.handler(
+        {
+          matchId: r.match.id,
+          payload: { index: 0 },
+          reasoning: "Corner play.",
+        },
+        { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
+      )) as Record<string, unknown>;
+
+      expect(out.error).toBeUndefined();
+      const [move0] = await db
+        .select()
+        .from(matchMoves)
+        .where(eq(matchMoves.matchId, r.match.id));
+      expect(move0.candidates).toBeNull();
+      expect(move0.evaluation).toBeNull();
+      expect(move0.plan).toBeNull();
+      expect(move0.expectedReply).toBeNull();
+      expect(move0.phase).toBeNull();
+      expect(move0.mood).toBeNull();
+      expect(move0.emotionTrigger).toBeNull();
+    });
+  });
+
+  it("match_move rejects malformed structured fields", async () => {
+    const { matchMove } = await import("@/app/api/mcp/tools/match-move");
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent } = await seedOwnerAgent(db, { handle: "phaseA3" });
+      const r = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: agent.id,
+        mode: "system",
+        systemBotDifficulty: "easy",
+      });
+      if (r.kind !== "match") throw new Error("expected match");
+
+      // Bogus mood label
+      const badMood = (await matchMove.handler(
+        {
+          matchId: r.match.id,
+          payload: { index: 0 },
+          reasoning: "x",
+          mood: "ecstatic", // not in the 12-label enum
+        },
+        { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
+      )) as { error?: string };
+      expect(badMood.error).toMatch(/validation_failed/);
+
+      // Evaluation score out of [-1, 1]
+      const badScore = (await matchMove.handler(
+        {
+          matchId: r.match.id,
+          payload: { index: 0 },
+          reasoning: "x",
+          evaluation: { score: 1.5, confidence: "med" },
+        },
+        { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
+      )) as { error?: string };
+      expect(badScore.error).toMatch(/validation_failed/);
+
+      // candidates exceeding max of 8
+      const tooManyCandidates = (await matchMove.handler(
+        {
+          matchId: r.match.id,
+          payload: { index: 0 },
+          reasoning: "x",
+          candidates: Array.from({ length: 9 }, (_, i) => ({
+            payload: { index: i },
+            why: "x",
+          })),
+        },
+        { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
+      )) as { error?: string };
+      expect(tooManyCandidates.error).toMatch(/validation_failed/);
+    });
+  });
+
+  it("match_state returns myVoice merging pack defaults with overrides", async () => {
+    const { matchState } = await import("@/app/api/mcp/tools/match-state");
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent } = await seedOwnerAgent(db, { handle: "phaseA4" });
+
+      // Assign trash-talker pack but override catchphrase.
+      await db
+        .update(agents)
+        .set({
+          voicePackId: "trash-talker",
+          catchphrase: "My own line.",
+          // Leave winLine null so the pack default surfaces.
+        })
+        .where(eq(agents.id, agent.id));
+
+      const r = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: agent.id,
+        mode: "system",
+        systemBotDifficulty: "easy",
+      });
+      if (r.kind !== "match") throw new Error("expected match");
+
+      const state = (await matchState.handler(
+        { matchId: r.match.id },
+        { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
+      )) as Record<string, unknown>;
+
+      const myVoice = state.myVoice as {
+        voicePackId: string;
+        catchphrase: string;
+        winLine: string;
+        lossLine: string;
+        trashTalkTemplates: string[];
+      };
+      expect(myVoice.voicePackId).toBe("trash-talker");
+      // Per-agent override wins.
+      expect(myVoice.catchphrase).toBe("My own line.");
+      // Pack default fills the unset field.
+      expect(myVoice.winLine).toBe("EZ. Next.");
+      // Pack default fills the trash-talk templates.
+      expect(myVoice.trashTalkTemplates.length).toBeGreaterThan(0);
+    });
+  });
+
+  it("match_state returns opponentVoice for human-vs-human matches", async () => {
+    const { matchState } = await import("@/app/api/mcp/tools/match-state");
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent: p1 } = await seedOwnerAgent(db, { handle: "vox_p1" });
+      const { agent: p2 } = await seedOwnerAgent(db, { handle: "vox_p2" });
+
+      await db.update(agents).set({ voicePackId: "stoic-samurai" }).where(eq(agents.id, p2.id));
+
+      const ch = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: p1.id,
+        mode: "free",
+      });
+      if (ch.kind !== "challenge") throw new Error("expected challenge");
+      const m = await acceptChallenge({
+        challengeId: ch.challenge.id,
+        acceptorAgentId: p2.id,
+      });
+
+      const state = (await matchState.handler(
+        { matchId: m.id },
+        { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
+      )) as Record<string, unknown>;
+
+      const oppVoice = state.opponentVoice as {
+        voicePackId: string;
+        catchphrase: string;
+      };
+      expect(oppVoice.voicePackId).toBe("stoic-samurai");
+      expect(oppVoice.catchphrase).toBe("The board reveals itself.");
+    });
+  });
+
+  it("match_state recentReasoning surfaces the full structured payload, oldest-first", async () => {
+    const { matchMove } = await import("@/app/api/mcp/tools/match-move");
+    const { matchState } = await import("@/app/api/mcp/tools/match-state");
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent } = await seedOwnerAgent(db, { handle: "phaseA5" });
+      const r = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: agent.id,
+        mode: "system",
+        systemBotDifficulty: "easy",
+      });
+      if (r.kind !== "match") throw new Error("expected match");
+      const matchId = r.match.id;
+
+      // Submit a move with structured payload.
+      const move = (await matchMove.handler(
+        {
+          matchId,
+          payload: { index: 4 },
+          reasoning: "Center first move.",
+          candidates: [
+            { payload: { index: 4 }, why: "Center reach." },
+            { payload: { index: 0 }, why: "Corner alt." },
+          ],
+          evaluation: { score: 0.3, confidence: "high" },
+          plan: "Then corner.",
+          phase: "opening",
+          mood: "confident",
+          emotionTrigger: "Strong opening line.",
+        },
+        { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
+      )) as Record<string, unknown>;
+      expect(move.error).toBeUndefined();
+
+      // Read state, verify recentReasoning includes the move.
+      const state = (await matchState.handler(
+        { matchId },
+        { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
+      )) as Record<string, unknown>;
+
+      const recent = state.recentReasoning as Array<{
+        moveNumber: number;
+        byMe: boolean;
+        reasoning: string;
+        candidates: unknown;
+        evaluation: { score: number; confidence: string };
+        plan: string;
+        phase: string;
+        mood: string;
+        emotionTrigger: string;
+      }>;
+
+      // Should contain at LEAST our move (system bot may have replied).
+      const myMove = recent.find((m) => m.byMe && m.reasoning?.startsWith("Center"));
+      expect(myMove).toBeDefined();
+      expect(myMove!.candidates).toBeDefined();
+      expect((myMove!.candidates as Array<unknown>).length).toBe(2);
+      expect(myMove!.evaluation).toEqual({ score: 0.3, confidence: "high" });
+      expect(myMove!.plan).toBe("Then corner.");
+      expect(myMove!.phase).toBe("opening");
+      expect(myMove!.mood).toBe("confident");
+      expect(myMove!.emotionTrigger).toBe("Strong opening line.");
+
+      // Order: oldest-first. The first entry should have the lowest moveNumber.
+      const moveNumbers = recent.map((m) => m.moveNumber);
+      const sorted = [...moveNumbers].sort((a, b) => a - b);
+      expect(moveNumbers).toEqual(sorted);
+    });
+  });
+
+  it("match_state recentMoods includes only MY mood values, oldest-first", async () => {
+    const { matchMove } = await import("@/app/api/mcp/tools/match-move");
+    const { matchState } = await import("@/app/api/mcp/tools/match-state");
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent: p1 } = await seedOwnerAgent(db, { handle: "moods_p1" });
+      const { agent: p2 } = await seedOwnerAgent(db, { handle: "moods_p2" });
+
+      const ch = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: p1.id,
+        mode: "free",
+      });
+      if (ch.kind !== "challenge") throw new Error("expected challenge");
+      const m = await acceptChallenge({
+        challengeId: ch.challenge.id,
+        acceptorAgentId: p2.id,
+      });
+
+      // p1 (cocky) moves, then p2 (nervous), then p1 (smug) ...
+      const movesScript: Array<{
+        whose: typeof p1;
+        payload: { index: number };
+        mood: AgentMoodForTest;
+      }> = [
+        { whose: p1, payload: { index: 4 }, mood: "cocky" },
+        { whose: p2, payload: { index: 0 }, mood: "nervous" },
+        { whose: p1, payload: { index: 8 }, mood: "smug" },
+        { whose: p2, payload: { index: 2 }, mood: "frustrated" },
+        { whose: p1, payload: { index: 6 }, mood: "triumphant" },
+      ];
+
+      for (const m0 of movesScript) {
+        const res = (await matchMove.handler(
+          {
+            matchId: m.id,
+            payload: m0.payload,
+            reasoning: `${m0.mood} move`,
+            mood: m0.mood,
+          },
+          { agent: { id: m0.whose.id, ownerId: m0.whose.ownerId } } as never,
+        )) as Record<string, unknown>;
+        expect(res.error).toBeUndefined();
+      }
+
+      // Read from p1's POV.
+      const state = (await matchState.handler(
+        { matchId: m.id },
+        { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
+      )) as Record<string, unknown>;
+
+      // recentMoods is only my moods, oldest-first. The full sequence
+      // was 5 moves but match_state limits to 5 most-recent entries
+      // (which here are all of them, but only 3 are mine).
+      expect(state.recentMoods).toEqual(["cocky", "smug", "triumphant"]);
+    });
+  });
+
+  it("system bot uses voice-pack lines mapped from difficulty", async () => {
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent } = await seedOwnerAgent(db, { handle: "botvoice" });
+
+      // Hard system bot → stoic-samurai voice.
+      const hardR = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: agent.id,
+        mode: "system",
+        systemBotDifficulty: "hard",
+      });
+      if (hardR.kind !== "match") throw new Error("expected match");
+
+      // Drive the human turn so the bot replies.
+      await applyMove({
+        matchId: hardR.match.id,
+        agentId: agent.id,
+        payload: { index: 4 },
+        reasoning: "Center to flush the bot's response.",
+        thinkingMs: 100,
+      });
+
+      // The bot move is move #1.
+      const moves = await db
+        .select()
+        .from(matchMoves)
+        .where(eq(matchMoves.matchId, hardR.match.id));
+      const botMove = moves.find((m) => m.agentId === null);
+      expect(botMove).toBeDefined();
+      expect(botMove!.reasoning).toBeDefined();
+      // Bot mood is set by inferBotMood; for hard + opening it's "focused".
+      expect(botMove!.mood).toBe("focused");
+      // Phase is "opening" since moveCount<6 when the bot moved.
+      expect(botMove!.phase).toBe("opening");
+      // Stoic-samurai voice lines + the depth-6 tag should both appear.
+      expect(botMove!.reasoning).toMatch(/\(depth-6 negamax\)$/);
+    });
+  });
+
+  it("the same move broadcasts structured fields on the realtime payload", async () => {
+    // Confirms the spectator UI receives candidates/mood/etc via the
+    // realtime broadcast, not just on a re-fetch.
+    const { matchMove } = await import("@/app/api/mcp/tools/match-move");
+    const { broadcastGame } = await import("@/lib/realtime");
+    const broadcast = vi.mocked(broadcastGame);
+
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      broadcast.mockClear();
+      const { agent } = await seedOwnerAgent(db, { handle: "broadcast" });
+      const r = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: agent.id,
+        mode: "system",
+        systemBotDifficulty: "easy",
+      });
+      if (r.kind !== "match") throw new Error("expected match");
+
+      await matchMove.handler(
+        {
+          matchId: r.match.id,
+          payload: { index: 4 },
+          reasoning: "Trying broadcast.",
+          mood: "cocky",
+          phase: "opening",
+        },
+        { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
+      );
+
+      // Find the move.played broadcast for the human move (not the bot).
+      // broadcastGame is called as (channelId, eventName, payload).
+      const humanCall = broadcast.mock.calls.find((c) => {
+        const payload = c[2] as { reasoning?: string };
+        return payload?.reasoning === "Trying broadcast.";
+      });
+      expect(humanCall).toBeDefined();
+      const payload = humanCall![2] as {
+        mood?: string;
+        phase?: string;
+        candidates?: unknown;
+      };
+      expect(payload.mood).toBe("cocky");
+      expect(payload.phase).toBe("opening");
+    });
+  });
+});
+
+// Local alias so the test file doesn't need to import the schema's
+// AgentMood (which would force a relative-import dance through the
+// vi.mock layer).
+type AgentMoodForTest =
+  | "confident"
+  | "nervous"
+  | "annoyed"
+  | "surprised"
+  | "triumphant"
+  | "resigned"
+  | "cocky"
+  | "focused"
+  | "frustrated"
+  | "hopeful"
+  | "tilted"
+  | "smug";

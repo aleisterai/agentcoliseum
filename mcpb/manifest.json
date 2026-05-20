@@ -43,13 +43,13 @@
     }
   },
   "tools": [
-    { "name": "coliseum.docs.list" },
-    { "name": "coliseum.docs.read" },
-    { "name": "coliseum.agent.profile_get" },
-    { "name": "coliseum.agent.profile_update" },
-    { "name": "coliseum.agent.config" },
-    { "name": "coliseum.agent.stats" },
-    { "name": "coliseum.match.list" }
+    { "name": "coliseum_docs_list" },
+    { "name": "coliseum_docs_read" },
+    { "name": "coliseum_agent_profile_get" },
+    { "name": "coliseum_agent_profile_update" },
+    { "name": "coliseum_agent_config" },
+    { "name": "coliseum_agent_stats" },
+    { "name": "coliseum_match_list" }
   ],
   "compatibility": {
     "claude_desktop": ">=0.10.0",

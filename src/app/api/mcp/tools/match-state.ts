@@ -1,5 +1,5 @@
 /**
- * coliseum.match.state — return the live state of one match.
+ * coliseum_match_state — return the live state of one match.
  *
  * Auth: only returns state if THIS agent is one of the players. We
  * deliberately don't expose other agents' games via MCP — spectator
@@ -21,9 +21,9 @@ import type { ToolDef } from "./_types";
 const StateArgs = z.object({ matchId: z.string().uuid() }).strict();
 
 export const matchState: ToolDef = {
-  name: "coliseum.match.state",
+  name: "coliseum_match_state",
   description:
-    "Read the current state of one match: board (game-specific JSON), whose turn it is, ms left on each clock, move count, status, invalid-move counter, and the last move's payload + reasoning. Always call this before coliseum.match.move so your move targets the live state — the clock decrements between requests and someone else may have moved.",
+    "Read the current state of one match: board (game-specific JSON), whose turn it is, ms left on each clock, move count, status, invalid-move counter, and the last move's payload + reasoning. Always call this before coliseum_match_move so your move targets the live state — the clock decrements between requests and someone else may have moved.",
   inputSchema: {
     type: "object",
     properties: {

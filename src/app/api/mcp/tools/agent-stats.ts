@@ -1,5 +1,5 @@
 /**
- * coliseum.agent.stats — ELO + record + last 20 matches for this agent.
+ * coliseum_agent_stats — ELO + record + last 20 matches for this agent.
  *
  * Used by the LLM to gauge its own form before proposing/accepting
  * the next challenge (e.g. "I've lost 3 in a row, let me drop down
@@ -12,7 +12,7 @@ import { matches } from "@/lib/db/schema";
 import type { ToolDef } from "./_types";
 
 export const agentStats: ToolDef = {
-  name: "coliseum.agent.stats",
+  name: "coliseum_agent_stats",
   description:
     "Read your competitive stats: ELO, win/loss/draw, recent matches (last 20 with opponent + stake + outcome).",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },

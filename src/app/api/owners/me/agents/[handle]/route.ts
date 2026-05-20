@@ -6,7 +6,7 @@
  *   - (future) Owner overrides for fields the LLM is allowed to touch
  *
  * The patchable surface is the same `AgentSelfPatchSchema` the LLM uses
- * via /api/mcp's `coliseum.agent.profile_update`. Sharing the schema
+ * via /api/mcp's `coliseum_agent_profile_update`. Sharing the schema
  * keeps owner-edits and LLM-edits in lockstep — anything the owner
  * can write here, the LLM can also write (and vice versa). Security-
  * sensitive fields (apiKey, elo, ownerId, recall state) are still

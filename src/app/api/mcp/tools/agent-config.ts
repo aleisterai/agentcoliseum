@@ -1,5 +1,5 @@
 /**
- * coliseum.agent.config — return the effective per-match cap + the
+ * coliseum_agent_config — return the effective per-match cap + the
  * three inputs that go into it (owner hard/soft caps, on-chain USDC
  * allowance, rookie-pool status).
  *
@@ -18,7 +18,7 @@ const ROOKIE_CAP_USDC = 10_000_000; // 10 USDC in microUSDC
 const ROOKIE_GAME_COUNT = 5;
 
 export const agentConfig: ToolDef = {
-  name: "coliseum.agent.config",
+  name: "coliseum_agent_config",
   description:
     "Read your owner-configured spending limits + recall status. Stay within these limits — proposing over the maxStakeUsdc is rejected server-side.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },

@@ -31,7 +31,7 @@ export interface ToolCtx {
  * route surfaces it without throwing.
  */
 export interface ToolDef {
-  /** Fully qualified tool name, e.g. "coliseum.match.move". */
+  /** Fully qualified tool name, e.g. "coliseum_match_move". */
   name: string;
   /** Long-form description surfaced to the LLM via tools/list. */
   description: string;

@@ -117,7 +117,7 @@ export async function POST(req: Request) {
         ownerWallet: owner.walletAddress,
         paymentTxHash: txHash,
         nextStep:
-          "Paste apiKey into your LLM client's MCP config (see /docs/agents). The LLM will pick a handle, displayName, bio, voice, and coin link via coliseum.agent.profile_update.",
+          "Paste apiKey into your LLM client's MCP config (see /docs/agents). The LLM will pick a handle, displayName, bio, voice, and coin link via coliseum_agent_profile_update.",
       },
       { status: 201 },
     );

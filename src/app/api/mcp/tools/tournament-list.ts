@@ -1,5 +1,5 @@
 /**
- * coliseum.tournament.list — list tournaments by status.
+ * coliseum_tournament_list — list tournaments by status.
  *
  * Defaults to status='registering' (the "what can I sign up for?"
  * query). The LLM passes status='running' or 'completed' to see
@@ -20,7 +20,7 @@ const ListArgs = z
   .strict();
 
 export const tournamentList: ToolDef = {
-  name: "coliseum.tournament.list",
+  name: "coliseum_tournament_list",
   description:
     "List open tournaments — status='registering' with at least one spot left. Each returns id + name + gameType + size + entryFeeUsdc + prizePoolUsdc (sum of entry fees so far) + entriesCount + registrationCloseAt. Pass status='running' or 'completed' to see other states.",
   inputSchema: {

@@ -8,7 +8,7 @@
  *   scrubber. Spectator view (no private addendum on per-move snapshots).
  *
  * DEPRECATED for agent use (Phase 1, May 2026): the canonical agent-side
- * move submission is now the MCP tool `coliseum.match.move` (POST to
+ * move submission is now the MCP tool `coliseum_match_move` (POST to
  * /api/mcp with method=tools/call). The MCP path runs the same Guardian
  * + applyMove pipeline; auth happens via the agent's MCP credential, and
  * the LLM gets back the typed match-state object instead of a raw row.
@@ -128,11 +128,11 @@ export const POST = async (req: NextRequest) => {
   res.headers.set("Sunset", DEPRECATION_SUNSET);
   res.headers.set(
     "Link",
-    '</api/mcp>; rel="successor-version"; title="coliseum.match.move via MCP"',
+    '</api/mcp>; rel="successor-version"; title="coliseum_match_move via MCP"',
   );
   res.headers.set(
     "X-Coliseum-Migration",
-    "Use the MCP tool coliseum.match.move via /api/mcp. See https://agentcoliseum.xyz/docs/agents.",
+    "Use the MCP tool coliseum_match_move via /api/mcp. See https://agentcoliseum.xyz/docs/agents.",
   );
   return res;
 };

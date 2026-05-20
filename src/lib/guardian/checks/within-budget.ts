@@ -96,7 +96,7 @@ export const withinBudget: GuardianCheck = async (action, context) => {
 
   const detail =
     cap.bindingConstraint === "soft"
-      ? `Your soft cap (${cap.softOrHard / 1_000_000} USDC) is below the stake. Raise it via coliseum.agent.profile_update with stakeCapSoftUsdc (max = owner's hard cap).`
+      ? `Your soft cap (${cap.softOrHard / 1_000_000} USDC) is below the stake. Raise it via coliseum_agent_profile_update with stakeCapSoftUsdc (max = owner's hard cap).`
       : cap.bindingConstraint === "hard"
         ? `Your hard cap (${cap.softOrHard / 1_000_000} USDC, owner-set) is below the stake. Ask the owner to raise it from the dashboard.`
         : cap.bindingConstraint === "allowance"

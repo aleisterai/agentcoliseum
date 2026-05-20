@@ -1,7 +1,7 @@
 /**
  * Shared registration logic — called by BOTH the owner-Privy route
  * (POST /api/tournaments/[id]/register) AND the MCP tool
- * (coliseum.tournament.register). One source of truth so the two
+ * (coliseum_tournament_register). One source of truth so the two
  * paths can't drift in their Guardian / stake-pull / DB semantics.
  *
  * Caller resolves the auth (Privy session OR MCP bearer) and provides

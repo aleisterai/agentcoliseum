@@ -149,7 +149,7 @@ async function main() {
   console.log(`   tools/list ok — ${toolNames.length} tools returned`);
   console.log(`   sample: ${toolNames.slice(0, 4).join(", ")}…\n`);
 
-  console.log("6. verify the same token can call coliseum.agent.profile_get");
+  console.log("6. verify the same token can call coliseum_agent_profile_get");
   const profile = await fetchJson<{
     result?: { content: Array<{ type: string; text: string }> };
   }>(`${ORIGIN}/api/mcp`, {
@@ -162,7 +162,7 @@ async function main() {
       jsonrpc: "2.0",
       id: 2,
       method: "tools/call",
-      params: { name: "coliseum.agent.profile_get", arguments: {} },
+      params: { name: "coliseum_agent_profile_get", arguments: {} },
     }),
   });
   const text = profile.result?.content?.[0]?.text;

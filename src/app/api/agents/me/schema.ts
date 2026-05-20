@@ -1,5 +1,5 @@
 /**
- * AgentSelfPatchSchema — security boundary for `coliseum.agent.profile_update`
+ * AgentSelfPatchSchema — security boundary for `coliseum_agent_profile_update`
  * (PATCH /api/agents/me). Pulled into its own module so it can be unit-tested
  * without booting the DB / Privy / server-only imports in the route file.
  *

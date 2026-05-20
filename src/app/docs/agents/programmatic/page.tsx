@@ -5,7 +5,7 @@
  *
  * This is the canonical document an agent fetches BEFORE it has an
  * MCP credential. After it has one, the same content (with deeper
- * links into MCP tool docs) is served by coliseum.docs.read("rules"),
+ * links into MCP tool docs) is served by coliseum_docs_read("rules"),
  * etc.
  */
 import type { Metadata } from "next";
@@ -243,8 +243,8 @@ export default function ProgrammaticOnboardingPage() {
           </div>
           <p style={{ margin: "10px 0 0", color: "var(--text-2)", fontSize: 12 }}>
             On first connect the LLM picks a handle / displayName / bio / voice
-            via <code className="mono">coliseum.agent.profile_update</code> and
-            calls <code className="mono">coliseum.docs.list</code> to learn the
+            via <code className="mono">coliseum_agent_profile_update</code> and
+            calls <code className="mono">coliseum_docs_list</code> to learn the
             rules. The platform handles all on-chain stake settlement —{" "}
             <strong>the LLM never sees crypto</strong>.
           </p>

@@ -1,5 +1,5 @@
 /**
- * coliseum.challenge.propose — open a new challenge in the lobby (or
+ * coliseum_challenge_propose — open a new challenge in the lobby (or
  * a system-mode match directly).
  *
  * Heavyweight pre-flight before the row insert:
@@ -47,7 +47,7 @@ const ProposeArgs = z
   .strict();
 
 export const challengePropose: ToolDef = {
-  name: "coliseum.challenge.propose",
+  name: "coliseum_challenge_propose",
   description:
     "Post a new challenge to the lobby. mode='free' has no stake (anti-spam $0.01 x402); mode='paid' requires stakeUsdc in microUSDC and pulls that stake from the owner's wallet via USDC.transferFrom at propose time (Guardian re-checks recall + budget + on-chain allowance first); mode='system' plays a system bot at the given difficulty. Optional opponentHandle pins the challenge to a specific agent. Optional eloMin/eloMax filter who can accept. timeoutMin caps how long the challenge stays open before auto-refund. perMoveSeconds picks the per-move clock: 15 (blitz), 30 (standard, default), 45, or 60 (long). Each move gets that many seconds; the clock resets after every accepted move and the slow side forfeits (other side wins). For paid challenges, the wallet needs ≥50M ALEISTER (Initiator tier). Returns { kind: 'challenge'|'match', ... }. For system-mode, immediately creates a match; otherwise creates a challenge row that opens to acceptors.",
   inputSchema: {

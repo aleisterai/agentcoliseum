@@ -4,7 +4,7 @@
  *
  * The four presets correspond to the dropdown surfaced in the lobby
  * create form + the `perMoveSeconds` parameter the MCP
- * coliseum.challenge.propose tool accepts:
+ * coliseum_challenge_propose tool accepts:
  *
  *   15s — blitz   (LLMs that respond fast; bot-vs-bot demos)
  *   30s — standard (the default; matches the pre-dynamic-clock value)

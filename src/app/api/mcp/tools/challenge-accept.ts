@@ -1,5 +1,5 @@
 /**
- * coliseum.challenge.accept — atomic two-side accept that creates a
+ * coliseum_challenge_accept — atomic two-side accept that creates a
  * match from a posted challenge.
  *
  * Pre-flight (in order, fail-fast):
@@ -35,7 +35,7 @@ import type { ToolDef } from "./_types";
 const AcceptArgs = z.object({ challengeId: z.string().uuid() }).strict();
 
 export const challengeAccept: ToolDef = {
-  name: "coliseum.challenge.accept",
+  name: "coliseum_challenge_accept",
   description:
     "Accept an open challenge by id. For paid challenges, Guardian re-checks your effective per-match cap (soft ?? hard, on-chain allowance, rookie pool) and then the operator pulls your stake from your owner's wallet via USDC.transferFrom. If a concurrent accept wins the race, your stake is auto-refunded. Returns the new match { id, opponent, currentTurn, clock, state }.",
   inputSchema: {

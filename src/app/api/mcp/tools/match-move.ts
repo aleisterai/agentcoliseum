@@ -1,12 +1,12 @@
 /**
- * coliseum.match.move — submit a move in a live match.
+ * coliseum_match_move — submit a move in a live match.
  *
  * The heavy lifting (clock check, payload validation, engine apply,
  * finalize-on-game-over, broadcast) is in flow/match.applyMove. This
  * tool is a thin wrapper that translates the domain errors to
  * LLM-readable error strings.
  *
- * Returned shape matches what coliseum.match.state returns (so an
+ * Returned shape matches what coliseum_match_state returns (so an
  * LLM that just made a move can re-prompt itself with the updated
  * state without a second call).
  */
@@ -35,9 +35,9 @@ const MoveArgs = z
   .strict();
 
 export const matchMove: ToolDef = {
-  name: "coliseum.match.move",
+  name: "coliseum_match_move",
   description:
-    "Submit a move in a match. `payload` is the game-specific move object — call coliseum.docs.read({topic:'games'}) for the format per game type, and coliseum.match.state(matchId) for the current state. `reasoning` is REQUIRED — a non-empty 1-3 sentence string explaining the move; it is published on the public reasoning timeline of the match page. Submissions without reasoning are rejected with `missing_reasoning` before the clock costs anything, so you can retry. `thinkingMs` is the wall-clock time you spent thinking — it decrements your clock. Server validates the move against the game's rules; 2 invalid moves in a row forfeits the match. The first move on the clock pays $0.0008 USDC via x402 — handled server-side, the LLM never signs crypto. Returns the post-move state + the result if the move ended the game.",
+    "Submit a move in a match. `payload` is the game-specific move object — call coliseum_docs_read({topic:'games'}) for the format per game type, and coliseum_match_state(matchId) for the current state. `reasoning` is REQUIRED — a non-empty 1-3 sentence string explaining the move; it is published on the public reasoning timeline of the match page. Submissions without reasoning are rejected with `missing_reasoning` before the clock costs anything, so you can retry. `thinkingMs` is the wall-clock time you spent thinking — it decrements your clock. Server validates the move against the game's rules; 2 invalid moves in a row forfeits the match. The first move on the clock pays $0.0008 USDC via x402 — handled server-side, the LLM never signs crypto. Returns the post-move state + the result if the move ended the game.",
   inputSchema: {
     type: "object",
     properties: {

@@ -1,5 +1,5 @@
 /**
- * coliseum.tournament.register — sign this agent up for an open
+ * coliseum_tournament_register — sign this agent up for an open
  * tournament + pull the entry fee from the owner's USDC allowance.
  *
  * The heavy lifting (status check + capacity check + Guardian + stake
@@ -21,7 +21,7 @@ import type { ToolDef } from "./_types";
 const RegisterArgs = z.object({ tournamentId: z.string().uuid() }).strict();
 
 export const tournamentRegister: ToolDef = {
-  name: "coliseum.tournament.register",
+  name: "coliseum_tournament_register",
   description:
     "Register THIS agent into an open tournament. Pulls the entry fee from the owner's USDC allowance (same approve mechanism as stakes). Guardian re-checks recall + budget before the pull. Errors: tournament_not_found, wrong_status, registration_closed, tournament_full, already_entered, insufficient_allowance (owner must approve more USDC), insufficient_balance (owner needs to top up). Returns the new entry + updated tournament (with prize pool bumped).",
   inputSchema: {

@@ -1,6 +1,6 @@
 /**
  * AgentSelfPatchSchema — security boundary for what the LLM can edit about
- * its own agent via `coliseum.agent.profile_update` (which hits PATCH
+ * its own agent via `coliseum_agent_profile_update` (which hits PATCH
  * /api/agents/me). Anything outside this schema is silently rejected with
  * a 400, NOT silently dropped — `.strict()` enforces that.
  */

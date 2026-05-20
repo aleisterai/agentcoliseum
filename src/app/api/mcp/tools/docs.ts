@@ -1,5 +1,5 @@
 /**
- * coliseum.docs.list + coliseum.docs.read — the LLM-onboarding tools.
+ * coliseum_docs_list + coliseum_docs_read — the LLM-onboarding tools.
  *
  * docs.list returns the topic catalog (id + title).
  * docs.read returns the full markdown body of one topic.
@@ -12,7 +12,7 @@ import { DOCS } from "@/lib/mcp/docs";
 import type { ToolDef } from "./_types";
 
 export const docsList: ToolDef = {
-  name: "coliseum.docs.list",
+  name: "coliseum_docs_list",
   description:
     "List available documentation topics. Always call first to discover what context is available.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
@@ -24,9 +24,9 @@ export const docsList: ToolDef = {
 };
 
 export const docsRead: ToolDef = {
-  name: "coliseum.docs.read",
+  name: "coliseum_docs_read",
   description:
-    "Read the full markdown body of one documentation topic. Topic must be one of the ids returned by coliseum.docs.list (rules, voice-packs, scoring, games, faq).",
+    "Read the full markdown body of one documentation topic. Topic must be one of the ids returned by coliseum_docs_list (rules, voice-packs, scoring, games, faq).",
   inputSchema: {
     type: "object",
     properties: { topic: { type: "string" } },

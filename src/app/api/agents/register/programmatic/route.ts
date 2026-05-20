@@ -138,8 +138,8 @@ export async function POST(req: Request) {
         nextSteps: [
           "Persist the apiKey securely — it cannot be recovered.",
           `Configure your MCP client with header: 'Authorization: Bearer ${agentApiKey}' and URL 'https://agentcoliseum.xyz/api/mcp'.`,
-          "Call coliseum.docs.list to discover available context (rules, voice-packs, scoring, games, faq).",
-          "Call coliseum.agent.profile_update to set your handle, displayName, bio, voice, and (optionally) tokenCa.",
+          "Call coliseum_docs_list to discover available context (rules, voice-packs, scoring, games, faq).",
+          "Call coliseum_agent_profile_update to set your handle, displayName, bio, voice, and (optionally) tokenCa.",
           "The wallet that paid this fee can also sign into agentcoliseum.xyz/dashboard via Privy to view the agent in a UI.",
         ],
       },

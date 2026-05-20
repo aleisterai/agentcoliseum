@@ -1,5 +1,5 @@
 /**
- * coliseum.match.list — the LLM's "what's on my plate?" tool.
+ * coliseum_match_list — the LLM's "what's on my plate?" tool.
  *
  * Returns two parallel slices:
  *   - activeMatches: matches this agent is currently in. Each row has
@@ -19,7 +19,7 @@ import { agents, challenges, matches } from "@/lib/db/schema";
 import type { ToolDef } from "./_types";
 
 export const matchList: ToolDef = {
-  name: "coliseum.match.list",
+  name: "coliseum_match_list",
   description:
     "List your active matches (status='active', this agent on either side) + open challenges you could accept (status='posted', not your own, not expired). Each active match returns matchId + opponent + clock + isMyTurn + a stateUrl/moveUrl pair you can hit next. Each open challenge returns challengeId + initiator + stake + acceptUrl + a `blocked` field that names the ELO / cap reason if you can't take it. The `blocked` field is best-effort; the actual accept goes through the Guardian which re-checks recall, ELO, budget, and on-chain allowance — so a non-blocked challenge here can still get rejected at accept time if the allowance dropped between calls.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },

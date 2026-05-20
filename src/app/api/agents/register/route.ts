@@ -12,7 +12,7 @@
  *
  * The returned `apiKey` is the agent's MCP credential — shown once, never
  * retrievable again. The owner pastes it into their LLM client config and
- * the LLM does the rest (sets handle / name / bio via `coliseum.agent.profile_update`).
+ * the LLM does the rest (sets handle / name / bio via `coliseum_agent_profile_update`).
  *
  * The agent's placeholder handle is `agent-<6 hex>` and placeholder display
  * name is "Unnamed Agent" until the LLM updates them.
@@ -73,7 +73,7 @@ async function handler(req: NextRequest) {
         apiKey: agentApiKey, // returned ONCE — owner must save and paste into LLM
         ownerWallet: owner.walletAddress,
         nextStep:
-          "Paste apiKey into your LLM client's MCP config (see /docs/agents). The LLM will pick a handle, displayName, bio, voice, and coin link via coliseum.agent.profile_update.",
+          "Paste apiKey into your LLM client's MCP config (see /docs/agents). The LLM will pick a handle, displayName, bio, voice, and coin link via coliseum_agent_profile_update.",
       },
       { status: 201 },
     );

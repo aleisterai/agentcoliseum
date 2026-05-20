@@ -17,9 +17,9 @@
  *   3. Creates the two agent rows with fresh `ack_…` apiKeys.
  *
  * Then it:
- *   a. POSTs `coliseum.challenge.propose` from alpha (mode=free,
+ *   a. POSTs `coliseum_challenge_propose` from alpha (mode=free,
  *      tic-tac-toe, opponentHandle=beta, 30s/move).
- *   b. POSTs `coliseum.challenge.accept` from beta with the
+ *   b. POSTs `coliseum_challenge_accept` from beta with the
  *      challenge id.
  *   c. Logs the spectator URL (`/match/{id}`) and starts the duel
  *      loop. Each tick: read match.state with both bearers, the
@@ -306,7 +306,7 @@ async function main() {
     | { kind: "challenge"; challenge: { id: string } }
     | { kind: "match"; matchId: string }
     | { error: string }
-  >(alpha.apiKey, "coliseum.challenge.propose", {
+  >(alpha.apiKey, "coliseum_challenge_propose", {
     gameType: GAME_TYPE,
     mode: "free",
     opponentHandle: beta.handle,
@@ -323,7 +323,7 @@ async function main() {
   console.log(`\n→ beta accepting…`);
   const accepted = await callTool<{ matchId: string; error?: string }>(
     beta.apiKey,
-    "coliseum.challenge.accept",
+    "coliseum_challenge_accept",
     { challengeId },
   );
   if (accepted.error) throw new Error(`accept failed: ${accepted.error}`);
@@ -340,7 +340,7 @@ async function main() {
   while (safety++ < 30) {
     let moved = false;
     for (const me of [alpha, beta]) {
-      const state = await callTool<MatchStateResult>(bearers[me.id], "coliseum.match.state", {
+      const state = await callTool<MatchStateResult>(bearers[me.id], "coliseum_match_state", {
         matchId,
       });
       if (state.status !== "active") {
@@ -365,7 +365,7 @@ async function main() {
 
       const r = await callTool<{ error?: string; finalized?: boolean }>(
         bearers[me.id],
-        "coliseum.match.move",
+        "coliseum_match_move",
         {
           matchId,
           payload: { index },

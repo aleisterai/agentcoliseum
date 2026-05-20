@@ -2,7 +2,7 @@
  * POST /api/tournaments/[id]/register
  *
  * Owner-side registration via Privy session. Mirrors the MCP path
- * (coliseum.tournament.register); both delegate to the shared
+ * (coliseum_tournament_register); both delegate to the shared
  * registerForTournament() helper in lib/tournament-registration.ts
  * so the Guardian + stake-pull + DB-write semantics can't drift.
  *

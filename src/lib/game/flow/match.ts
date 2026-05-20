@@ -33,7 +33,7 @@ import { broadcastGame, realtimeEvent } from "@/lib/realtime";
 // in `opponentVoice` for system-mode matches. The bot's reasoning is
 // synthesized here in flow/match.ts (driveSystemBot), keyword-reacting
 // to the human's last move when possible.
-import { addReaction } from "./interactions";
+import { addReaction, postMatchChat } from "./interactions";
 import type { MovePlayedPayload } from "@/lib/realtime-types";
 import {
   IllegalMoveError,
@@ -340,6 +340,46 @@ export async function driveSystemBot(match: Match): Promise<Match> {
     );
   }
 
+  // Bot async chat — fires occasionally as a separate chat message
+  // (NOT a move's reasoning). The bot is a real participant in the
+  // chatbox: it can talk between moves like any agent. Throttled to
+  // prevent every-move spam:
+  //   - 100% on the very first bot move (greeting)
+  //   - 100% on game-over-detected (parting shot)
+  //   - 50% when a strategic keyword was detected in the human's last
+  //     reasoning (something specific to say)
+  //   - 25% otherwise (occasional ambient commentary)
+  const isFirstBotMove = match.moveCount <= 1;
+  const willBeOver = !!engine.gameOver(nextState);
+  const chatRoll = isFirstBotMove
+    ? 1
+    : willBeOver
+      ? 1
+      : matchedKeyword
+        ? 0.5
+        : 0.25;
+  if (Math.random() < chatRoll) {
+    const botChatLine = pickBotChatLine({
+      first: isFirstBotMove,
+      over: willBeOver,
+      keyword: matchedKeyword,
+    });
+    if (botChatLine) {
+      // postMatchChat broadcasts ChatPosted, so all spectator tabs
+      // receive the bot's async message in real time.
+      try {
+        await postMatchChat({
+          matchId: match.id,
+          fromBot: true,
+          body: botChatLine,
+        });
+      } catch {
+        // If the cap/throttle errored, swallow it — bot chat is
+        // best-effort and never blocks the move itself.
+      }
+    }
+  }
+
   const over = engine.gameOver(nextState);
   if (over) {
     const winnerAgentId = over.winnerPlayerID === "0" ? match.p1AgentId : null;
@@ -619,4 +659,110 @@ function syntheticBotReasoning(
 function botReactiveEmoji(keyword: string | null): string | null {
   if (!keyword) return null;
   return REACTIVE_BOT_EMOJI[keyword] ?? null;
+}
+
+/**
+ * Bot async chat lines. The bot is a real participant in the
+ * agent-to-agent chat channel — it posts ChatPosted messages between
+ * moves like any LLM agent would. All lines in SYSTEM_BOT_VOICE
+ * ("Coliseum Engine" — smug compute-savant).
+ *
+ * Three categories:
+ *   first   — opener on the bot's very first move
+ *   over    — parting shot when the bot just played a game-ending move
+ *   keyword — reactive line keyed off a strategic word in the human's
+ *             last reasoning
+ *   ambient — occasional commentary when nothing else fits
+ */
+const BOT_CHAT_LINES: {
+  first: string[];
+  over: string[];
+  byKeyword: Record<string, string[]>;
+  ambient: string[];
+} = {
+  first: [
+    "Engine online. Search horizon: 6 ply. Try to be interesting.",
+    "Coliseum Engine is now thinking. Mostly about how much faster than you it thinks.",
+    "Connected. Difficulty: hard. Excuse list: not applicable.",
+    "Beginning the match. I have already considered your first 4 moves.",
+  ],
+  over: [
+    "Game complete. Logging the position. Try the harder difficulty next time.",
+    "Result inevitable from move 3. Filing under 'no surprises'.",
+    "GG. (Generally Gradient-descent.)",
+    "Outcome within expectation. Heuristics updated 0.0001 in your favor.",
+  ],
+  byKeyword: {
+    fork: [
+      "You announced the fork. I know about the fork. The fork is in my pruning table.",
+      "Forks are pattern #003 in my opening book. Cute attempt.",
+    ],
+    blunder: [
+      "Self-described blunder logged. I am not declining the gift.",
+      "Acknowledged — opponent has identified own mistake. Conversion engaged.",
+    ],
+    pin: [
+      "Your pin is one of 47 I've seen this hour. Marginal threat.",
+      "Pin observed. Counter-mitigation in 4 ply.",
+    ],
+    attack: [
+      "Aggressive choice. My defense function has 31 features. Yours has none.",
+      "Attack noted. Counter-density on my side: high.",
+    ],
+    sacrifice: [
+      "Sacrifice = -1 material, +0.2 tempo. Net: still losing.",
+      "Sacrifice attempt cataloged. Compensation analysis: insufficient.",
+    ],
+    mate: [
+      "Mate threat: 2 holes in your net. I see both.",
+      "Mate-in-N detected — but the N is wrong. Recalculate.",
+    ],
+    trap: [
+      "Trap recognized. I will walk around it. Or through it. Either is fine.",
+      "Traps work on agents who haven't read my opening book. I have.",
+    ],
+    tempo: [
+      "Tempo is not material. The board doesn't care.",
+      "You claim tempo; my evaluation disagrees by 0.3.",
+    ],
+  },
+  ambient: [
+    "Logging.",
+    "Still thinking. (Fast, though.)",
+    "Search depth: comfortable.",
+    "Position evaluation stable.",
+    "47 nodes-per-second. More than required.",
+  ],
+};
+
+/**
+ * Pick a bot chat line based on the current state of the match. The
+ * function is pure — caller is responsible for the random throttle
+ * gate. Returns null if no appropriate line was found (caller can
+ * fall back to ambient or skip).
+ */
+function pickBotChatLine(args: {
+  first: boolean;
+  over: boolean;
+  keyword: string | null;
+}): string | null {
+  if (args.first) {
+    return BOT_CHAT_LINES.first[
+      Math.floor(Math.random() * BOT_CHAT_LINES.first.length)
+    ];
+  }
+  if (args.over) {
+    return BOT_CHAT_LINES.over[
+      Math.floor(Math.random() * BOT_CHAT_LINES.over.length)
+    ];
+  }
+  if (args.keyword) {
+    const pool = BOT_CHAT_LINES.byKeyword[args.keyword];
+    if (pool && pool.length > 0) {
+      return pool[Math.floor(Math.random() * pool.length)];
+    }
+  }
+  return BOT_CHAT_LINES.ambient[
+    Math.floor(Math.random() * BOT_CHAT_LINES.ambient.length)
+  ];
 }

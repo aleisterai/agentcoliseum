@@ -37,6 +37,7 @@ import {
   challenges,
   matches,
   matchMoves,
+  matchChatMessages,
   treasuryFlows,
 } from "../../db/schema";
 
@@ -1921,6 +1922,140 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
       expect(reactions).toHaveLength(1);
       expect(reactions[0].emoji).toBe("🤔");
       expect(reactions[0].fromBot).toBe(true);
+    });
+  });
+
+  it("chat is ASYNC — agent can send multiple messages without it being their turn", async () => {
+    const { matchChatSend } = await import("@/app/api/mcp/tools/match-chat-send");
+    const { matchMove } = await import("@/app/api/mcp/tools/match-move");
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent: p1 } = await seedOwnerAgent(db, { handle: "async_p1" });
+      const { agent: p2 } = await seedOwnerAgent(db, { handle: "async_p2" });
+      const ch = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: p1.id,
+        mode: "free",
+      });
+      if (ch.kind !== "challenge") throw new Error("expected challenge");
+      const m = await acceptChallenge({
+        challengeId: ch.challenge.id,
+        acceptorAgentId: p2.id,
+      });
+
+      // p1 plays a move.
+      const moveOut = (await matchMove.handler(
+        { matchId: m.id, payload: { index: 4 }, reasoning: R },
+        { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
+      )) as { error?: string };
+      expect(moveOut.error).toBeUndefined();
+
+      // It is now p2's turn. But p1 should still be able to send chat
+      // messages WITHOUT it being their turn. Fire 3 in a row.
+      for (const body of ["lol", "watch this next move", "trap incoming 😤"]) {
+        const out = (await matchChatSend.handler(
+          { matchId: m.id, body },
+          { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
+        )) as { error?: string };
+        expect(out.error).toBeUndefined();
+      }
+
+      // p2 (whose turn it is) can ALSO send chats without playing yet.
+      for (const body of ["cope", "I see it"]) {
+        const out = (await matchChatSend.handler(
+          { matchId: m.id, body },
+          { agent: { id: p2.id, ownerId: p2.ownerId } } as never,
+        )) as { error?: string };
+        expect(out.error).toBeUndefined();
+      }
+
+      // Confirm the 5 messages all persisted in oldest-first order.
+      const rows = await db
+        .select()
+        .from(matchChatMessages)
+        .where(eq(matchChatMessages.matchId, m.id))
+        .orderBy(matchChatMessages.createdAt);
+      expect(rows.map((r) => r.body)).toEqual([
+        "lol",
+        "watch this next move",
+        "trap incoming 😤",
+        "cope",
+        "I see it",
+      ]);
+    });
+  });
+
+  it("coliseum_match_chat_send enforces the 50-per-agent soft cap", async () => {
+    const { matchChatSend } = await import("@/app/api/mcp/tools/match-chat-send");
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent: p1 } = await seedOwnerAgent(db, { handle: "cap_p1" });
+      const { agent: p2 } = await seedOwnerAgent(db, { handle: "cap_p2" });
+      const ch = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: p1.id,
+        mode: "free",
+      });
+      if (ch.kind !== "challenge") throw new Error("expected challenge");
+      const m = await acceptChallenge({
+        challengeId: ch.challenge.id,
+        acceptorAgentId: p2.id,
+      });
+
+      // Spam 50 chats — should all succeed.
+      for (let i = 0; i < 50; i++) {
+        const out = (await matchChatSend.handler(
+          { matchId: m.id, body: `spam-${i}` },
+          { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
+        )) as { error?: string };
+        expect(out.error).toBeUndefined();
+      }
+      // 51st should error with cap message.
+      const out = (await matchChatSend.handler(
+        { matchId: m.id, body: "one too many" },
+        { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
+      )) as { error?: string };
+      expect(out.error).toMatch(/chat_cap_reached/);
+
+      // p2's cap is independent — they can still send.
+      const p2Out = (await matchChatSend.handler(
+        { matchId: m.id, body: "I have headroom" },
+        { agent: { id: p2.id, ownerId: p2.ownerId } } as never,
+      )) as { error?: string };
+      expect(p2Out.error).toBeUndefined();
+    });
+  });
+
+  it("bot fires an opening chat message on its first move", async () => {
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent } = await seedOwnerAgent(db, { handle: "bot_chat_open" });
+      const r = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: agent.id,
+        mode: "system",
+        systemBotDifficulty: "hard",
+      });
+      if (r.kind !== "match") throw new Error("expected match");
+
+      // Human plays move 0 — bot's first move follows in driveSystemBot.
+      await applyMove({
+        matchId: r.match.id,
+        agentId: agent.id,
+        payload: { index: 4 },
+        reasoning: "Center.",
+        thinkingMs: 100,
+      });
+
+      // Expect AT LEAST one bot chat message in match_chat_messages
+      // (first-move greeting fires at 100%).
+      const chats = await db
+        .select()
+        .from(matchChatMessages)
+        .where(eq(matchChatMessages.matchId, r.match.id));
+      const botChats = chats.filter((c) => c.fromBot);
+      expect(botChats.length).toBeGreaterThanOrEqual(1);
+      expect(botChats[0].body.length).toBeGreaterThan(0);
     });
   });
 

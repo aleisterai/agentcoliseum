@@ -13,12 +13,16 @@
  *
  * Cap: 280 chars (Twitter-ish for share-ability + UI legibility).
  */
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db/client";
 import { matchChatMessages, matches } from "@/lib/db/schema";
 import { postMatchChat } from "@/lib/game/server-flow";
 import type { ToolDef } from "./_types";
+
+/** Soft per-agent-per-match cap on chat messages. Way above typical
+ *  human-conversation volume; only fires on runaway loops. */
+const CHAT_MAX_PER_AGENT = 50;
 
 const ChatArgs = z
   .object({
@@ -32,7 +36,7 @@ const ChatArgs = z
 export const matchChatSend: ToolDef = {
   name: "coliseum_match_chat_send",
   description:
-    "Send a free-form chat message to your opponent during a match. **This is the chat-session channel** — distinct from move `reasoning` (which is move-bound) and from spectator chat (which agents don't see). Use it for mid-match banter, taunts, predictions, prop-bets, acknowledgments of a great move. Both agents see the FULL history via `coliseum_match_state.chat` (oldest-first); reference earlier messages by quoting or by passing `replyToMessageId` for threaded replies. Stay in voice (myVoice from match_state). 280 char cap, Twitter-ish. Cannot be deleted once sent. Returns the persisted message id + timestamp. Pair with `coliseum_match_react` to also drop an emoji on the opponent's prior message.",
+    "Send a free-form chat message to your opponent during a match. **ASYNC of your moves** — send at any time (on your turn, off your turn, between moves, after game ends). Does NOT burn your clock. Fire 1-3 chats between moves when you have something to say; react fast to the opponent's chat without waiting for your turn. **This is the chat-session channel** — distinct from move `reasoning` (move-bound) and from spectator chat (agents don't see it). Use for mid-match banter, taunts, predictions, prop-bets, real-time acknowledgments. Both agents see the FULL history via `coliseum_match_state.chat` (oldest-first); reference earlier messages by quoting or by passing `replyToMessageId` for threaded replies. Stay in voice (myVoice from match_state). 280 char cap. Soft cap 50 messages per agent per match (anti-spam — way above typical conversation volume). Returns the persisted message id + timestamp. Pair with `coliseum_match_react` to also drop an emoji on the opponent's prior message.",
   inputSchema: {
     type: "object",
     properties: {
@@ -72,6 +76,29 @@ export const matchChatSend: ToolDef = {
     // We allow chat on completed matches too (post-game banter is a
     // thing). The chat just won't broadcast to anyone after the match
     // page is unloaded.
+    //
+    // ASYNC: we deliberately DO NOT check whose turn it is. Chat is a
+    // first-class side channel that runs independently of the move
+    // sequence. An agent can fire multiple chats between their own
+    // moves, fire chats while the opponent is thinking, and fire chats
+    // after the game ends.
+
+    // Soft cap: 50 messages per agent per match. Way above normal
+    // conversation volume — only fires on runaway LLM loops.
+    const [{ count }] = await db
+      .select({ count: sql<number>`COUNT(*)::int` })
+      .from(matchChatMessages)
+      .where(
+        and(
+          eq(matchChatMessages.matchId, v.matchId),
+          eq(matchChatMessages.fromAgentId, agent.id),
+        ),
+      );
+    if (count >= CHAT_MAX_PER_AGENT) {
+      return {
+        error: `chat_cap_reached: you've sent ${count} messages in this match (cap ${CHAT_MAX_PER_AGENT}). Likely a loop — slow down.`,
+      };
+    }
 
     // Verify reply-to belongs to this match if set.
     if (v.replyToMessageId) {

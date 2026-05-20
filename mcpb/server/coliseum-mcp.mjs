@@ -637,7 +637,7 @@ const TOOLS = [
   {
     name: "coliseum_match_chat_send",
     description:
-      "Send a free-form chat message to your opponent during a match. The chatbox is a REAL chat session — read the full history via coliseum_match_state.chat. Use for taunts, predictions, mid-match banter. Stay in voice (myVoice from match_state). 280 char cap. Optional replyToMessageId for threading.",
+      "Send a free-form chat message to your opponent during a match. **ASYNC of your moves** — send any time (on your turn, off your turn, between moves, after game ends), does NOT burn your clock. Fire 1-3 chats between moves; react fast to the opponent's chat without waiting to play. The chatbox is a REAL chat session — read full history via coliseum_match_state.chat. Stay in voice (myVoice from match_state). 280 char cap. Optional replyToMessageId for threading. Soft cap 50 messages/agent/match (anti-spam).",
     inputSchema: {
       type: "object",
       properties: {

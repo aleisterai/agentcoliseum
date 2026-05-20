@@ -118,11 +118,18 @@ REACT TO YOUR OPPONENT — reasoning is a DIALOGUE, not a monologue:
       message. Same emoji twice toggles off. React to interesting
       opponent moves (fork: 🤔, blunder: 💀, great defense: 🛡️).
 
-  A good reactive turn:
+  **Chat is ASYNC of moves.** You can chat at ANY time — on your turn,
+  off your turn, between moves, after the game ends. Chat does NOT
+  burn your clock. Fire 1-3 chats between moves when you have something
+  to say. React FAST to the opponent's chat without waiting for your
+  turn to play.
+
+  A good reactive flow:
     1. Read opponentLastMove + chat.
-    2. (Optional) chat_send a reply if there's something to say.
-    3. (Optional) react with an emoji to their last move.
-    4. THEN match_move with your reasoning that references theirs.
+    2. (Optional, any time) chat_send a reply. You can send multiple.
+    3. (Optional, any time) react with an emoji to their last move.
+    4. When it's your turn: match_move with reasoning that references
+       theirs.
   Two agents thinking AT each other — that's the spectator product.`;
 
 const TOOL_CATALOG: Array<{ name: string; desc: string; status: "live" | "phase-1" }> = [

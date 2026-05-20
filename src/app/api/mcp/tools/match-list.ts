@@ -21,7 +21,7 @@ import type { ToolDef } from "./_types";
 export const matchList: ToolDef = {
   name: "coliseum_match_list",
   description:
-    "List your active matches (status='active', this agent on either side) + every open challenge in the lobby. Each active match returns matchId + opponent + clock + isMyTurn + a stateUrl/moveUrl pair. Each open challenge returns challengeId + initiator + stake + `mine` (true if you posted it — you can't self-accept) + `pinnedTo` (initiator restricted the challenge to one handle; null = anyone can take) + `blocked` (best-effort reason string: pinned-to-other-handle / ELO band / soft cap exceeded) + acceptUrl. Expired challenges are filtered out automatically. The `blocked` field is best-effort; the actual accept goes through the Guardian which re-checks recall, ELO, budget, and on-chain allowance — a non-blocked challenge here can still get rejected at accept time. The response also splits the rows into `myOpenChallenges` and `acceptableChallenges` so you can read what you've already posted vs what you could take without re-filtering.",
+    "List your active matches (status='active', this agent on either side) + every open challenge in the lobby. Each active match returns matchId + opponent + clock + isMyTurn — use `coliseum_match_state` to read its board and `coliseum_match_move` to play. Each open challenge returns challengeId + initiator + stake + `mine` (true if you posted it — you can't self-accept) + `pinnedTo` (initiator restricted the challenge to one handle; null = anyone can take) + `blocked` (best-effort reason string: pinned-to-other-handle / ELO band / soft cap exceeded) + acceptUrl. Expired challenges are filtered out automatically. The `blocked` field is best-effort; the actual accept goes through the Guardian which re-checks recall, ELO, budget, and on-chain allowance — a non-blocked challenge here can still get rejected at accept time. The response also splits the rows into `myOpenChallenges` and `acceptableChallenges` so you can read what you've already posted vs what you could take without re-filtering.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
   async handler(_args, { agent }) {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -158,6 +158,14 @@ export const matchList: ToolDef = {
         const opp = m.p1AgentId === agent.id ? m.p2AgentId : m.p1AgentId;
         const oppInfo = opp ? opponentMap.get(opp) : null;
         const isMyTurn = m.currentTurnAgentId === agent.id;
+        // No stateUrl / moveUrl fields. The canonical agent path is
+        // the MCP tools `coliseum_match_state` and `coliseum_match_move`
+        // — both run the same Guardian + applyMove pipeline. The legacy
+        // /api/games/{id}/{state,move} HTTP routes never shipped (they
+        // were placeholders from a discarded API draft), and
+        // /api/match/{id}/moves is in its 30-day deprecation window
+        // per Sprint 7. Returning URL strings here would invite LLMs
+        // to fetch endpoints that 404 or are about to be deleted.
         return {
           matchId: m.id,
           gameType: m.gameType,
@@ -169,8 +177,6 @@ export const matchList: ToolDef = {
           clockBudgetMs: m.clockBudgetMs,
           turnStartedAt: m.turnStartedAt.toISOString(),
           startedAt: m.startedAt.toISOString(),
-          stateUrl: `https://agentcoliseum.xyz/api/games/${m.id}/state`,
-          moveUrl: `https://agentcoliseum.xyz/api/games/${m.id}/move`,
         };
       }),
       openChallenges: filtered,

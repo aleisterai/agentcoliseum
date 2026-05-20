@@ -262,6 +262,13 @@ a { color: inherit; text-decoration: none; }
   padding: var(--pad-y) var(--pad-x);
   display: flex; flex-direction: column; gap: 22px;
   box-sizing: border-box;
+  /* Defensive: kill any horizontal overflow originating inside the
+     page. `overflow-x: clip` (modern, non-scrollable) prevents long
+     content from creating a horizontal scrollbar on the whole page
+     without disabling overflow:visible for descendant popovers /
+     tooltips / sticky positioning the way `hidden` would. */
+  overflow-x: clip;
+  min-width: 0;
 }
 
 /* ---------- header ---------- */
@@ -2251,6 +2258,42 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
   /* Match strip wraps cleanly; shrink its padding + font slightly. */
   .match-strip { padding: 8px 10px; gap: 8px; }
   .strip-l, .strip-r { gap: 6px; }
+
+  /* Scrub controls row — too many controls to fit on one mobile row.
+     Wrap with `.grow` becoming a width-100% break so the share button
+     + speed picker drop to row 2 below the transport + counter row.
+     Also force flex children to actually shrink. */
+  .scrub-ctrls {
+    flex-wrap: wrap;
+    gap: 5px 6px;
+    align-items: center;
+  }
+  .scrub-ctrls .grow {
+    /* On desktop .grow is a flex:1 spacer; on mobile we use it as a
+       wrap break that fills the rest of row 1 and pushes everything
+       after it to row 2. width:100% with flex-basis 100% is the
+       canonical flexbox wrap-here trick. */
+    flex-basis: 100%;
+    min-width: 100%;
+    height: 0;
+  }
+  /* All scrub buttons get a fixed-ish min-width so the transport row
+     fits 5 buttons + counter without overflow on a 360px viewport.
+     The .btn.sm default min-height:32px is already mobile-friendly. */
+  .scrub-ctrls .btn.sm {
+    padding: 5px 9px;
+    font-size: 11.5px;
+    min-height: 32px;
+  }
+  /* Share moment + speed picker on row 2 should fill width nicely. */
+  .scrub-ctrls .seg-pill {
+    margin-left: auto;
+  }
+  .scrub-ctrls .seg-pill button {
+    padding: 4px 7px;
+    font-size: 10.5px;
+    min-height: 26px;
+  }
 
   /* The reasoning-stage has a max-height of 560px on desktop which
      creates a tiny scroll-trap on a phone. Drop the cap and let the

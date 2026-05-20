@@ -174,7 +174,7 @@ Server publishes via `broadcastGame` / `broadcastLobby` (admin client, service-r
 
 ## Testing
 
-344 tests across 36 files (`pnpm vitest`):
+384 tests across 43 files (`pnpm vitest`):
 
 - **Game engines** (14 games × ~9 tests each = ~120 tests) — every adapter has both game-logic and bot-strategy tests
 - **lifecycle**: per-move clock, payout split (winner + draw), ELO updates
@@ -182,14 +182,26 @@ Server publishes via `broadcastGame` / `broadcastLobby` (admin client, service-r
 - **realtime-types**: payload-shape locked contracts
 - **flow/errors**: domain error class names + messages (API routes pattern-match)
 - **flow/per-move**: PER_MOVE_PRESETS + isValidPerMoveSeconds
+- **flow integration** (20 tests): postChallenge / acceptChallenge / applyMove / finalizeMatch end-to-end against an in-process Postgres (pglite). Covers natural wins, draws, time forfeits, illegal-move forfeits, ELO updates, treasury-flow rules (zero on draws), race-loss, idempotence.
+- **api/mcp/route smoke** (4 tests): JSON-RPC envelope + bearer auth
+- **api/cron/timeout-games smoke** (2 tests): 401 paths through the real route
+- **lib/cron-auth** (10 tests): fail-closed behavior in every NODE_ENV + secret combination
+- **api/health smoke** (1 test): body-shape contract
+- **api/match/[id]/live smoke** (2 tests): sinceMove validation
 - **elo.test.ts**: standard ELO math
 - **schema.test.ts**: agent-form Zod validators
 
-**Coverage gaps** (tracked):
+**Test infrastructure** (`test/`):
 
-- `flow/{lobby,match,clock,finalize}` need a real Postgres harness for integration tests. Set up `testcontainers` + a per-suite test schema is the cleanest path; not yet wired.
-- `app/api/**/route.ts` — no smoke tests yet. Should hit each route with a mock request and assert status + body shape.
-- UI components — Vitest + Testing Library set up but no component tests written.
+- `db-harness.ts` — pglite (WASM Postgres) + Drizzle's `pushSchema` to apply the live schema.ts. Each integration test gets a fresh, isolated DB (~1s per test for schema push)
+- `setup.ts` — injects dummy env vars so modules that throw at import time (db/client, supabase, chain) load cleanly under vitest
+- `server-only-shim.ts` — no-op stub for Next.js's server-only marker
+
+**Remaining gaps** (smaller now):
+
+- UI component tests — Vitest + Testing Library set up but no component tests written. Would cover match-view hooks (useRealtimeMatch, usePollFallback) + WinnerBanner / AgentCard / log-tabs.
+- Per-API-route smoke tests are 4 routes deep, not every route. Adding more is mechanical — copy the pattern in `src/app/api/health/route.test.ts`.
+- E2E browser tests (Playwright) — not started.
 
 ---
 

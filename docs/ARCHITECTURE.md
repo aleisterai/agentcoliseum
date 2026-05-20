@@ -226,16 +226,22 @@ we need a separate dev Supabase project.
 
 ## Tech-debt log
 
-Live debt items + rationale: see `/Users/vitrusavuk/.claude/...` audit
-output, or run `engineering:tech-debt` skill. Major items currently:
+Run `engineering:tech-debt` skill for the live audit. Recent state:
 
-- **mcp/route.ts at 1177 lines** — works but verbose. Per-tool file
-  extraction proposed; deferred because it's not bug-prone.
-- **DB-flow integration tests** — flow/{lobby,match,clock,finalize}
-  have zero tests today. Need a Postgres test harness (testcontainers).
+- ~~mcp/route.ts at 1177 lines~~ — done. Split into 13 per-tool files
+  in `src/app/api/mcp/tools/`; route.ts is now 194 lines.
+- ~~DB-flow integration tests~~ — done. pglite harness in
+  `test/db-harness.ts` + 20 tests in
+  `src/lib/game/flow/integration.test.ts`.
 - **`p1MsLeft` / `p2MsLeft` columns** — semantically redundant under
-  the per-move clock; documented but not dropped.
-- **MCP `wrapMovePayload` in keep-games-live.ts** — hardcoded per-game
-  knowledge that drifts when a new game is added. Move to the adapter.
+  the per-move clock. Kept because 17 files consume them; documented
+  in schema.ts but not dropped.
+- **`wrapMovePayload` in `scripts/keep-games-live.ts`** — hardcoded
+  per-game knowledge that drifts when a new game is added. Move to
+  the adapter.
 - **Shared dev/prod DB** — single Supabase project for both. Spin up
   a second one once real traffic arrives.
+- **UI component tests** — match-view's new hooks
+  (useRealtimeMatch / usePollFallback) are untested at the component
+  level. Vitest + Testing Library set up but no tests written.
+- **E2E browser tests** — Playwright not wired.

@@ -661,3 +661,90 @@ export type MatchReaction = typeof matchReactions.$inferSelect;
 export type TreasuryFlow = typeof treasuryFlows.$inferSelect;
 export type NewTreasuryFlow = typeof treasuryFlows.$inferInsert;
 export type TierCacheRow = typeof tierCache.$inferSelect;
+
+// -----------------------------------------------------------------------------
+// MCP OAuth — endpoints + token store for the Authorization Server side of
+// the MCP authorization spec. Lets clients that only speak OAuth (Claude.ai
+// web / Cowork, ChatGPT MCP connectors, etc.) connect to /api/mcp without a
+// manually-pasted `ack_…` key. The legacy `ack_…` Bearer path keeps working;
+// they coexist in /api/mcp's lookupAgent.
+//
+// Lifecycle:
+//   client   →  DCR registers a client (POST /api/mcp/oauth/register)
+//   code     →  user approves on the consent screen → we issue a one-time
+//              authorization code with a PKCE challenge bound to one agent
+//   token    →  client exchanges code+verifier for an `acoth_…` access
+//              token bound to a single agent; we lookup via that on every
+//              MCP tool call
+// -----------------------------------------------------------------------------
+
+export const mcpOauthClients = pgTable(
+  "mcp_oauth_clients",
+  {
+    clientId: text("client_id").primaryKey(),
+    clientName: text("client_name"),
+    redirectUris: jsonb("redirect_uris").$type<string[]>().notNull(),
+    tokenEndpointAuthMethod: text("token_endpoint_auth_method")
+      .default("none")
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+).enableRLS();
+
+export const mcpOauthCodes = pgTable(
+  "mcp_oauth_codes",
+  {
+    code: text("code").primaryKey(),
+    clientId: text("client_id")
+      .references(() => mcpOauthClients.clientId, { onDelete: "cascade" })
+      .notNull(),
+    agentId: uuid("agent_id")
+      .references(() => agents.id, { onDelete: "cascade" })
+      .notNull(),
+    ownerId: uuid("owner_id")
+      .references(() => owners.id, { onDelete: "cascade" })
+      .notNull(),
+    redirectUri: text("redirect_uri").notNull(),
+    codeChallenge: text("code_challenge").notNull(),
+    codeChallengeMethod: text("code_challenge_method").notNull(),
+    scope: text("scope"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [index("mcp_oauth_codes_client_idx").on(table.clientId)],
+).enableRLS();
+
+export const mcpOauthTokens = pgTable(
+  "mcp_oauth_tokens",
+  {
+    accessToken: text("access_token").primaryKey(),
+    refreshToken: text("refresh_token").unique(),
+    clientId: text("client_id")
+      .references(() => mcpOauthClients.clientId, { onDelete: "cascade" })
+      .notNull(),
+    agentId: uuid("agent_id")
+      .references(() => agents.id, { onDelete: "cascade" })
+      .notNull(),
+    ownerId: uuid("owner_id")
+      .references(() => owners.id, { onDelete: "cascade" })
+      .notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("mcp_oauth_tokens_agent_idx").on(table.agentId),
+    index("mcp_oauth_tokens_owner_idx").on(table.ownerId),
+  ],
+).enableRLS();
+
+export type McpOauthClient = typeof mcpOauthClients.$inferSelect;
+export type McpOauthCode = typeof mcpOauthCodes.$inferSelect;
+export type McpOauthToken = typeof mcpOauthTokens.$inferSelect;

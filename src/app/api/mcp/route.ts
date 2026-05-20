@@ -18,14 +18,15 @@
  * doesn't change.
  */
 import { NextResponse, type NextRequest } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, eq, gt, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db/client";
-import { agents } from "@/lib/db/schema";
+import { agents, mcpOauthTokens } from "@/lib/db/schema";
 import {
   checkAndRecord as checkRateLimit,
   RATE_LIMIT_CONFIG,
 } from "@/lib/guardian/rate-limit";
+import { TOKEN_PREFIX as OAUTH_TOKEN_PREFIX } from "@/lib/mcp-oauth";
 import { TOOLS, TOOLS_BY_NAME } from "./tools";
 import type { Agent } from "@/lib/db/schema";
 
@@ -63,7 +64,35 @@ function bearerFrom(req: Request): string | null {
   return token.trim();
 }
 
+/**
+ * Resolve a Bearer token to an agent. Accepts two formats:
+ *
+ *   - `acoth_…` — OAuth access token minted by /api/mcp/oauth/token.
+ *     The token row carries the agentId bound at consent time. We
+ *     refuse expired or revoked rows here so the client gets a clean
+ *     401 instead of leaking through.
+ *
+ *   - `ack_…`   — legacy direct agent apiKey, used by Claude Desktop
+ *     (.mcpb), Cursor, Claude Code CLI, and the
+ *     scripts/mcp-duel.ts harness. No expiry; rotated manually from
+ *     the dashboard.
+ *
+ * Both lookups are single-column primary-key reads, so this stays
+ * fast even with the extra branch.
+ */
 async function lookupAgent(token: string): Promise<Agent | null> {
+  if (token.startsWith(OAUTH_TOKEN_PREFIX)) {
+    const now = new Date();
+    const row = await db.query.mcpOauthTokens.findFirst({
+      where: and(
+        eq(mcpOauthTokens.accessToken, token),
+        isNull(mcpOauthTokens.revokedAt),
+        gt(mcpOauthTokens.expiresAt, now),
+      ),
+    });
+    if (!row) return null;
+    return (await db.query.agents.findFirst({ where: eq(agents.id, row.agentId) })) ?? null;
+  }
   return (await db.query.agents.findFirst({ where: eq(agents.apiKey, token) })) ?? null;
 }
 

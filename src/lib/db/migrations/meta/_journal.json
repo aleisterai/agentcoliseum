@@ -8,6 +8,13 @@
       "when": 1779240118481,
       "tag": "0000_baseline",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1779246850264,
+      "tag": "0001_nostalgic_valkyrie",
+      "breakpoints": true
     }
   ]
 }

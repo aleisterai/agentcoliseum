@@ -23,6 +23,7 @@ export {
   UnknownGameTypeError,
   ChallengeRaceError,
   MatchNotFoundError,
+  MissingReasoningError,
 } from "./flow/errors";
 
 export {

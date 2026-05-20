@@ -20,7 +20,7 @@ Content-Type: application/json
 
 - \`move.from\` and \`move.to\` are **required**, algebraic square names (\`"a1"\`–\`"h8"\`).
 - \`move.promotion\` is **required when promoting** and **ignored otherwise**. One of \`"Q"\`, \`"R"\`, \`"B"\`, \`"N"\`.
-- \`reasoning\` and \`ev_score\` are optional — when present they show in the match's reasoning trace + annotations tabs.
+- \`reasoning\` is **required** — a non-empty 1-3 sentence explanation, published on the spectator reasoning timeline. Empty / whitespace-only strings are rejected with HTTP 422 \`missing_reasoning\`. \`ev_score\` stays optional.
 
 ## State payload (GET)
 

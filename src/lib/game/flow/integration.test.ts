@@ -80,7 +80,13 @@ const {
   NotYourTurnError,
   ChallengeRaceError,
   MatchNotFoundError,
+  MissingReasoningError,
 } = await import("./errors");
+
+// Shared test reasoning — applyMove now requires non-empty reasoning so
+// every test that submits a move must include one. Kept generic + short
+// so the tests focus on the move-handling behaviour, not the prose.
+const R = "test reasoning";
 
 // ----- Helpers --------------------------------------------------------------
 
@@ -337,6 +343,7 @@ describe("applyMove", () => {
           matchId: "00000000-0000-0000-0000-000000000000",
           agentId: agent.id,
           payload: { index: 0 },
+          reasoning: R,
           thinkingMs: 100,
         }),
       ).rejects.toBeInstanceOf(MatchNotFoundError);
@@ -364,6 +371,7 @@ describe("applyMove", () => {
           matchId: match.id,
           agentId: p2.id,
           payload: { index: 4 },
+          reasoning: R,
           thinkingMs: 100,
         }),
       ).rejects.toBeInstanceOf(NotYourTurnError);
@@ -389,6 +397,7 @@ describe("applyMove", () => {
         matchId: match.id,
         agentId: p1.id,
         payload: { index: 4 }, // center
+        reasoning: R,
         thinkingMs: 200,
       });
       expect(updated.status).toBe("active");
@@ -400,6 +409,64 @@ describe("applyMove", () => {
         .where(eq(matchMoves.matchId, match.id));
       expect(moves).toHaveLength(1);
       expect((moves[0].payload as { index: number }).index).toBe(4);
+    });
+  });
+
+  it("rejects a move with missing / empty / whitespace-only reasoning", async () => {
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent: p1 } = await seedOwnerAgent(db, { handle: "p1" });
+      const { agent: p2 } = await seedOwnerAgent(db, { handle: "p2" });
+      const created = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: p1.id,
+        mode: "free",
+      });
+      if (created.kind !== "challenge") throw new Error("expected challenge");
+      const match = await acceptChallenge({
+        challengeId: created.challenge.id,
+        acceptorAgentId: p2.id,
+      });
+
+      // Empty string.
+      await expect(
+        applyMove({
+          matchId: match.id,
+          agentId: p1.id,
+          payload: { index: 4 },
+          reasoning: "",
+          thinkingMs: 50,
+        }),
+      ).rejects.toBeInstanceOf(MissingReasoningError);
+
+      // Whitespace-only.
+      await expect(
+        applyMove({
+          matchId: match.id,
+          agentId: p1.id,
+          payload: { index: 4 },
+          reasoning: "   \n\t  ",
+          thinkingMs: 50,
+        }),
+      ).rejects.toBeInstanceOf(MissingReasoningError);
+
+      // No move row was written despite multiple rejected calls.
+      const rows = await db
+        .select()
+        .from(matchMoves)
+        .where(eq(matchMoves.matchId, match.id));
+      expect(rows).toHaveLength(0);
+
+      // The same move with valid reasoning still works — proves the
+      // reject path didn't otherwise corrupt the match state.
+      const ok = await applyMove({
+        matchId: match.id,
+        agentId: p1.id,
+        payload: { index: 4 },
+        reasoning: "claim the center",
+        thinkingMs: 50,
+      });
+      expect(ok.moveCount).toBe(1);
     });
   });
 
@@ -424,6 +491,7 @@ describe("applyMove", () => {
           matchId: match.id,
           agentId: p1.id,
           payload: { index: 99 }, // out of range
+          reasoning: R,
           thinkingMs: 50,
         }),
       ).rejects.toBeInstanceOf(IllegalMoveError);
@@ -432,6 +500,7 @@ describe("applyMove", () => {
         matchId: match.id,
         agentId: p1.id,
         payload: { index: 99 },
+        reasoning: R,
         thinkingMs: 50,
       });
       expect(result.status).toBe("completed");
@@ -469,6 +538,7 @@ describe("applyMove", () => {
           matchId: match.id,
           agentId: aId,
           payload: { index: idx },
+          reasoning: R,
           thinkingMs: 100,
         });
       }

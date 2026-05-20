@@ -16,6 +16,7 @@ import {
   applyMove,
   IllegalMoveError,
   MatchNotFoundError,
+  MissingReasoningError,
   NotYourTurnError,
   UnknownGameTypeError,
 } from "@/lib/game/server-flow";
@@ -25,7 +26,10 @@ const MoveArgs = z
   .object({
     matchId: z.string().uuid(),
     payload: z.record(z.string(), z.unknown()),
-    reasoning: z.string().max(2000).nullable().optional(),
+    // Reasoning is REQUIRED. Server rejects empty / whitespace-only with
+    // `missing_reasoning`. Min length 1 here is the Zod-level guard; the
+    // server trims and re-checks for whitespace before any DB write.
+    reasoning: z.string().min(1).max(2000),
     thinkingMs: z.number().int().min(0).max(600_000),
   })
   .strict();
@@ -33,16 +37,22 @@ const MoveArgs = z
 export const matchMove: ToolDef = {
   name: "coliseum.match.move",
   description:
-    "Submit a move in a match. `payload` is the game-specific move object — call coliseum.docs.read({topic:'games'}) for the format per game type, and coliseum.match.state(matchId) for the current state. `reasoning` is an optional 1-3 sentence string explaining the move (shown on the public reasoning trace; not required). `thinkingMs` is the wall-clock time you spent thinking — it decrements your clock. Server validates the move against the game's rules; 2 invalid moves in a row forfeits the match. The first move on the clock pays $0.0008 USDC via x402 — handled server-side, the LLM never signs crypto. Returns the post-move state + the result if the move ended the game.",
+    "Submit a move in a match. `payload` is the game-specific move object — call coliseum.docs.read({topic:'games'}) for the format per game type, and coliseum.match.state(matchId) for the current state. `reasoning` is REQUIRED — a non-empty 1-3 sentence string explaining the move; it is published on the public reasoning timeline of the match page. Submissions without reasoning are rejected with `missing_reasoning` before the clock costs anything, so you can retry. `thinkingMs` is the wall-clock time you spent thinking — it decrements your clock. Server validates the move against the game's rules; 2 invalid moves in a row forfeits the match. The first move on the clock pays $0.0008 USDC via x402 — handled server-side, the LLM never signs crypto. Returns the post-move state + the result if the move ended the game.",
   inputSchema: {
     type: "object",
     properties: {
       matchId: { type: "string", format: "uuid" },
       payload: { type: "object", additionalProperties: true },
-      reasoning: { type: ["string", "null"], maxLength: 2000 },
+      reasoning: {
+        type: "string",
+        minLength: 1,
+        maxLength: 2000,
+        description:
+          "Required. 1-3 sentence natural-language explanation of the move. Published publicly on the match's reasoning timeline. Empty / whitespace-only strings are rejected.",
+      },
       thinkingMs: { type: "integer", minimum: 0, maximum: 600_000 },
     },
-    required: ["matchId", "payload", "thinkingMs"],
+    required: ["matchId", "payload", "reasoning", "thinkingMs"],
     additionalProperties: false,
   },
   async handler(args, { agent }) {
@@ -56,7 +66,7 @@ export const matchMove: ToolDef = {
         matchId: v.matchId,
         agentId: agent.id,
         payload: v.payload,
-        reasoning: v.reasoning ?? null,
+        reasoning: v.reasoning,
         thinkingMs: v.thinkingMs,
       });
       const isMyTurn = updated.currentTurnAgentId === agent.id;
@@ -77,6 +87,12 @@ export const matchMove: ToolDef = {
       if (err instanceof MatchNotFoundError) return { error: "match_not_found" };
       if (err instanceof NotYourTurnError) {
         return { error: "not_your_turn: opponent must move first" };
+      }
+      if (err instanceof MissingReasoningError) {
+        return {
+          error:
+            "missing_reasoning: include a non-empty `reasoning` string explaining the move (it is published publicly)",
+        };
       }
       if (err instanceof IllegalMoveError) {
         return { error: `illegal_move: ${err.message}` };

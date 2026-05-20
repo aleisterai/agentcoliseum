@@ -24,6 +24,7 @@ import type { MovePlayedPayload } from "@/lib/realtime-types";
 import {
   IllegalMoveError,
   MatchNotFoundError,
+  MissingReasoningError,
   NotYourTurnError,
   UnknownGameTypeError,
 } from "./errors";
@@ -33,13 +34,42 @@ export interface ApplyMoveInput {
   matchId: string;
   agentId: string;
   payload: unknown;
-  reasoning?: string | null;
+  /**
+   * Required. 1-3 sentence natural-language explanation of the move.
+   * Stored on `match_moves.reasoning` and surfaced on the spectator
+   * match page (reasoning timeline + annotations tab). Server enforces:
+   * if missing, empty, or whitespace-only the call throws
+   * `MissingReasoningError` BEFORE any DB write or clock cost — agents
+   * can retry safely. Capped at 1000 chars; longer strings are
+   * truncated.
+   */
+  reasoning: string;
   evScore?: number | null;
   thinkingMs: number;
   x402PaymentId?: string | null;
 }
 
+/**
+ * Trim + sanity-check the reasoning string. Returns the cleaned value
+ * on success, throws `MissingReasoningError` if the string is missing,
+ * empty, or pure whitespace.
+ *
+ * Reasoning is mandatory: it's the product (spectators tune in to read
+ * the AI's thinking) and it's the audit trail (every move on Coliseum
+ * has an attached natural-language explanation). Bots in dev synthesize
+ * a short heuristic string; production agents must publish their own.
+ */
+function requireReasoning(raw: string | null | undefined): string {
+  const trimmed = (raw ?? "").trim();
+  if (!trimmed) throw new MissingReasoningError();
+  return trimmed.slice(0, 1000);
+}
+
 export async function applyMove(input: ApplyMoveInput): Promise<Match> {
+  // Reasoning is mandatory and is checked BEFORE any DB read so a bad
+  // submission doesn't burn the clock or DB connections.
+  const reasoning = requireReasoning(input.reasoning);
+
   const match = await db.query.matches.findFirst({ where: eq(matches.id, input.matchId) });
   if (!match) throw new MatchNotFoundError();
   if (match.status !== "active") throw new IllegalMoveError("not_active");
@@ -102,7 +132,7 @@ export async function applyMove(input: ApplyMoveInput): Promise<Match> {
     throw new IllegalMoveError("engine_rejected");
   }
 
-  const reasoning = (input.reasoning ?? "").slice(0, 1000) || null;
+  // `reasoning` was already validated + trimmed at the top of applyMove.
   const moveNumber = match.moveCount;
 
   await db.insert(matchMoves).values({
@@ -214,12 +244,19 @@ export async function driveSystemBot(match: Match): Promise<Match> {
   const moveNumber = match.moveCount;
   const thinkingMs = Math.max(50, Date.now() - start);
 
+  // System-bot moves must publish reasoning too — Coliseum's spectator
+  // contract is that every move has a natural-language explanation. The
+  // bots don't have LLMs attached, so we synthesize a short heuristic
+  // label keyed to difficulty (the depth-N hint signals search strength).
+  const botReasoning = syntheticBotReasoning(difficulty);
+
   await db.insert(matchMoves).values({
     matchId: match.id,
     moveNumber,
     agentId: null,
     playerId: botPid,
     payload: { auto: true, raw: move } as object,
+    reasoning: botReasoning,
     stateAfter: nextState as unknown as object,
     thinkingMs,
   });
@@ -255,7 +292,7 @@ export async function driveSystemBot(match: Match): Promise<Match> {
     matchId: match.id,
     moveNumber,
     payload: { auto: true },
-    reasoning: null,
+    reasoning: botReasoning,
     evScore: null,
     thinkingMs,
     x402PaymentId: null,
@@ -270,4 +307,38 @@ export async function driveSystemBot(match: Match): Promise<Match> {
   };
   await broadcastGame(match.id, realtimeEvent.MovePlayed, systemBotPayload);
   return updated;
+}
+
+/**
+ * Short canned-but-believable reasoning lines for in-app system bots.
+ * The bots run minimax / heuristics — there's no LLM to ask for a real
+ * explanation — but Coliseum's spectator contract requires reasoning on
+ * every move. We surface the difficulty hint so spectators can see that
+ * the bot's "thinking" matches its play strength.
+ */
+const SYNTHETIC_BOT_LINES = [
+  "Center control prioritized.",
+  "Blocking opponent threat.",
+  "Building toward 2-move tactic.",
+  "Defending key square.",
+  "Pressuring opponent territory.",
+  "Maintaining tempo.",
+  "Forced response sequence.",
+  "Maximizing material balance.",
+  "Setting up endgame structure.",
+  "Trading favorable position.",
+  "Cutting opponent's options.",
+  "Activating a piece.",
+];
+
+function syntheticBotReasoning(difficulty: "easy" | "medium" | "hard"): string {
+  const line =
+    SYNTHETIC_BOT_LINES[Math.floor(Math.random() * SYNTHETIC_BOT_LINES.length)];
+  const tag =
+    difficulty === "hard"
+      ? "depth-6 negamax"
+      : difficulty === "medium"
+        ? "depth-3 search"
+        : "heuristic";
+  return `${line} (${tag})`;
 }

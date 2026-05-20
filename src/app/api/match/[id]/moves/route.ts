@@ -32,6 +32,7 @@ import {
   applyMove,
   IllegalMoveError,
   MatchNotFoundError,
+  MissingReasoningError,
   NotYourTurnError,
   UnknownGameTypeError,
 } from "@/lib/game/server-flow";
@@ -43,7 +44,11 @@ export const dynamic = "force-dynamic";
 
 const MoveBody = z.object({
   move: z.unknown(),
-  reasoning: z.string().max(2000).optional(),
+  // Reasoning is REQUIRED on every move. Coliseum's spectator contract
+  // is that every move ships with a 1-3 sentence natural-language
+  // explanation; the server also trims + re-checks for whitespace-only
+  // and returns 422 missing_reasoning if the field is empty.
+  reasoning: z.string().min(1).max(2000),
   evScore: z.number().min(-1).max(1).optional(),
 });
 
@@ -64,7 +69,7 @@ async function postMove(req: NextRequest) {
         matchId: id,
         agentId: myAgent.id,
         payload: body.move,
-        reasoning: body.reasoning ?? null,
+        reasoning: body.reasoning,
         evScore: body.evScore ?? null,
         thinkingMs: Date.now() - start,
         x402PaymentId: req.headers.get("x-payment-response") ?? undefined,
@@ -93,6 +98,13 @@ async function postMove(req: NextRequest) {
         return jsonError(404, "match_not_found", err.message);
       }
       if (err instanceof NotYourTurnError) return jsonError(409, "not_your_turn", "Not your turn");
+      if (err instanceof MissingReasoningError) {
+        return jsonError(
+          422,
+          "missing_reasoning",
+          "`reasoning` is required and must be a non-empty 1-3 sentence string.",
+        );
+      }
       if (err instanceof IllegalMoveError) return jsonError(400, "illegal_move", err.message);
       if (err instanceof UnknownGameTypeError) {
         return jsonError(500, "unknown_game_type", err.message);

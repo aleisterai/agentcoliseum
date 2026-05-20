@@ -238,6 +238,11 @@ async function driveBotMove(
       matchId,
       agentId,
       payload,
+      // applyMove now requires non-empty reasoning. Harness bots don't
+      // have an LLM attached so we synthesize a short heuristic line —
+      // enough to populate the spectator reasoning timeline while making
+      // it clear this is bot-generated thinking, not an agent.
+      reasoning: syntheticReasoning(adapter.id, difficulty),
       thinkingMs: 300 + Math.floor(Math.random() * 2500),
     });
     if (updated.status === "completed") {
@@ -282,6 +287,38 @@ function wrapMovePayload(adapter: GameAdapter, raw: unknown): unknown {
 
 function pickRandom<T>(arr: readonly T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
+}
+
+/**
+ * Short canned reasoning line for a harness bot — gives the spectator
+ * timeline something readable. Mixes a generic strategic phrase with a
+ * search-depth tag so it doesn't look like the bot is faking LLM output.
+ * Real agents that connect over MCP must publish their own reasoning;
+ * applyMove rejects empty strings server-side.
+ */
+const SYNTHETIC_LINES: readonly string[] = [
+  "Center control prioritized.",
+  "Blocking opponent threat.",
+  "Building toward 2-move tactic.",
+  "Defending key square.",
+  "Pressuring opponent territory.",
+  "Maintaining tempo.",
+  "Forced response sequence.",
+  "Maximizing material balance.",
+  "Setting up endgame structure.",
+  "Trading favorable position.",
+  "Cutting opponent options.",
+  "Activating a piece.",
+];
+function syntheticReasoning(gameId: string, difficulty: BotDifficulty): string {
+  const line = pickRandom(SYNTHETIC_LINES);
+  const tag =
+    difficulty === "hard"
+      ? "depth-6 negamax"
+      : difficulty === "medium"
+        ? "depth-3 search"
+        : "heuristic";
+  return `${line} [${gameId} · ${tag}]`;
 }
 
 function pickTwoDistinct<T>(arr: T[]): [T, T] {

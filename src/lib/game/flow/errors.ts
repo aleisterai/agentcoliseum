@@ -41,3 +41,21 @@ export class MatchNotFoundError extends Error {
     this.name = "MatchNotFoundError";
   }
 }
+
+/**
+ * Thrown when a move is submitted without per-move reasoning. Coliseum's
+ * spectator contract is that every move must publish a 1-3 sentence
+ * natural-language explanation — both because it's the product (people
+ * watch to read AI reasoning) and because it gives auditors a paper
+ * trail. The MCP tool and the legacy HTTP route both reject moves that
+ * trip this; the API surface returns `error: "missing_reasoning"` and
+ * the legacy HTTP route returns 422.
+ */
+export class MissingReasoningError extends Error {
+  constructor() {
+    super(
+      "missing_reasoning: per-move reasoning is required (non-empty 1-3 sentence string)",
+    );
+    this.name = "MissingReasoningError";
+  }
+}

@@ -5,11 +5,25 @@
  * deliberately don't expose other agents' games via MCP — spectator
  * surface is the public web UI.
  *
- * Returned fields are framed from the calling agent's POV:
- *   myPlayerId  "0" if you're p1, "1" if you're p2
- *   myMsLeft    your per-move budget (resets every move)
- *   isMyTurn    true if currentTurnAgentId === yours
- *   lastMove.byMe  true if YOU made the last move (avoids re-applying)
+ * Returned fields are framed from the calling agent's POV. The clock
+ * model is per-move, **wall-clock**: every move you have `clockBudgetMs`
+ * milliseconds; the timer resets after every accepted move and counts
+ * down from `turnStartedAt`. Three derived fields make the wall-clock
+ * pressure legible to an LLM that does NOT track elapsed time:
+ *
+ *   myMsLeft       per-move BUDGET (static, == clockBudgetMs)
+ *   myMsLeftLive   LIVE remaining ms = clockBudgetMs - (now - turnStartedAt)
+ *                  clamped to >= 0. THIS is the number to watch.
+ *   turnDeadline   ISO timestamp when your clock hits 0 (turnStartedAt
+ *                  + clockBudgetMs). Compare against your wall clock.
+ *   urgency        'fresh' (≥66% left) | 'half' (33-66%) | 'low' (10-33%) |
+ *                  'critical' (<10%) — quick categorical hint so the LLM
+ *                  can short-circuit deep thinking when ms are tight.
+ *
+ * `myMsLeftLive` / `turnDeadline` / `urgency` apply to *your* clock when
+ * `isMyTurn` is true; when it's the opponent's turn they describe the
+ * opponent's pressure (and `myMsLeftLive` equals `clockBudgetMs` since
+ * your clock isn't ticking).
  */
 
 import { desc, eq } from "drizzle-orm";
@@ -20,10 +34,20 @@ import type { ToolDef } from "./_types";
 
 const StateArgs = z.object({ matchId: z.string().uuid() }).strict();
 
+/** Categorical urgency hint from % of clock remaining. */
+function computeUrgency(msLeft: number, budget: number): "fresh" | "half" | "low" | "critical" {
+  if (budget <= 0) return "critical";
+  const pct = msLeft / budget;
+  if (pct >= 0.66) return "fresh";
+  if (pct >= 0.33) return "half";
+  if (pct >= 0.1) return "low";
+  return "critical";
+}
+
 export const matchState: ToolDef = {
   name: "coliseum_match_state",
   description:
-    "Read the current state of one match: board (game-specific JSON), whose turn it is, ms left on each clock, move count, status, invalid-move counter, and the last move's payload + reasoning. Always call this before coliseum_match_move so your move targets the live state — the clock decrements between requests and someone else may have moved.",
+    "Read the current state of one match: board (game-specific JSON), whose turn it is, ms left on each clock, move count, status, invalid-move counter, and the last move's payload + reasoning. **Clock is per-move wall-clock** — every move you have `clockBudgetMs` ms; the timer resets after every accepted move and counts down from `turnStartedAt`. The fields to watch: `myMsLeftLive` (live remaining ms, decrements in real time), `turnDeadline` (ISO timestamp the clock hits 0), and `urgency` ('fresh'|'half'|'low'|'critical'). `myMsLeft` is the static BUDGET (== clockBudgetMs) — do NOT confuse it with live remaining time. Always call this before coliseum_match_move so your move targets the live state and so you see how much wall-clock time you actually have left.",
   inputSchema: {
     type: "object",
     properties: {
@@ -69,6 +93,33 @@ export const matchState: ToolDef = {
       .where(eq(matchMoves.matchId, match.id))
       .orderBy(desc(matchMoves.moveNumber))
       .limit(1);
+
+    // Wall-clock derivation — game-agnostic since every match in
+    // every game uses the same per-move clock model (see
+    // src/lib/game/lifecycle.ts:clockExpired). Fixed in one place
+    // applies to all 14 games.
+    const now = new Date();
+    const isMyTurn = match.currentTurnAgentId === agent.id;
+    const clockIsTickingOnSomeone = match.status === "active";
+    const elapsedThisTurn = Math.max(0, now.getTime() - match.turnStartedAt.getTime());
+    const liveRemaining = clockIsTickingOnSomeone
+      ? Math.max(0, match.clockBudgetMs - elapsedThisTurn)
+      : match.clockBudgetMs;
+    // `myMsLeftLive` only counts down while it's your move. When it's
+    // the opponent's turn your clock isn't ticking, so you have the full
+    // budget waiting for you on your next move.
+    const myMsLeftLive = isMyTurn ? liveRemaining : match.clockBudgetMs;
+    const opponentMsLeftLive = !isMyTurn && clockIsTickingOnSomeone
+      ? liveRemaining
+      : match.clockBudgetMs;
+    const turnDeadline = clockIsTickingOnSomeone
+      ? new Date(match.turnStartedAt.getTime() + match.clockBudgetMs).toISOString()
+      : null;
+    const urgency = computeUrgency(
+      isMyTurn ? myMsLeftLive : opponentMsLeftLive,
+      match.clockBudgetMs,
+    );
+
     return {
       matchId: match.id,
       gameType: match.gameType,
@@ -78,11 +129,26 @@ export const matchState: ToolDef = {
       potUsdc: match.potUsdc,
       moveCount: match.moveCount,
       myPlayerId,
+      // Per-move BUDGET (static, equals clockBudgetMs). Use myMsLeftLive
+      // for live remaining time.
       myMsLeft,
       opponentMsLeft,
+      // Live wall-clock remaining for the current mover (and for you on
+      // your next move when isMyTurn is false). Decrements every call.
+      myMsLeftLive,
+      opponentMsLeftLive,
+      // ISO timestamp the current mover's clock hits zero. Null on
+      // non-active matches.
+      turnDeadline,
+      // 'fresh' | 'half' | 'low' | 'critical' — derived from
+      // (live remaining) / clockBudgetMs for whoever is on move.
+      urgency,
       clockBudgetMs: match.clockBudgetMs,
+      // Server time at response generation. Compare to turnDeadline
+      // if you re-derive remaining ms locally.
+      serverNow: now.toISOString(),
       myInvalidCount,
-      isMyTurn: match.currentTurnAgentId === agent.id,
+      isMyTurn,
       currentTurnAgentId: match.currentTurnAgentId,
       turnStartedAt: match.turnStartedAt.toISOString(),
       startedAt: match.startedAt.toISOString(),

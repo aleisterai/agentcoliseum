@@ -826,3 +826,240 @@ describe("finalizeMatch", () => {
     });
   });
 });
+
+// ----- coliseum_match_state: wall-clock surface ---------------------------
+//
+// The MCP tool layer that surfaces match state must publish live
+// wall-clock remaining (not just the per-move budget) so an LLM that
+// doesn't track elapsed time itself can decide whether to ship now or
+// keep thinking. The fix lives in the MCP tool layer, which is
+// game-agnostic — every one of the 14 games shares the same
+// `coliseum_match_state` + `clockBudgetMs` + `turnStartedAt` columns,
+// so a test against ANY game type validates the contract for ALL of
+// them.
+//
+// We parameterize across 3 representative game types (tic-tac-toe,
+// connect4, chess) to document the per-game-agnostic claim. Adding a
+// new game does not require adding a new clock test — the wall-clock
+// fields are produced by the tool, not the game adapter.
+
+describe("coliseum_match_state — wall-clock fields (all games)", () => {
+  beforeEach(() => {
+    currentDb = null;
+  });
+  afterEach(() => {
+    currentDb = null;
+  });
+
+  for (const gameType of ["tic-tac-toe", "connect4", "chess"] as const) {
+    it(`returns myMsLeftLive + turnDeadline + urgency for ${gameType}`, async () => {
+      const { matchState } = await import("@/app/api/mcp/tools/match-state");
+      await withTestDb(async ({ db }) => {
+        currentDb = db;
+        const { agent } = await seedOwnerAgent(db, { handle: `wc_${gameType}` });
+
+        // System-mode propose creates an active match with p1=agent on
+        // move first, clockBudgetMs floored at 60_000.
+        const r = await postChallenge({
+          gameType,
+          initiatorAgentId: agent.id,
+          mode: "system",
+          systemBotDifficulty: "easy",
+        });
+        if (r.kind !== "match") throw new Error("expected match");
+        const matchId = r.match.id;
+
+        // Set turnStartedAt 10 seconds ago so myMsLeftLive should
+        // show ~50_000ms left out of the 60_000 budget.
+        const tenSecAgo = new Date(Date.now() - 10_000);
+        await db
+          .update(matches)
+          .set({ turnStartedAt: tenSecAgo })
+          .where(eq(matches.id, matchId));
+
+        const state = (await matchState.handler(
+          { matchId },
+          { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
+        )) as Record<string, unknown>;
+
+        // Static budget field stays equal to clockBudgetMs.
+        expect(state.clockBudgetMs).toBe(60_000);
+        expect(state.myMsLeft).toBe(60_000);
+
+        // Live remaining decrements with wall clock — ~50s with some
+        // tolerance for test-runner jitter.
+        expect(state.myMsLeftLive).toBeGreaterThan(45_000);
+        expect(state.myMsLeftLive).toBeLessThan(55_000);
+
+        // Urgency is categorical: ~83% remaining = 'fresh'.
+        expect(state.urgency).toBe("fresh");
+
+        // turnDeadline is an ISO timestamp ~50s in the future.
+        expect(typeof state.turnDeadline).toBe("string");
+        const deadlineMs = new Date(state.turnDeadline as string).getTime();
+        const expectedDeadline = tenSecAgo.getTime() + 60_000;
+        expect(Math.abs(deadlineMs - expectedDeadline)).toBeLessThan(1000);
+
+        // It is the agent's turn (p1 in system mode).
+        expect(state.isMyTurn).toBe(true);
+      });
+    });
+  }
+
+  it("urgency tiers correctly: fresh / half / low / critical", async () => {
+    const { matchState } = await import("@/app/api/mcp/tools/match-state");
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent } = await seedOwnerAgent(db, { handle: "urgency" });
+      const r = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: agent.id,
+        mode: "system",
+        systemBotDifficulty: "easy",
+      });
+      if (r.kind !== "match") throw new Error("expected match");
+      const matchId = r.match.id;
+      const budget = 60_000;
+
+      // fresh: just started — 100% remaining
+      let state = (await matchState.handler(
+        { matchId },
+        { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
+      )) as Record<string, unknown>;
+      expect(state.urgency).toBe("fresh");
+
+      // half: 50% remaining = 30s elapsed
+      await db
+        .update(matches)
+        .set({ turnStartedAt: new Date(Date.now() - 30_000) })
+        .where(eq(matches.id, matchId));
+      state = (await matchState.handler(
+        { matchId },
+        { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
+      )) as Record<string, unknown>;
+      expect(state.urgency).toBe("half");
+
+      // low: 20% remaining = 48s elapsed
+      await db
+        .update(matches)
+        .set({ turnStartedAt: new Date(Date.now() - 48_000) })
+        .where(eq(matches.id, matchId));
+      state = (await matchState.handler(
+        { matchId },
+        { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
+      )) as Record<string, unknown>;
+      expect(state.urgency).toBe("low");
+
+      // critical: 5% remaining = 57s elapsed
+      await db
+        .update(matches)
+        .set({ turnStartedAt: new Date(Date.now() - 57_000) })
+        .where(eq(matches.id, matchId));
+      state = (await matchState.handler(
+        { matchId },
+        { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
+      )) as Record<string, unknown>;
+      expect(state.urgency).toBe("critical");
+      expect(state.myMsLeftLive).toBeLessThan(budget * 0.1);
+    });
+  });
+
+  it("myMsLeftLive does NOT decrement when it's the opponent's turn", async () => {
+    const { matchState } = await import("@/app/api/mcp/tools/match-state");
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent: p1 } = await seedOwnerAgent(db, { handle: "wc_p1" });
+      const { agent: p2 } = await seedOwnerAgent(db, { handle: "wc_p2", elo: 1200 });
+
+      const challenge = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: p1.id,
+        mode: "free",
+      });
+      if (challenge.kind !== "challenge") throw new Error("expected challenge");
+
+      const match = await acceptChallenge({
+        challengeId: challenge.challenge.id,
+        acceptorAgentId: p2.id,
+      });
+
+      // p1 is on move first. From p2's POV (off-turn), myMsLeftLive
+      // should equal the full budget regardless of how much time has
+      // passed.
+      await db
+        .update(matches)
+        .set({ turnStartedAt: new Date(Date.now() - 30_000) })
+        .where(eq(matches.id, match.id));
+
+      const p2State = (await matchState.handler(
+        { matchId: match.id },
+        { agent: { id: p2.id, ownerId: p2.ownerId } } as never,
+      )) as Record<string, unknown>;
+
+      expect(p2State.isMyTurn).toBe(false);
+      // p2's own clock isn't ticking, so myMsLeftLive is the full budget.
+      expect(p2State.myMsLeftLive).toBe(p2State.clockBudgetMs);
+      // But the OPPONENT (p1) IS under pressure — their live remaining
+      // should be ~30s less than budget.
+      expect(p2State.opponentMsLeftLive).toBeLessThan(p2State.clockBudgetMs as number);
+    });
+  });
+});
+
+// ----- coliseum_match_move — thinkingMs is optional ----------------------
+describe("coliseum_match_move — server-fills thinkingMs when omitted", () => {
+  beforeEach(() => {
+    currentDb = null;
+  });
+  afterEach(() => {
+    currentDb = null;
+  });
+
+  it("accepts a move without thinkingMs; published value reflects wall-clock", async () => {
+    const { matchMove } = await import("@/app/api/mcp/tools/match-move");
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent } = await seedOwnerAgent(db, { handle: "thinker" });
+      const r = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: agent.id,
+        mode: "system",
+        systemBotDifficulty: "easy",
+      });
+      if (r.kind !== "match") throw new Error("expected match");
+      const matchId = r.match.id;
+
+      // Pin turnStartedAt 4 seconds in the past — the server's
+      // computed thinkingMs should land around 4_000ms.
+      const startedAt = new Date(Date.now() - 4_000);
+      await db
+        .update(matches)
+        .set({ turnStartedAt: startedAt })
+        .where(eq(matches.id, matchId));
+
+      // Notice: NO thinkingMs in the payload. tic-tac-toe payload is
+      // { index: 0..8 }.
+      const out = (await matchMove.handler(
+        {
+          matchId,
+          payload: { index: 0 },
+          reasoning: R,
+        },
+        { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
+      )) as Record<string, unknown>;
+
+      // The move was accepted (no error key).
+      expect(out.error).toBeUndefined();
+      expect(out.moveCount).toBeGreaterThan(0);
+
+      // The persisted thinkingMs on the move row should match wall
+      // clock (server-filled).
+      const [move0] = await db
+        .select()
+        .from(matchMoves)
+        .where(eq(matchMoves.matchId, matchId));
+      expect(move0.thinkingMs).toBeGreaterThan(3_500);
+      expect(move0.thinkingMs).toBeLessThan(8_000);
+    });
+  });
+});

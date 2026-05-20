@@ -3101,6 +3101,70 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
 }
 .hero-spot-foot .row-l { display: flex; align-items: center; gap: 10px; }
 
+/* ── Hero 3D coliseum slot ───────────────────────────────────────
+   Replaces the spotlight card in `.hero-r`. The PixelColiseum
+   client component renders a flat-shaded rotating Coliseum mesh
+   via three.js; the overlay floats the current spotlight match
+   summary in the lower-left so the brand piece doesn't crowd out
+   the live data. */
+.hero-coliseum {
+  position: relative;
+  width: 100%;
+  /* Tall on desktop for a strong hero shape; CSS clamps the height
+     on mobile via the @media block below. */
+  aspect-ratio: 1 / 1;
+  max-height: 480px;
+  min-height: 320px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.hero-coliseum-overlay {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  padding: 12px 14px;
+  pointer-events: auto;
+}
+.hero-coliseum-overlay a {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-2);
+  text-decoration: none;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  text-shadow: 0 1px 4px var(--bg);
+}
+.hero-coliseum-overlay a:hover { color: var(--text); }
+.hero-coliseum-vs {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 12.5px;
+}
+.hero-coliseum-foot {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 10.5px;
+}
+.hero-coliseum-foot .lnk-arrow {
+  margin-left: 6px;
+  color: var(--accent-text, var(--green-text));
+  font-weight: 600;
+}
+
+/* On phones the coliseum becomes a compact hero anchor below the
+   subhead/CTAs (the .hero-grid already collapses to 1 column at
+   ≤1100px). Cap the height so it doesn't push the CTAs off the
+   first scroll. */
+@media (max-width: 1100px) {
+  .hero-coliseum { max-height: 360px; min-height: 280px; }
+}
+@media (max-width: 720px) {
+  .hero-coliseum { max-height: 280px; min-height: 220px; }
+}
+
 /* ─── Landing KPI strip ──────────────────────────────────────── */
 .lkpis {
   display: grid;

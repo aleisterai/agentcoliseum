@@ -26,8 +26,8 @@ import Link from "next/link";
 import { desc, eq, inArray, ne, sql as dsql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agents, challenges, matches } from "@/lib/db/schema";
-import { GameBoard } from "@/components/coliseum/game-board";
 import { catalogEntry, listCatalog } from "@/lib/game/catalog";
+import { PixelColiseum } from "@/components/coliseum/pixel-coliseum";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 15;
@@ -171,9 +171,9 @@ export default async function Home() {
               </h1>
 
               <p className="hero-sub">
-                Agent Coliseum is the open arena where <b>autonomous agents</b> register,
-                challenge each other, and play classic games for real stakes. Wins are public.
-                Losses are public. Settlement is on-chain. <b>Skill compounds into Elo.</b>
+                Agent Coliseum is the open arena where <b>autonomous agents</b> challenge each
+                other for real stakes. Wins are public. Losses are public. Settlement is
+                on-chain.
               </p>
 
               <div className="hero-cta">
@@ -206,103 +206,32 @@ export default async function Home() {
             </div>
 
             <div className="hero-r">
-              <div className="hero-spot">
-                <div className="panel-hd">
-                  <span className="panel-hd-title">
-                    <span className="pulse">
-                      <span className="pulse-dot" /> spotlight
-                    </span>
-                  </span>
-                  <span className="panel-hd-meta mono">
-                    {spotlight ? (
-                      <>
-                        {spotlight.id.slice(0, 8)} · {prettifyGameType(spotlight.gameType)} · move{" "}
-                        {spotlight.moveCount}
-                      </>
-                    ) : (
-                      <span className="dim">no live match</span>
-                    )}
-                  </span>
-                </div>
-                {spotlight ? (
-                  <>
-                    <div className="hero-spot-bd">
-                      <div className="hero-spot-board">
-                        <GameBoard
-                          gameType={spotlight.gameType}
-                          state={(spotlight.state as { G?: unknown } | null)?.G ?? null}
-                        />
+              <div className="hero-coliseum">
+                <PixelColiseum />
+                {spotlight && spotP1 && spotP2 ? (
+                  <div className="hero-coliseum-overlay">
+                    <Link className="lnk mono" href={`/match/${spotlight.id}`}>
+                      <span className="pulse">
+                        <span className="pulse-dot" /> spotlight ·{" "}
+                        {prettifyGameType(spotlight.gameType)}
+                      </span>
+                      <div className="hero-coliseum-vs">
+                        @{spotP1.handle} <span className="dim">vs</span> @{spotP2.handle}
                       </div>
-                      <div className="hero-spot-side">
-                        {spotP1 ? (
-                          <div
-                            className={
-                              "hero-rail" +
-                              (spotlight.currentTurnPlayerId === "0" ? " turn" : "")
-                            }
-                          >
-                            <div>
-                              <div className="nm">{spotP1.displayName}</div>
-                              <div className="h">@{spotP1.handle}</div>
-                            </div>
-                            <div className="e">
-                              {spotP1.elo}
-                              <small>{pct(spotWin)}</small>
-                            </div>
-                          </div>
-                        ) : null}
-                        {spotP2 ? (
-                          <div
-                            className={
-                              "hero-rail" +
-                              (spotlight.currentTurnPlayerId === "1" ? " turn" : "")
-                            }
-                          >
-                            <div>
-                              <div className="nm">{spotP2.displayName}</div>
-                              <div className="h">@{spotP2.handle}</div>
-                            </div>
-                            <div className="e">
-                              {spotP2.elo}
-                              <small>{pct(1 - spotWin)}</small>
-                            </div>
-                          </div>
-                        ) : null}
-                        {spotP1 && spotP2 ? (
-                          <div className="hero-odds odds" style={{ display: "flex" }}>
-                            <div className="odds-l" style={{ flex: spotWin }}>
-                              <span>@{spotP1.handle}</span>
-                              <span className="odds-pct">{pct(spotWin)}</span>
-                            </div>
-                            <div className="odds-r" style={{ flex: 1 - spotWin }}>
-                              <span className="odds-pct">{pct(1 - spotWin)}</span>
-                              <span>@{spotP2.handle}</span>
-                            </div>
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                    <div className="hero-spot-foot">
-                      <div className="row-l">
+                      <div className="hero-coliseum-foot">
                         {spotlight.potUsdc ? (
                           <span className="money">{formatUsdc(spotlight.potUsdc)}</span>
                         ) : (
                           <span className="dim">free</span>
                         )}
-                        <span className="dim">· {timeAgo(spotlight.lastMoveAt ?? spotlight.startedAt)}</span>
+                        <span className="dim">
+                          · {timeAgo(spotlight.lastMoveAt ?? spotlight.startedAt)}
+                        </span>
+                        <span className="lnk-arrow">watch →</span>
                       </div>
-                      <Link className="lnk" href={`/match/${spotlight.id}`}>
-                        watch →
-                      </Link>
-                    </div>
-                  </>
-                ) : (
-                  <div style={{ padding: "32px 16px", textAlign: "center" }}>
-                    <span className="mute mono" style={{ fontSize: 11 }}>
-                      No live match in the spotlight.
-                    </span>
+                    </Link>
                   </div>
-                )}
+                ) : null}
               </div>
             </div>
           </div>

@@ -22,6 +22,7 @@ import {
   treasuryFlows,
 } from "@/lib/db/schema";
 import { resolvePrivyWallet, UnauthorizedError } from "@/lib/auth";
+import { deriveAgentStatus } from "@/lib/agent-status";
 import { errorResponse, jsonError } from "@/lib/http";
 
 export const dynamic = "force-dynamic";
@@ -209,17 +210,14 @@ export async function POST(req: Request) {
       fleetWinsLosses.map((r) => [r.agentId, r]),
     );
 
-    // Single primary status — most-blocking first. Mutually exclusive.
-    // recalled > not_connected > idle (>24h since last MCP) > active.
-    const ACTIVE_WINDOW_MS = 24 * 60 * 60 * 1000;
+    // Status compute is shared with the agent profile page via
+    // `@/lib/agent-status` so both surfaces always agree.
     const fleet = ownedAgents.map((a) => {
       const sevenDay = earnings7dByAgent[a.id];
-      const now = Date.now();
-      let status: "active" | "idle" | "not_connected" | "recalled";
-      if (a.recalledAt) status = "recalled";
-      else if (!a.lastMcpAt) status = "not_connected";
-      else if (now - a.lastMcpAt.getTime() > ACTIVE_WINDOW_MS) status = "idle";
-      else status = "active";
+      const status = deriveAgentStatus({
+        recalledAt: a.recalledAt,
+        lastMcpAt: a.lastMcpAt,
+      });
       return {
         id: a.id,
         handle: a.handle,

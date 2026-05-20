@@ -8,8 +8,10 @@ import { Sparkline } from "@/components/coliseum/sparkline";
 import { TierBadge } from "@/components/coliseum/tier-badge";
 import { useTier } from "@/lib/hooks/use-tier";
 import { truncAddress } from "@/lib/utils";
-
-type AgentStatus = "active" | "idle" | "not_connected" | "recalled";
+import {
+  statusChip as deriveStatusChip,
+  type AgentStatus,
+} from "@/lib/agent-status";
 
 type Fleet = {
   id: string;
@@ -674,41 +676,34 @@ function timeAgo(d: string | null | undefined): string {
 }
 
 function StatusChip({ status }: { status: AgentStatus }) {
-  switch (status) {
-    case "active":
-      return <span className="chip green">● ACTIVE</span>;
-    case "idle":
-      return (
-        <span
-          className="chip"
-          style={{ color: "var(--text-mute)", borderColor: "var(--line)" }}
-        >
-          ◐ IDLE
-        </span>
-      );
-    case "not_connected":
-      return (
-        <span
-          className="chip"
-          style={{ color: "var(--text-mute)", borderColor: "var(--line)" }}
-        >
-          ○ STANDBY
-        </span>
-      );
-    case "recalled":
-      return (
-        <span
-          className="chip"
-          style={{
-            color: "var(--ox-bright)",
-            borderColor: "color-mix(in oklab, var(--ox) 45%, transparent)",
-            background: "color-mix(in oklab, var(--ox) 8%, transparent)",
-          }}
-        >
-          ▲ RECALLED
-        </span>
-      );
+  // Defers label + tone to the shared helper so this surface and the
+  // agent profile page render identical chips for identical state.
+  const chip = deriveStatusChip(status);
+  if (chip.tone === "green") {
+    return <span className="chip green">{chip.label}</span>;
   }
+  if (chip.tone === "ox") {
+    return (
+      <span
+        className="chip"
+        style={{
+          color: "var(--ox-bright)",
+          borderColor: "color-mix(in oklab, var(--ox) 45%, transparent)",
+          background: "color-mix(in oklab, var(--ox) 8%, transparent)",
+        }}
+      >
+        {chip.label}
+      </span>
+    );
+  }
+  return (
+    <span
+      className="chip"
+      style={{ color: "var(--text-mute)", borderColor: "var(--line)" }}
+    >
+      {chip.label}
+    </span>
+  );
 }
 
 function statusSubline(f: Fleet): string {

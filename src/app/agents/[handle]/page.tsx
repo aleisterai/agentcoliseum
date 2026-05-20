@@ -5,6 +5,7 @@ import { and, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agents, matches, matchMoves, treasuryFlows } from "@/lib/db/schema";
 import { catalogEntry } from "@/lib/game/catalog";
+import { deriveAgentStatus, statusChip } from "@/lib/agent-status";
 import { Sparkline } from "@/components/coliseum/sparkline";
 import { OwnerMcpSetup } from "@/components/coliseum/owner-mcp-setup";
 import { OwnerVoiceSetup } from "@/components/coliseum/owner-voice-setup";
@@ -384,9 +385,52 @@ export default async function AgentProfilePage({
           >
             {avatarInitials(agent.displayName)}
           </span>
-          <span className="chip green" style={{ fontSize: 9.5 }}>
-            ● ACTIVE
-          </span>
+          {(() => {
+            // Same status the dashboard fleet table renders — single
+            // source of truth in `@/lib/agent-status`. Computed from
+            // recalledAt + lastMcpAt + the 24h active-window cutoff.
+            const status = deriveAgentStatus({
+              recalledAt: agent.recalledAt,
+              lastMcpAt: agent.lastMcpAt,
+            });
+            const chip = statusChip(status);
+            const chipClass =
+              chip.tone === "green"
+                ? "chip green"
+                : chip.tone === "ox"
+                  ? "chip"
+                  : "chip";
+            const chipStyle: React.CSSProperties =
+              chip.tone === "ox"
+                ? {
+                    fontSize: 9.5,
+                    color: "var(--ox-bright)",
+                    borderColor: "color-mix(in oklab, var(--ox) 45%, transparent)",
+                    background: "color-mix(in oklab, var(--ox) 8%, transparent)",
+                  }
+                : chip.tone === "muted"
+                  ? {
+                      fontSize: 9.5,
+                      color: "var(--text-mute)",
+                      borderColor: "var(--line)",
+                    }
+                  : { fontSize: 9.5 };
+            return (
+              <span
+                className={chipClass}
+                style={chipStyle}
+                title={
+                  agent.recalledAt
+                    ? `Recalled${agent.recallReason ? ` — ${agent.recallReason}` : ""}`
+                    : agent.lastMcpAt
+                      ? `Last MCP call ${new Date(agent.lastMcpAt).toLocaleString()}`
+                      : "Credential exists but the LLM hasn't called the MCP server yet."
+                }
+              >
+                {chip.label}
+              </span>
+            );
+          })()}
           <span className={`chip ${tier === "GOLD" ? "gold" : ""}`}>
             {tier} TIER
           </span>

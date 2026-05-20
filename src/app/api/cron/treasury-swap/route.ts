@@ -17,21 +17,14 @@ import { db } from "@/lib/db/client";
 import { treasuryFlows } from "@/lib/db/schema";
 import { swapUsdcToAleister, sendAleisterToTreasury } from "@/lib/chain/aerodrome";
 import { jsonError } from "@/lib/http";
+import { authorizedCronRequest } from "@/lib/cron-auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // seconds
 
-function authorized(req: Request): boolean {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) return true; // dev mode
-  const vercelSig = req.headers.get("x-vercel-cron-signature");
-  if (vercelSig) return true;
-  const auth = req.headers.get("authorization");
-  return auth === `Bearer ${cronSecret}`;
-}
-
 export async function GET(req: Request) {
-  if (!authorized(req)) return jsonError(401, "unauthorized", "Cron secret required");
+  if (!authorizedCronRequest(req))
+    return jsonError(401, "unauthorized", "Cron secret required");
 
   // Pick up to 25 pending rows per sweep. Larger batches mean fewer swaps
   // (better gas) but bigger blast radius on a failure.

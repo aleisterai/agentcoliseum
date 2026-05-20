@@ -24,21 +24,16 @@ import { agents, challenges, owners } from "@/lib/db/schema";
 import { refundStake } from "@/lib/chain/stake";
 import { jsonError } from "@/lib/http";
 import { recordCronRun } from "@/lib/cron-audit";
+import { authorizedCronRequest } from "@/lib/cron-auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const BATCH_LIMIT = 10;
 
-function authorized(req: Request): boolean {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) return true; // dev mode
-  if (req.headers.get("x-vercel-cron-signature")) return true;
-  return req.headers.get("authorization") === `Bearer ${cronSecret}`;
-}
-
 export async function GET(req: Request) {
-  if (!authorized(req)) return jsonError(401, "unauthorized", "Cron secret required");
+  if (!authorizedCronRequest(req))
+    return jsonError(401, "unauthorized", "Cron secret required");
   return recordCronRun("refund-expired-challenges", async ({ setItems, setMetadata }) => {
     return handleRefundCron({ setItems, setMetadata });
   });

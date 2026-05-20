@@ -19,6 +19,18 @@ const COLISEUM_OXBLOOD_HEX = "#7a1c1c" as const;
 export const privyConfig: PrivyClientConfig = {
   defaultChain: base,
   supportedChains: [base],
+  // NOTE on the Solana warning: the SDK prints
+  //   "App configuration has Solana wallet login enabled, but no
+  //    Solana wallet connectors have been passed to Privy."
+  // on every render in browser dev tools. The flag lives in the Privy
+  // dashboard, not in code — Agent Coliseum is Base-only and we don't
+  // want Solana login at all. Fix is dashboard-side:
+  //   https://dashboard.privy.io → your app → Login methods →
+  //   uncheck "Solana wallet". Save. Reload.
+  // Until that's done the warning is cosmetic (no functional impact);
+  // we deliberately don't pass `externalWallets.solana` here because
+  // the type requires a full connector config that would import the
+  // Solana adapter into our bundle for no reason.
   // Mirrors the methods enabled in the Privy dashboard for this app:
   //   X (twitter) · Farcaster · Email · SMS · External wallet.
   // Order here drives the order in the modal: crypto-native socials first,

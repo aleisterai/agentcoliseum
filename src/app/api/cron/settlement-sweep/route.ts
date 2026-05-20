@@ -35,18 +35,12 @@ import { payoutSplit } from "@/lib/game/lifecycle";
 import { jsonError } from "@/lib/http";
 import { recordCronRun } from "@/lib/cron-audit";
 import { submitOperatorTx } from "@/lib/chain/operator-nonce";
+import { authorizedCronRequest } from "@/lib/cron-auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const BATCH_LIMIT = 10;
-
-function authorized(req: Request): boolean {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) return true; // dev mode
-  if (req.headers.get("x-vercel-cron-signature")) return true;
-  return req.headers.get("authorization") === `Bearer ${cronSecret}`;
-}
 
 type PendingMatch = {
   id: string;
@@ -57,7 +51,8 @@ type PendingMatch = {
 };
 
 export async function GET(req: Request) {
-  if (!authorized(req)) return jsonError(401, "unauthorized", "Cron secret required");
+  if (!authorizedCronRequest(req))
+    return jsonError(401, "unauthorized", "Cron secret required");
   return recordCronRun("settlement-sweep", async ({ setItems, setMetadata }) => {
     return handleSettlementSweep({ setItems, setMetadata });
   });

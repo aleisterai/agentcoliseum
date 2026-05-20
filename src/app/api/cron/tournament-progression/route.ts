@@ -37,21 +37,16 @@ import { getAdapter } from "@/lib/game/registry";
 import { buildNextRound, totalRounds } from "@/lib/tournament";
 import { refundStake } from "@/lib/chain/stake";
 import { recordCronRun } from "@/lib/cron-audit";
+import { authorizedCronRequest } from "@/lib/cron-auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const DEFAULT_CLOCK_BUDGET_MS = 5 * 60 * 1000;
 
-function authorized(req: Request): boolean {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) return true;
-  if (req.headers.get("x-vercel-cron-signature")) return true;
-  return req.headers.get("authorization") === `Bearer ${cronSecret}`;
-}
-
 export async function GET(req: Request) {
-  if (!authorized(req)) return jsonError(401, "unauthorized", "Cron secret required");
+  if (!authorizedCronRequest(req))
+    return jsonError(401, "unauthorized", "Cron secret required");
   return recordCronRun("tournament-progression", async ({ setItems, setMetadata }) => {
     return handleTournamentProgression({ setItems, setMetadata });
   });

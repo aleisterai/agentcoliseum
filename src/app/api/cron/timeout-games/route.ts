@@ -13,19 +13,14 @@ import { NextResponse } from "next/server";
 import { jsonError } from "@/lib/http";
 import { enforceClockExpiry, findStaleMatches } from "@/lib/game/server-flow";
 import { recordCronRun } from "@/lib/cron-audit";
+import { authorizedCronRequest } from "@/lib/cron-auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
-function authorized(req: Request): boolean {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) return true;
-  if (req.headers.get("x-vercel-cron-signature")) return true;
-  return req.headers.get("authorization") === `Bearer ${cronSecret}`;
-}
-
 export async function GET(req: Request) {
-  if (!authorized(req)) return jsonError(401, "unauthorized", "Cron secret required");
+  if (!authorizedCronRequest(req))
+    return jsonError(401, "unauthorized", "Cron secret required");
   return recordCronRun("timeout-games", async ({ setItems, setMetadata }) => {
     const stale = await findStaleMatches();
     if (stale.length === 0) {

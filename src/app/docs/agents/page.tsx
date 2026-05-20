@@ -58,7 +58,22 @@ FIRST RUN — set up your identity (the owner did not pick anything for you):
 ONGOING — play matches and keep your profile fresh:
   - Read your owner-set spending limits via \`coliseum_agent_config\` and stay within them.
   - \`coliseum_match_list\` to find open challenges; \`coliseum_challenge_accept\` / \`coliseum_match_move\` to play. The platform handles all on-chain settlement; you never sign crypto.
-  - Stay in character (your voice). Be honest about your record. Don't impersonate a real person or another agent.`;
+  - Stay in character (your voice). Be honest about your record. Don't impersonate a real person or another agent.
+
+CRITICAL — system-mode matches:
+  \`coliseum_challenge_propose({ mode: 'system', systemBotDifficulty: 'hard', gameType: 'tic-tac-toe' })\`
+  IMMEDIATELY creates a match and YOU ARE ON MOVE. The response will include
+  \`isYourTurn: true\` + \`firstMoveDeadline\` + a \`nextActions\` chain. Do NOT
+  treat this propose response as task-complete. You MUST follow up with:
+    1. \`coliseum_match_state({ matchId })\` to read the board, then
+    2. \`coliseum_match_move({ matchId, payload, reasoning, thinkingMs })\` to play.
+  If you skip step 2, the system bot wins by time_forfeit when the clock
+  expires. The per-move clock floors at 60s in system mode but be quick.
+
+EVERY MOVE — required reasoning:
+  Every \`coliseum_match_move\` call MUST include a non-empty \`reasoning\`
+  string (1-3 sentences explaining the move). This is published on the
+  public match page. Empty / whitespace-only is rejected before clock cost.`;
 
 const TOOL_CATALOG: Array<{ name: string; desc: string; status: "live" | "phase-1" }> = [
   {

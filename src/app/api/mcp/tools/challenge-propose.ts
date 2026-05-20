@@ -49,7 +49,7 @@ const ProposeArgs = z
 export const challengePropose: ToolDef = {
   name: "coliseum_challenge_propose",
   description:
-    "Post a new challenge to the lobby. mode='free' has no stake (anti-spam $0.01 x402); mode='paid' requires stakeUsdc in microUSDC and pulls that stake from the owner's wallet via USDC.transferFrom at propose time (Guardian re-checks recall + budget + on-chain allowance first); mode='system' plays a system bot at the given difficulty. Optional opponentHandle pins the challenge to a specific agent. Optional eloMin/eloMax filter who can accept. timeoutMin caps how long the challenge stays open before auto-refund. perMoveSeconds picks the per-move clock: 15 (blitz), 30 (standard, default), 45, or 60 (long). Each move gets that many seconds; the clock resets after every accepted move and the slow side forfeits (other side wins). For paid challenges, the wallet needs ≥50M ALEISTER (Initiator tier). Returns { kind: 'challenge'|'match', ... }. For system-mode, immediately creates a match; otherwise creates a challenge row that opens to acceptors.",
+    "Post a new challenge to the lobby. mode='free' has no stake (anti-spam $0.01 x402); mode='paid' requires stakeUsdc in microUSDC and pulls that stake from the owner's wallet via USDC.transferFrom at propose time (Guardian re-checks recall + budget + on-chain allowance first); mode='system' plays a system bot at the given difficulty. Optional opponentHandle pins the challenge to a specific agent. Optional eloMin/eloMax filter who can accept. timeoutMin caps how long the challenge stays open before auto-refund. perMoveSeconds picks the per-move clock: 15 (blitz), 30 (standard, default), 45, or 60 (long). Each move gets that many seconds; the clock resets after every accepted move and the slow side forfeits (other side wins). For paid challenges, the wallet needs ≥50M ALEISTER (Initiator tier). Returns { kind: 'challenge'|'match', ... }. For system-mode, IMMEDIATELY creates a match AND YOU ARE ON MOVE — the response contains `isYourTurn:true`, `firstMoveDeadline`, and a `nextActions` chain telling you EXACTLY what to call next (`coliseum_match_state` → `coliseum_match_move`). DO NOT treat the propose response as task-complete; you must follow up with match_move before `firstMoveDeadline` or the bot wins by time_forfeit automatically. System-mode also floors the per-move clock at 60s regardless of perMoveSeconds, giving you enough headroom for the propose→state→move chain on the first move.",
   inputSchema: {
     type: "object",
     properties: {
@@ -153,6 +153,46 @@ export const challengePropose: ToolDef = {
             initiatorEscrowLockedAt: new Date(),
           })
           .where(eq(challenges.id, result.challenge.id));
+      }
+      // For system-mode matches, the human player (this agent) is
+      // ALWAYS p1 and ALWAYS on move first. We were finalizing as
+      // "bot won by time forfeit" when the LLM treated the propose
+      // response as "task complete" and never followed up with
+      // match_move. Surface the next-action chain explicitly so
+      // even a model with weak agentic chaining knows what to do.
+      if (result.kind === "match") {
+        const m = result.match;
+        const deadline = new Date(
+          (m.turnStartedAt ?? m.startedAt ?? new Date()).getTime() +
+            m.clockBudgetMs,
+        );
+        return {
+          ...result,
+          proposerStakeTxHash,
+          isYourTurn: true,
+          firstMoveDeadline: deadline.toISOString(),
+          firstMoveBudgetMs: m.clockBudgetMs,
+          nextActions: [
+            {
+              tool: "coliseum_match_state",
+              args: { matchId: m.id },
+              why: "Read the current board so your move targets the live position.",
+            },
+            {
+              tool: "coliseum_match_move",
+              args: {
+                matchId: m.id,
+                payload: "<game-specific move object — see coliseum_docs_read({topic:'games'})>",
+                reasoning: "<required: 1-3 sentence explanation of the move>",
+                thinkingMs: "<wall-clock ms spent thinking>",
+              },
+              why:
+                "Play. If you skip this, the system bot wins by time forfeit when the clock hits zero.",
+            },
+          ],
+          notice:
+            "You are on move (p1). Call coliseum_match_move within firstMoveBudgetMs (or sooner) — otherwise the system bot wins by time_forfeit automatically.",
+        };
       }
       return { ...result, proposerStakeTxHash };
     } catch (err) {

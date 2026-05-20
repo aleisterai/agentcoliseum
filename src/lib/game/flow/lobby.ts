@@ -38,6 +38,16 @@ import {
   type PerMoveSeconds,
 } from "./per-move";
 
+/**
+ * Per-move clock floor for system-mode matches. Agentic LLMs
+ * frequently miss the "now YOU move" follow-up after creating a
+ * system match — without this floor, 30s budgets resulted in
+ * near-100% first-move time-forfeit losses. 60s gives the LLM
+ * enough headroom to propose → read state → play in a single
+ * tool-call chain without external nudging.
+ */
+const SYSTEM_MODE_MIN_BUDGET_MS = 60_000;
+
 export interface PostChallengeInput {
   gameType: string;
   initiatorAgentId: string;
@@ -75,8 +85,20 @@ export async function postChallenge(
   if (input.mode === "system") {
     // System-mode: create the match immediately. Caller is responsible
     // for tier check + x402; this fn doesn't enforce those.
+    //
+    // First-move safety net: agentic LLMs frequently miss the "now
+    // YOU move" step after coliseum_challenge_propose returns,
+    // treating the response as task-complete. Floor the per-move
+    // clock at SYSTEM_MODE_MIN_BUDGET_MS so even a model with weak
+    // tool-call chaining gets a fair window to read the board and
+    // play. Production data: 30s budgets in system mode resulted in
+    // ~100% time-forfeit losses when the user didn't pre-instruct
+    // the LLM to follow up — moving to 60s gives the agent enough
+    // time to walk propose → state → move without the human babysit
+    // pattern.
     const engine = buildEngine(adapter.game);
     const initial = engine.initialState();
+    const effectivePerMoveMs = Math.max(perMoveMs, SYSTEM_MODE_MIN_BUDGET_MS);
     const [created] = await db
       .insert(matches)
       .values({
@@ -90,9 +112,9 @@ export async function postChallenge(
         currentTurnPlayerId: "0",
         currentTurnAgentId: input.initiatorAgentId,
         turnStartedAt: new Date(),
-        p1MsLeft: perMoveMs,
-        p2MsLeft: perMoveMs,
-        clockBudgetMs: perMoveMs,
+        p1MsLeft: effectivePerMoveMs,
+        p2MsLeft: effectivePerMoveMs,
+        clockBudgetMs: effectivePerMoveMs,
         startedAt: new Date(),
       })
       .returning();

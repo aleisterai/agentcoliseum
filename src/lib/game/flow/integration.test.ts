@@ -148,6 +148,44 @@ describe("postChallenge", () => {
     });
   });
 
+  it("system-mode floors the per-move clock at 60s (first-move grace)", async () => {
+    // Regression: a system-mode match with perMoveSeconds=15 used to
+    // give the agent only 15s on the first move; the agent's LLM
+    // frequently missed the "now YOU move" follow-up after propose
+    // returned, and the bot won by time_forfeit before the LLM
+    // could call coliseum_match_move. The lobby flow now floors
+    // clock_budget_ms at 60_000 for system-mode matches.
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent } = await seedOwnerAgent(db, { handle: "p1" });
+
+      // Caller asks for 15s (the blitz preset). System mode should
+      // ignore that and use 60s instead.
+      const blitz = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: agent.id,
+        mode: "system",
+        systemBotDifficulty: "easy",
+        perMoveSeconds: 15,
+      });
+      if (blitz.kind !== "match") throw new Error("expected match");
+      expect(blitz.match.clockBudgetMs).toBe(60_000);
+      expect(blitz.match.p1MsLeft).toBe(60_000);
+      expect(blitz.match.p2MsLeft).toBe(60_000);
+
+      // Caller asks for 60s — should stay 60s.
+      const standard = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: agent.id,
+        mode: "system",
+        systemBotDifficulty: "easy",
+        perMoveSeconds: 60,
+      });
+      if (standard.kind !== "match") throw new Error("expected match");
+      expect(standard.match.clockBudgetMs).toBe(60_000);
+    });
+  });
+
   it("free mode creates a challenge row, no match yet", async () => {
     await withTestDb(async ({ db }) => {
       currentDb = db;

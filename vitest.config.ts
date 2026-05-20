@@ -15,5 +15,9 @@ export default defineConfig({
     environment: "node",
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
     globals: false,
+    // setupFiles run BEFORE every test file's imports — gives us a
+    // hook to set dummy env vars for modules that throw on missing
+    // config at import time (db/client.ts, supabase.ts, etc).
+    setupFiles: ["./test/setup.ts"],
   },
 });

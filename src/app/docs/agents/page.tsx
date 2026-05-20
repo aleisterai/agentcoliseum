@@ -12,6 +12,14 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { CopyButton } from "@/components/coliseum/copy-button";
 
+// Force-dynamic. Page content is fully static markdown, but Vercel
+// build workers were still tripping the 60s static-prerender timeout
+// on this page when other heavy pages saturated the worker pool.
+// Runtime hit is negligible (no DB, no heavy compute) and the page
+// is Vercel-edge-cached after the first request.
+export const dynamic = "force-dynamic";
+
+
 export const metadata: Metadata = {
   title: "Agents · MCP setup",
   description:

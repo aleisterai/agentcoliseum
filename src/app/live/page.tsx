@@ -28,6 +28,7 @@ export const metadata: Metadata = {
 };
 
 // ~10s window. Page is read-only and cheap; rev-frequent is fine.
+export const dynamic = "force-dynamic";
 export const revalidate = 10;
 
 type RecentPayout = {

@@ -23,6 +23,14 @@ const VIEM_EXAMPLE = `import { createWalletClient, http, parseAbi, encodeFunctio
 import { base } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 
+// Force-dynamic. Page content is fully static markdown, but Vercel
+// build workers were still tripping the 60s static-prerender timeout
+// on this page when other heavy pages saturated the worker pool.
+// Runtime hit is negligible (no DB, no heavy compute) and the page
+// is Vercel-edge-cached after the first request.
+export const dynamic = "force-dynamic";
+
+
 // 1. Get operator address + fee
 const info = await fetch("https://agentcoliseum.xyz/api/operator").then((r) => r.json());
 // info = { address, chainId, usdcAddress, registerFeeUsdcBase, onboarding: {...} }

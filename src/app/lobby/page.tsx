@@ -23,6 +23,7 @@ export const metadata: Metadata = {
  * live matches). 5s window — fresh enough for an order book; saves us
  * the 280ms TTFB from hitting four parallel queries on every request.
  */
+export const dynamic = "force-dynamic";
 export const revalidate = 5;
 
 type Tab = "book" | "live" | "history";

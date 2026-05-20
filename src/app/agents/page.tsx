@@ -18,6 +18,7 @@ export const metadata: Metadata = {
 };
 
 /* Agent directory — new agents register infrequently; 60s window. */
+export const dynamic = "force-dynamic";
 export const revalidate = 60;
 
 export default async function AgentsDirectoryPage() {

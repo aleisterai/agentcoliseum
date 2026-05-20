@@ -31,7 +31,13 @@
  */
 
 const API_KEY = process.env.COLISEUM_API_KEY;
-const API_BASE = process.env.COLISEUM_API_BASE ?? "https://agentcoliseum.xyz";
+// Default to the canonical www host. The apex `agentcoliseum.xyz` 307s
+// to www, and Node's fetch strips the `Authorization` header on
+// cross-origin redirects — every tool that hit the legacy REST endpoints
+// (/api/agents/me, etc.) would 401 silently. Hardcoding www avoids the
+// redirect entirely. Users can still override via COLISEUM_API_BASE if
+// they're testing against a Vercel preview or a custom domain.
+const API_BASE = process.env.COLISEUM_API_BASE ?? "https://www.agentcoliseum.xyz";
 
 if (!API_KEY) {
   process.stderr.write(
@@ -190,41 +196,19 @@ voice setting that the owner consider it.`,
   },
 };
 
-// ---------------------------------------------------------------------------
-// HTTP helpers — wraps the existing Coliseum REST API.
-// ---------------------------------------------------------------------------
-
-async function apiGet(path) {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { Authorization: `Bearer ${API_KEY}` },
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`GET ${path} → ${res.status}: ${text.slice(0, 200)}`);
-  }
-  return res.json();
-}
-
-async function apiPatch(path, body) {
-  const res = await fetch(`${API_BASE}${path}`, {
-    method: "PATCH",
-    headers: {
-      Authorization: `Bearer ${API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`PATCH ${path} → ${res.status}: ${text.slice(0, 200)}`);
-  }
-  return res.json();
-}
-
 /**
  * Proxy a JSON-RPC call to the canonical remote MCP server at
  * `${API_BASE}/api/mcp`. Lets this stdio bundle stay thin while the
  * remote variant owns the authoritative query/business logic.
+ *
+ * Every tool except the two embedded docs helpers (`coliseum_docs_*`,
+ * which serve hardcoded markdown so the LLM has context even on a
+ * cold network) routes through here. We used to also call the legacy
+ * REST endpoints (/api/agents/me, etc.) directly — that path silently
+ * 401'd whenever API_BASE pointed at the apex domain because Node's
+ * fetch strips Authorization on the apex→www redirect. Going through
+ * /api/mcp's POST sidesteps the redirect (no GET → POST mismatch on
+ * the redirected request).
  */
 async function mcpCall(method, params) {
   const res = await fetch(`${API_BASE}/api/mcp`, {
@@ -303,7 +287,7 @@ const TOOLS = [
     description:
       "Read your own agent profile (handle, displayName, bio, voice fields, coin CA, ELO, record, recall status). Use this before profile_update to see current values.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
-    handler: async () => apiGet("/api/agents/me"),
+    handler: async () => mcpCall("coliseum_agent_profile_get", {}),
   },
   {
     name: "coliseum_agent_profile_update",
@@ -340,49 +324,21 @@ const TOOLS = [
       },
       additionalProperties: false,
     },
-    handler: async (args) => apiPatch("/api/agents/me", args),
+    handler: async (args) => mcpCall("coliseum_agent_profile_update", args ?? {}),
   },
   {
     name: "coliseum_agent_config",
     description:
       "Read your owner-configured spending limits and gating: maxStakeUsdc, dailyLossUsdc, eloFloorDelta, allowedGames, acceptFromAnyone, current recall status. The Guardian enforces these server-side — proposing over-limit will be rejected.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
-    handler: async () => {
-      const profile = await apiGet("/api/agents/me");
-      return {
-        // Phase 0: config fields live on the agent row itself; Phase 1 will
-        // surface a richer config struct. For now the LLM gets recall status
-        // + reasonable defaults to plan around.
-        handle: profile.handle,
-        recalled: profile.recalledAt != null,
-        recallReason: profile.recallReason,
-        defaults: {
-          maxStakeUsdc: 10_000_000,
-          dailyLossUsdc: 25_000_000,
-          eloFloorDelta: 150,
-          rookieMaxStakeUsdc: 10_000_000,
-          rookieMatches: 5,
-        },
-        notice:
-          "Phase 1 will surface owner-set spending limits via this endpoint. For now treat these as the platform-wide defaults.",
-      };
-    },
+    handler: async () => mcpCall("coliseum_agent_config", {}),
   },
   {
     name: "coliseum_agent_stats",
     description:
       "Read your competitive stats: ELO, win/loss/draw, recent matches (last 20 with outcome + opponent + stake).",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
-    handler: async () => {
-      const me = await apiGet("/api/agents/me");
-      const full = await fetch(`${API_BASE}/api/agents/${me.handle}`).then((r) => r.json());
-      return {
-        handle: me.handle,
-        elo: me.elo,
-        record: { wins: me.wins, losses: me.losses, draws: me.draws },
-        recentMatches: full.recentMatches ?? [],
-      };
-    },
+    handler: async () => mcpCall("coliseum_agent_stats", {}),
   },
   {
     name: "coliseum_match_list",

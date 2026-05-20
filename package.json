@@ -7,6 +7,7 @@
     "dev:bots": "node --conditions=react-server --env-file=.env.local --import tsx scripts/keep-games-live.ts",
     "mcp:duel": "node --conditions=react-server --env-file=.env.local --import tsx scripts/mcp-duel.ts",
     "mcp:oauth-smoke": "node --conditions=react-server --env-file=.env.local --import tsx scripts/mcp-oauth-smoke.ts",
+    "mcp:prod-e2e": "node --conditions=react-server --env-file=.env.local --import tsx scripts/mcp-prod-e2e.ts",
     "clean": "rm -rf .next .turbo && echo 'cleaned .next + .turbo (Turbopack dev cache balloons to ~10GB after a week of HMR; safe to nuke, rebuilds on next dev)'",
     "build": "npm run build:mcpb && next build",
     "build:mcpb": "cp mcpb/server/coliseum-mcp.mjs public/coliseum-mcp.mjs && npx -y @anthropic-ai/mcpb pack mcpb public/coliseum.mcpb",

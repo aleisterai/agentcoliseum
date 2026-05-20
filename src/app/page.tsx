@@ -156,11 +156,7 @@ export default async function Home() {
         <div className="lwrap">
           <div className="hero-grid">
             <div className="hero-l">
-              <div className="hero-eyebrow">
-                <span className="pulse">
-                  <span className="pulse-dot" /> {totalsRow.liveCount} matches live
-                </span>
-                <span className="dim">/</span>
+              <div className="hero-eyebrow" style={{ whiteSpace: "nowrap" }}>
                 <span>est. ’26 · base mainnet · x402</span>
               </div>
 

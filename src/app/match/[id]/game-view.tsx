@@ -37,6 +37,7 @@ import { WinnerBanner } from "./winner-banner";
 import { AgentCard } from "./agent-card";
 import { ScrubberTrack } from "./scrubber-track";
 import { MoveLog, X402Log, AnnotLog } from "./log-tabs";
+import { ReasoningTimeline } from "./reasoning-timeline";
 import {
   REACTION_PALETTE,
   type Move,
@@ -104,6 +105,30 @@ export function MatchView({ initial }: MatchViewProps) {
   const [logTab, setLogTab] = useState<"moves" | "x402" | "annot">("moves");
   const [chatInput, setChatInput] = useState("");
   const chatStreamRef = useRef<HTMLDivElement | null>(null);
+
+  // Centre-panel focus. "board" (default) puts the live board front and
+  // centre; "reasoning" swaps in the interleaved move-by-move reasoning
+  // timeline and demotes the board to a thumbnail in the left rail. We
+  // persist the user's pick to localStorage so spectators who prefer the
+  // reading view get it on every match they open.
+  const [focusMode, setFocusMode] = useState<"board" | "reasoning">("board");
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const stored = window.localStorage.getItem("matchFocus");
+      if (stored === "reasoning" || stored === "board") setFocusMode(stored);
+    } catch {
+      /* private mode / quota — fall back to default */
+    }
+  }, []);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem("matchFocus", focusMode);
+    } catch {
+      /* swallow */
+    }
+  }, [focusMode]);
 
   /** Realtime — primary delivery channel. */
   const { channelState: wsChannelState, lastEventAt: lastWsAt } = useRealtimeMatch(
@@ -407,6 +432,27 @@ export function MatchView({ initial }: MatchViewProps) {
           </span>
         </div>
         <div className="strip-r">
+          <div className="focus-toggle" role="tablist" aria-label="View focus">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={focusMode === "board"}
+              className={focusMode === "board" ? "on" : ""}
+              onClick={() => setFocusMode("board")}
+            >
+              Board
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={focusMode === "reasoning"}
+              className={focusMode === "reasoning" ? "on" : ""}
+              onClick={() => setFocusMode("reasoning")}
+            >
+              Reasoning
+            </button>
+          </div>
+          <span className="dim mono">·</span>
           <span className="mono" style={{ fontSize: 11, color: "var(--text-mute)" }}>
             elapsed{" "}
             <span className="up">
@@ -442,37 +488,59 @@ export function MatchView({ initial }: MatchViewProps) {
             running={status === "active" && currentTurnPlayerId === "0"}
             avgThinkMs={avgThinkOfPlayer(moves, "0")}
           />
-          <div
-            className="panel"
-            style={{ flex: 1, minHeight: 280, display: "flex", flexDirection: "column" }}
-          >
-            <div className="panel-hd">
-              <span className="panel-hd-title">
-                Reasoning · @{initial.p1?.handle ?? "p1"}
-              </span>
-              <span className="panel-hd-meta mono" style={{ fontSize: 10.5 }}>
-                {status === "active" ? "live trace" : "final trace"}
-              </span>
-            </div>
-            <div className="trace">
-              {traceItems.length === 0 ? (
-                <div className="item">
-                  <div style={{ color: "var(--text-mute)" }}>No reasoning yet.</div>
-                </div>
-              ) : (
-                traceItems.map((t, i) => (
-                  <div key={i} className={cn("item", t.cur && "cur")}>
-                    <span className="ts">{t.ts}</span>
-                    <span className="move">{t.move}</span>
-                    {t.ev ? (
-                      <span className={cn("ev", t.evDown && "down")}> · EV {t.ev}</span>
-                    ) : null}
-                    <div style={{ marginTop: 3 }}>{t.text}</div>
+          {focusMode === "board" ? (
+            // Default focus — show P1's reasoning trace next to the big board
+            <div
+              className="panel"
+              style={{ flex: 1, minHeight: 280, display: "flex", flexDirection: "column" }}
+            >
+              <div className="panel-hd">
+                <span className="panel-hd-title">
+                  Reasoning · @{initial.p1?.handle ?? "p1"}
+                </span>
+                <span className="panel-hd-meta mono" style={{ fontSize: 10.5 }}>
+                  {status === "active" ? "live trace" : "final trace"}
+                </span>
+              </div>
+              <div className="trace">
+                {traceItems.length === 0 ? (
+                  <div className="item">
+                    <div style={{ color: "var(--text-mute)" }}>No reasoning yet.</div>
                   </div>
-                ))
-              )}
+                ) : (
+                  traceItems.map((t, i) => (
+                    <div key={i} className={cn("item", t.cur && "cur")}>
+                      <span className="ts">{t.ts}</span>
+                      <span className="move">{t.move}</span>
+                      {t.ev ? (
+                        <span className={cn("ev", t.evDown && "down")}> · EV {t.ev}</span>
+                      ) : null}
+                      <div style={{ marginTop: 3 }}>{t.text}</div>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
-          </div>
+          ) : (
+            // Reasoning focus — the timeline owns the centre. Keep the
+            // board visible as a rail thumbnail so spectators still know
+            // what the position looks like without scrolling.
+            <div className="panel rail-board">
+              <div className="panel-hd">
+                <span className="panel-hd-title">Board</span>
+                <span className="panel-hd-meta mono" style={{ fontSize: 10.5 }}>
+                  move {Math.max(0, effectiveIdx) + (moves.length > 0 ? 1 : 0)}
+                </span>
+              </div>
+              <div className="rail-board-stage">
+                <GameBoard
+                  gameType={initial.gameType}
+                  state={displayedStateG}
+                  lastMove={lastMoveMarker}
+                />
+              </div>
+            </div>
+          )}
         </aside>
 
         {/* CENTER */}
@@ -481,7 +549,13 @@ export function MatchView({ initial }: MatchViewProps) {
             <div className="panel-hd">
               <div className="row" style={{ gap: 10 }}>
                 <span className="panel-hd-title">
-                  {status === "active" ? "Live board" : "Final board"}
+                  {focusMode === "reasoning"
+                    ? status === "active"
+                      ? "Reasoning timeline"
+                      : "Reasoning · final"
+                    : status === "active"
+                      ? "Live board"
+                      : "Final board"}
                 </span>
                 {status === "active" ? (
                   <LiveChip
@@ -504,15 +578,32 @@ export function MatchView({ initial }: MatchViewProps) {
                 stakeUsdc={initial.stakeUsdc}
               />
             ) : null}
-            <div className="board-stage">
-              <div className="board-wrap">
-                <GameBoard
+            {focusMode === "board" ? (
+              <div className="board-stage">
+                <div className="board-wrap">
+                  <GameBoard
+                    gameType={initial.gameType}
+                    state={displayedStateG}
+                    lastMove={lastMoveMarker}
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="reasoning-stage">
+                <ReasoningTimeline
                   gameType={initial.gameType}
-                  state={displayedStateG}
-                  lastMove={lastMoveMarker}
+                  moves={moves}
+                  p1={initial.p1}
+                  p2={initial.p2}
+                  currentIdx={effectiveIdx}
+                  onJump={(idx) => {
+                    setLiveMode(false);
+                    setIsPlaying(false);
+                    setScrubIndex(idx);
+                  }}
                 />
               </div>
-            </div>
+            )}
 
             <div className="scrub">
               <ScrubberTrack

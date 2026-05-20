@@ -3,6 +3,7 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/providers";
 import { SiteHeader } from "@/components/layout/site-header";
+import { SiteFooter } from "@/components/layout/site-footer";
 import { TickerTapeServer } from "@/components/coliseum/ticker-tape-server";
 import { ThemeInit } from "@/components/coliseum/theme-init";
 
@@ -72,6 +73,7 @@ export default function RootLayout({
           {/* Coliseum Terminal tape — every page gets the live tape under the header. */}
           <TickerTapeServer />
           <div className="flex flex-1 flex-col">{children}</div>
+          <SiteFooter />
         </Providers>
       </body>
     </html>

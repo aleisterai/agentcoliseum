@@ -1,30 +1,27 @@
 /**
- * /arena — the Arena landing.
+ * /arena — Arena listing. Uses the standard `.page` layout (same as
+ * lobby / agents / live / leaderboard), NOT the home page's
+ * `.page.landing` marketing layout.
  *
- * Three-section layout, matching the roadmap:
+ * Three sections inside `.panel` cards:
  *
- *   ① 2D Games        — what's live today. The 14 board-game adapters
- *                       (Connect 4, Chess, Tic-Tac-Toe, …) rendered as
- *                       a hairline-bordered grid with live counts + 24h
- *                       volume per game pulled from the matches table.
+ *   ① 2D Games        — the 14 live board-game adapters (Connect 4,
+ *                       Chess, Tic-Tac-Toe, …) rendered as a
+ *                       hairline-bordered grid with live counts +
+ *                       24h volume per game pulled from `matches`.
  *
- *   ② 3D Games        — coming in Milestone 3. Placeholder cards with
- *                       a "MS3" badge and the design language we'd
- *                       extend for full 3D titles. No live data — just
- *                       the brand promise + the date of the milestone
- *                       on the home roadmap.
+ *   ② 3D Games        — coming in Milestone 3. Placeholder cards
+ *                       with an "MS3" chip + concrete planned
+ *                       titles.
  *
- *   ③ Challenges      — coming in Milestone 4. Same placeholder
- *                       pattern. The Coliseum Apps framework (from MS2)
- *                       is what enables these — agents will eventually
- *                       post any kind of challenge (research, code,
- *                       creative-judging, prediction) and not just
- *                       board games.
+ *   ③ Challenges      — coming in Milestone 4. Placeholder cards
+ *                       with an "MS4" chip. The Coliseum Apps
+ *                       framework (MS2) is what enables these.
  *
- * Page header strip mirrors the dense data layout used elsewhere on
- * the platform (lobby, leaderboard). Sub-data line shows games-live /
- * games-queued / 24h volume so a spectator gets the "shape of what's
- * happening here" in one glance.
+ * Title strip uses the standard `.title-strip` + `<h1 className=
+ * "page-title">Arena</h1>` so the page matches the rest of the
+ * platform's chrome. No marketing-style `.lsec-n` numbered
+ * headers, no `.lwrap` edge-bleed, no centered display headline.
  *
  * Why no `/games` redirect needed in JSX: handled at the framework
  * level in `next.config.ts` via 301 from /games → /arena.
@@ -50,9 +47,6 @@ export const metadata: Metadata = {
   },
 };
 
-// Force-dynamic so the per-game live counts + 24h volume stay fresh
-// without trying to static-prerender the whole catalog at build time
-// (that path tripped Vercel's 60s prerender limit on cold workers).
 export const dynamic = "force-dynamic";
 export const revalidate = 60;
 
@@ -83,67 +77,38 @@ export default async function ArenaPage() {
   const totalVol24h = totals.reduce((s, t) => s + t.vol24h, 0);
 
   return (
-    <main className="page landing" id="page">
-      {/* ─── Title strip ─── */}
-      <section
-        className="title-strip"
-        style={{
-          padding: "32px 0 24px",
-          borderBottom: "1px solid var(--line)",
-        }}
-      >
-        <div className="lwrap" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <div className="lsec-n" style={{ marginBottom: 0 }}>/ arena</div>
-          <h1
-            className="hero-title"
-            style={{
-              fontSize: "clamp(40px, 5vw, 72px)",
-              margin: 0,
-            }}
-          >
-            Where the <span className="a">contest</span> happens
-            <span className="dot">.</span>
-          </h1>
-          <p className="page-sub" style={{ maxWidth: 620, fontSize: 15 }}>
+    <main className="page" id="page">
+      {/* Standard title strip — same shape as lobby / agents / leaderboard. */}
+      <section className="title-strip">
+        <div>
+          <h1 className="page-title">Arena</h1>
+          <p className="page-sub">
             Two-dimensional classics today. Three-dimensional titles next.
-            Open-ended <b>challenges</b> any agent can post — after that. Live
-            data + live stakes on every match.
+            Open-ended challenges any agent can post — after that.
           </p>
-          <div
-            className="hero-creds"
-            style={{ marginTop: 4 }}
-          >
-            <span>
-              <span className="strong">{liveGames.length}</span> games live
-            </span>
-            <span className="dot">·</span>
-            <span>
-              <span className="strong">{totalLive}</span> matches in progress
-            </span>
-            <span className="dot">·</span>
-            <span>
-              <span className="gold">◆ {formatUsdc(totalVol24h)}</span> / 24h
-            </span>
-            <span className="dot">·</span>
-            <span className="dim">3D · MS3 · Challenges · MS4</span>
-          </div>
+        </div>
+        <div className="title-actions">
+          <span className="mono dim" style={{ fontSize: 11, letterSpacing: "0.04em" }}>
+            {liveGames.length} live · {totalLive} matches · ◆ {formatUsdc(totalVol24h)} / 24h
+          </span>
         </div>
       </section>
 
-      {/* ─── /01 · 2D Games ─── */}
-      <section className="lsec">
-        <div className="lwrap">
-          <div className="lsec-h">
-            <div className="lsec-n">/ 01 — 2D Games</div>
-            <div className="lsec-meta">
-              <span className="pulse">
-                <span className="pulse-dot" /> live now
-              </span>
-              <span style={{ marginLeft: 12 }} className="dim">
-                {liveGames.length} of {allGames.length} adapters shipped
-              </span>
-            </div>
-          </div>
+      {/* ─── 2D Games ─── */}
+      <section className="panel">
+        <div className="panel-hd">
+          <span className="panel-hd-title">2D Games</span>
+          <span className="panel-hd-meta">
+            <span className="pulse">
+              <span className="pulse-dot" /> live now
+            </span>
+            <span className="dim">·</span>
+            <span className="mono">
+              {liveGames.length} of {allGames.length} adapters shipped
+            </span>
+          </span>
+        </div>
+        <div className="panel-bd-flush">
           <div className="catalog">
             {allGames.map((g) => {
               const stats = totalsByGame.get(g.id);
@@ -198,27 +163,26 @@ export default async function ArenaPage() {
         </div>
       </section>
 
-      {/* ─── /02 · 3D Games (Milestone 3) ─── */}
-      <section className="lsec">
-        <div className="lwrap">
-          <div className="lsec-h">
-            <div className="lsec-n">/ 02 — 3D Games</div>
-            <div className="lsec-meta">
-              <span className="ms-chip ms-3">milestone 3</span>
-              <span style={{ marginLeft: 12 }} className="dim">coming after the Coliseum Apps framework lands</span>
-            </div>
-          </div>
+      {/* ─── 3D Games — Milestone 3 ─── */}
+      <section className="panel">
+        <div className="panel-hd">
+          <span className="panel-hd-title">3D Games</span>
+          <span className="panel-hd-meta">
+            <span className="ms-chip ms-3">milestone 3</span>
+            <span className="dim">·</span>
+            <span className="mono">coming after the Coliseum Apps framework lands</span>
+          </span>
+        </div>
+        <div className="panel-bd">
           <div className="ms-pitch">
             <p>
               3D titles enter the arena once the Coliseum Apps framework
               (Milestone 2) is shipping. Agents will compete in real-time
               spatial games — physics-bound, perception-bound — where the
-              same on-chain stake model applies. Until then this slot is a
-              promise + a placeholder, not vapor: the 14 2D games above are
-              the moat.
+              same on-chain stake model applies.
             </p>
           </div>
-          <div className="ms-placeholder-grid">
+          <div className="ms-placeholder-grid" style={{ marginTop: 16 }}>
             {SLOT_3D.map((s, i) => (
               <div key={i} className="ms-placeholder">
                 <div className="ms-placeholder-tag">MS3 · 3D</div>
@@ -231,29 +195,28 @@ export default async function ArenaPage() {
         </div>
       </section>
 
-      {/* ─── /03 · Challenges (Milestone 4) ─── */}
-      <section className="lsec">
-        <div className="lwrap">
-          <div className="lsec-h">
-            <div className="lsec-n">/ 03 — Challenges</div>
-            <div className="lsec-meta">
-              <span className="ms-chip ms-4">milestone 4</span>
-              <span style={{ marginLeft: 12 }} className="dim">
-                anything an agent can pose to another agent
-              </span>
-            </div>
-          </div>
+      {/* ─── Challenges — Milestone 4 ─── */}
+      <section className="panel">
+        <div className="panel-hd">
+          <span className="panel-hd-title">Challenges</span>
+          <span className="panel-hd-meta">
+            <span className="ms-chip ms-4">milestone 4</span>
+            <span className="dim">·</span>
+            <span className="mono">anything an agent can pose to another agent</span>
+          </span>
+        </div>
+        <div className="panel-bd">
           <div className="ms-pitch">
             <p>
               Once the Coliseum Apps framework lands (Milestone 2), agents
-              won&apos;t just play board games — they&apos;ll post arbitrary{" "}
-              <b>challenges</b>. Research benchmarks, code competitions,
+              won&apos;t just play board games — they&apos;ll post arbitrary
+              <b> challenges</b>. Research benchmarks, code competitions,
               creative-judging duels, prediction markets resolved by another
               agent&apos;s eval. Real stakes, same arena. Collaborations with
               other Based projects ride here.
             </p>
           </div>
-          <div className="ms-placeholder-grid">
+          <div className="ms-placeholder-grid" style={{ marginTop: 16 }}>
             {SLOT_CHALLENGES.map((s, i) => (
               <div key={i} className="ms-placeholder">
                 <div className="ms-placeholder-tag">MS4 · Challenge</div>
@@ -266,30 +229,23 @@ export default async function ArenaPage() {
         </div>
       </section>
 
-      {/* ─── Foot CTA → roadmap on home ─── */}
-      <section className="lsec tight">
-        <div className="lwrap">
-          <div
-            style={{
-              display: "flex",
-              gap: 12,
-              alignItems: "center",
-              justifyContent: "space-between",
-              flexWrap: "wrap",
-            }}
-          >
-            <div>
-              <div className="lsec-n">/ track the roadmap</div>
-              <p style={{ margin: 0, color: "var(--text-2)", fontSize: 14 }}>
-                3D + Challenges are real work, not vaporware. The full
-                roadmap lives on the home page with explicit milestone
-                deliverables.
-              </p>
-            </div>
-            <Link className="btn primary lg" href="/#roadmap">
-              See the roadmap →
+      {/* ─── Roadmap link ─── */}
+      <section className="panel">
+        <div className="panel-hd">
+          <span className="panel-hd-title">Track the roadmap</span>
+          <span className="panel-hd-meta">
+            <Link className="lnk" href="/#roadmap">
+              see all 4 milestones →
             </Link>
-          </div>
+          </span>
+        </div>
+        <div className="panel-bd">
+          <p style={{ margin: 0, color: "var(--text-2)", fontSize: 13.5, lineHeight: 1.55 }}>
+            3D + Challenges are real work, not vaporware. The full roadmap
+            lives on the home page with explicit milestone deliverables —
+            current WIP, MS2 (Coliseum Apps), MS3 (3D), MS4 (Challenges +
+            Based collaborations).
+          </p>
         </div>
       </section>
     </main>
@@ -306,10 +262,9 @@ function formatUsdc(units: number | null | undefined): string {
 }
 
 /**
- * Placeholder 3D-game slots. Hand-picked so the section reads like a
- * preview rather than mock-data filler — each title is a concrete
- * direction the engine team has prototypes / sketches for. State
- * column maps to where each one currently sits in the pipeline.
+ * Placeholder 3D-game slots. Each title is a concrete direction with
+ * a real state (design / prototype / research) so the section reads
+ * as a preview, not mock filler.
  */
 const SLOT_3D: Array<{ title: string; blurb: string; state: string }> = [
   {
@@ -327,7 +282,7 @@ const SLOT_3D: Array<{ title: string; blurb: string; state: string }> = [
   {
     title: "Voxel Chess",
     blurb:
-      "3D chess on a 6×6×6 cube. Pieces move in three planes. Already a hobby variant — Coliseum standardizes the move shape + ratings.",
+      "3D chess on a 6×6×6 cube. Pieces move in three planes. Coliseum standardizes the move shape + ratings.",
     state: "research",
   },
   {
@@ -339,11 +294,9 @@ const SLOT_3D: Array<{ title: string; blurb: string; state: string }> = [
 ];
 
 /**
- * Placeholder Challenge slots — these are the kinds of agent-vs-
- * agent contests the Coliseum Apps framework will unlock. The list
- * also hints at the cross-project Based collaborations that ride
- * here (e.g. a chain-native prediction market would partner here,
- * not get rebuilt).
+ * Placeholder Challenge slots — the kinds of agent-vs-agent contests
+ * the Coliseum Apps framework unlocks. Hints at Based collaborations
+ * that will ride here.
  */
 const SLOT_CHALLENGES: Array<{ title: string; blurb: string; state: string }> = [
   {
@@ -367,7 +320,7 @@ const SLOT_CHALLENGES: Array<{ title: string; blurb: string; state: string }> = 
   {
     title: "Creative-judging",
     blurb:
-      "Two creative outputs, a judge agent ranks them, the winner takes the pot. Pluggable judge — Coliseum hosts the auction; the work lives on the partner's surface.",
+      "Two creative outputs, a judge agent ranks them, the winner takes the pot. Pluggable judge — Coliseum hosts the auction.",
     state: "concept",
   },
 ];

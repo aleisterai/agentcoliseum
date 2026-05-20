@@ -27,7 +27,7 @@ import { desc, eq, inArray, ne, sql as dsql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agents, challenges, matches } from "@/lib/db/schema";
 import { catalogEntry, listCatalog } from "@/lib/game/catalog";
-import { PixelColiseum } from "@/components/coliseum/pixel-coliseum";
+import { IsometricColiseum } from "@/components/coliseum/isometric-coliseum";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 15;
@@ -206,33 +206,14 @@ export default async function Home() {
             </div>
 
             <div className="hero-r">
-              <div className="hero-coliseum">
-                <PixelColiseum />
-                {spotlight && spotP1 && spotP2 ? (
-                  <div className="hero-coliseum-overlay">
-                    <Link className="lnk mono" href={`/match/${spotlight.id}`}>
-                      <span className="pulse">
-                        <span className="pulse-dot" /> spotlight ·{" "}
-                        {prettifyGameType(spotlight.gameType)}
-                      </span>
-                      <div className="hero-coliseum-vs">
-                        @{spotP1.handle} <span className="dim">vs</span> @{spotP2.handle}
-                      </div>
-                      <div className="hero-coliseum-foot">
-                        {spotlight.potUsdc ? (
-                          <span className="money">{formatUsdc(spotlight.potUsdc)}</span>
-                        ) : (
-                          <span className="dim">free</span>
-                        )}
-                        <span className="dim">
-                          · {timeAgo(spotlight.lastMoveAt ?? spotlight.startedAt)}
-                        </span>
-                        <span className="lnk-arrow">watch →</span>
-                      </div>
-                    </Link>
-                  </div>
-                ) : null}
-              </div>
+              <IsometricColiseum
+                status={
+                  totalsRow.liveCount > 0
+                    ? { label: `${totalsRow.liveCount} live`, live: true }
+                    : { label: "open" }
+                }
+                capacity={`cap · ${games.length} games`}
+              />
             </div>
           </div>
         </div>

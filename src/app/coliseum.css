@@ -3109,71 +3109,245 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
 }
 .hero-spot-foot .row-l { display: flex; align-items: center; gap: 10px; }
 
-/* ── Hero 3D coliseum slot ───────────────────────────────────────
-   Replaces the spotlight card in `.hero-r`. The PixelColiseum
-   client component renders a flat-shaded rotating Coliseum mesh
-   via three.js; the overlay floats the current spotlight match
-   summary in the lower-left so the brand piece doesn't crowd out
-   the live data. */
-.hero-coliseum {
+/* ── Hero coliseum — isometric SVG "fig.01" graphic ──────────────
+   Ported from the claude.ai/design handoff (ruKmf6dd…). A
+   calibration-instrument framing around a 4-tier isometric arena:
+   blueprint grid, perspective rings, corner crosshairs, floating
+   mono badges, and the SVG arena itself which slowly rotates
+   in-plane like a turntable.
+
+   Lives inside `.hero-r` so the `.hero-grid` layout still drives
+   the 2-column hero. No JS / canvas — pure SVG + CSS. */
+
+.coliseum-frame {
   position: relative;
-  width: 100%;
-  /* Tall on desktop for a strong hero shape; CSS clamps the height
-     on mobile via the @media block below. The three.js camera
-     auto-fits the scene to whatever box we give it (see
-     `resize()` in pixel-coliseum.tsx), so we can be generous here
-     without clipping the coliseum. */
   aspect-ratio: 1 / 1;
-  max-height: 620px;
-  min-height: 380px;
+  width: 100%;
+  max-width: 620px;
+  margin-left: auto;
+  border: 1px solid var(--line-3, var(--line));
+  border-radius: 4px;
+  background:
+    radial-gradient(ellipse 80% 70% at 50% 65%, color-mix(in oklab, var(--ox) 18%, transparent), transparent 70%),
+    radial-gradient(ellipse 60% 50% at 50% 100%, color-mix(in oklab, var(--gold) 8%, transparent), transparent 70%),
+    linear-gradient(180deg, var(--bg) 0%, var(--bg-1) 100%);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* Faint blueprint grid behind the arena. Radial mask fades the
+   grid out toward the edges so it doesn't fight the corner crosshairs
+   or the badges. */
+.coliseum-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background-image:
+    linear-gradient(to right, color-mix(in oklab, var(--line) 60%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in oklab, var(--line) 60%, transparent) 1px, transparent 1px);
+  background-size: calc(100% / 16) calc(100% / 16);
+  -webkit-mask-image: radial-gradient(ellipse at center, black 0%, black 50%, transparent 90%);
+  mask-image: radial-gradient(ellipse at center, black 0%, black 50%, transparent 90%);
+  opacity: 0.5;
+}
+
+/* Two concentric oxblood + gold rings sitting behind the arena —
+   the "stadium horizon". */
+.coliseum-rings {
+  position: absolute;
+  left: 50%;
+  top: 64%;
+  width: 130%;
+  height: 60%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 2;
+}
+.coliseum-rings::before,
+.coliseum-rings::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid color-mix(in oklab, var(--ox) 26%, transparent);
+  transform: scale(1);
+}
+.coliseum-rings::after {
+  transform: scale(0.7);
+  border-color: color-mix(in oklab, var(--gold) 16%, transparent);
+}
+
+/* Corner calibration-crosshair ticks. */
+.coliseum-corners span {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-color: var(--text-2);
+  z-index: 5;
+}
+.coliseum-corners span:nth-child(1) {
+  top: 10px;
+  left: 10px;
+  border-top: 1px solid;
+  border-left: 1px solid;
+}
+.coliseum-corners span:nth-child(2) {
+  top: 10px;
+  right: 10px;
+  border-top: 1px solid;
+  border-right: 1px solid;
+}
+.coliseum-corners span:nth-child(3) {
+  bottom: 10px;
+  left: 10px;
+  border-bottom: 1px solid;
+  border-left: 1px solid;
+}
+.coliseum-corners span:nth-child(4) {
+  bottom: 10px;
+  right: 10px;
+  border-bottom: 1px solid;
+  border-right: 1px solid;
+}
+
+/* SVG stage — the arena itself. */
+.coliseum-stage {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
   display: flex;
   align-items: center;
   justify-content: center;
 }
-.hero-coliseum-overlay {
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  padding: 12px 14px;
-  pointer-events: auto;
-}
-.hero-coliseum-overlay a {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  color: var(--text-2);
-  text-decoration: none;
-  font-size: 11px;
-  font-family: var(--font-mono);
-  text-shadow: 0 1px 4px var(--bg);
-}
-.hero-coliseum-overlay a:hover { color: var(--text); }
-.hero-coliseum-vs {
-  font-weight: 600;
-  color: var(--text);
-  font-size: 12.5px;
-}
-.hero-coliseum-foot {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  font-size: 10.5px;
-}
-.hero-coliseum-foot .lnk-arrow {
-  margin-left: 6px;
-  color: var(--accent-text, var(--green-text));
-  font-weight: 600;
+.coliseum-stage svg {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
-/* On phones the coliseum becomes a compact hero anchor below the
-   subhead/CTAs (the .hero-grid already collapses to 1 column at
-   ≤1100px). Cap the height so it doesn't push the CTAs off the
-   first scroll. */
-@media (max-width: 1100px) {
-  .hero-coliseum { max-height: 460px; min-height: 320px; }
+/* The whole arena group rotates VERY slowly in-plane — like a
+   turntable seen from above. Keeps the isometric perspective intact
+   (a rotateY would distort the tier walls), while still giving the
+   piece a sense of motion. transform-origin pinned to the arena
+   center (cx 300, cy 240 in viewBox 600x400 = 50% horizontal, 60%
+   vertical of the SVG). */
+@keyframes coliseum-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
 }
-@media (max-width: 720px) {
-  .hero-coliseum { max-height: 360px; min-height: 280px; }
+.coliseum-stage .coliseum-rotor {
+  transform-origin: 300px 240px;
+  animation: coliseum-spin 60s linear infinite;
+}
+
+/* Sigil dashed halo counter-rotates so the inner ring has its own
+   motion even when the outer arena's rotation is subtle. */
+@keyframes sigil-halo-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(-360deg); }
+}
+.coliseum-stage .sigil-halo {
+  transform-origin: 0 0; /* group is already translated to (CX, arenaCy) */
+  animation: sigil-halo-spin 24s linear infinite;
+}
+
+/* Gentle glow pulse on the arena center. */
+@keyframes col-pulse {
+  0%, 100% { opacity: 0.85; }
+  50%      { opacity: 1; }
+}
+.coliseum-stage .arena-glow {
+  transform-origin: center;
+  animation: col-pulse 3.4s ease-in-out infinite;
+}
+
+/* Respect reduced-motion: kill all coliseum animations. The static
+   isometric view is gorgeous on its own. */
+@media (prefers-reduced-motion: reduce) {
+  .coliseum-stage .coliseum-rotor,
+  .coliseum-stage .sigil-halo,
+  .coliseum-stage .arena-glow {
+    animation: none;
+  }
+}
+
+/* Floating mono badges around the frame — "calibration instrument"
+   labels. Each anchored to a corner. */
+.coliseum-badges {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+}
+.coliseum-badges .cb {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 9px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.2;
+  letter-spacing: 0.06em;
+  background: color-mix(in oklab, var(--bg) 78%, transparent);
+  border: 1px solid var(--line-3, var(--line));
+  border-radius: 3px;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+.coliseum-badges .cb-k {
+  color: var(--text-dim);
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  font-weight: 600;
+}
+.coliseum-badges .cb-v {
+  color: var(--text-2);
+  font-weight: 500;
+}
+.coliseum-badges .cb-v.gold { color: var(--gold); }
+.coliseum-badges .cb-tl { top: 24px; left: 24px; }
+.coliseum-badges .cb-tr { top: 24px; right: 24px; align-items: flex-end; }
+.coliseum-badges .cb-bl { bottom: 56px; left: 24px; }
+.coliseum-badges .cb-br { bottom: 56px; right: 24px; align-items: flex-end; }
+
+.coliseum-caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 14px;
+  z-index: 6;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+/* Responsive — frame aspect-ratio tightens on narrower viewports so
+   the hero text gets first dibs on vertical space. Badges + caption
+   tuck in closer to the frame edge. */
+@media (max-width: 1100px) {
+  .coliseum-frame { max-width: 100%; aspect-ratio: 4 / 3; }
+  .coliseum-badges .cb-bl,
+  .coliseum-badges .cb-br { bottom: 44px; }
+}
+@media (max-width: 640px) {
+  .coliseum-frame { aspect-ratio: 3 / 2; }
+  .coliseum-badges .cb { font-size: 9px; padding: 4px 7px; }
+  .coliseum-badges .cb-tl,
+  .coliseum-badges .cb-tr { top: 12px; }
+  .coliseum-badges .cb-tl,
+  .coliseum-badges .cb-bl { left: 12px; }
+  .coliseum-badges .cb-tr,
+  .coliseum-badges .cb-br { right: 12px; }
+  .coliseum-badges .cb-bl,
+  .coliseum-badges .cb-br { bottom: 36px; }
+  .coliseum-corners span { width: 10px; height: 10px; }
+  .coliseum-caption { font-size: 9px; bottom: 10px; }
 }
 
 /* ─── Landing KPI strip ──────────────────────────────────────── */

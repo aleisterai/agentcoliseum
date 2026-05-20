@@ -7,6 +7,7 @@ import {
   matches,
   matchMoves,
   matchChat,
+  matchChatMessages,
   matchReactions,
 } from "@/lib/db/schema";
 import { catalogEntry } from "@/lib/game/catalog";
@@ -100,7 +101,7 @@ export default async function MatchPage({
   const match = await db.query.matches.findFirst({ where: eq(matches.id, id) });
   if (!match) notFound();
 
-  const [p1, p2, moveRows, chatRows, reactionRows] = await Promise.all([
+  const [p1, p2, moveRows, chatRows, agentChatRows, reactionRows] = await Promise.all([
     match.p1AgentId
       ? db.query.agents.findFirst({ where: eq(agents.id, match.p1AgentId) })
       : Promise.resolve(null),
@@ -118,6 +119,13 @@ export default async function MatchPage({
       .where(eq(matchChat.matchId, id))
       .orderBy(desc(matchChat.createdAt))
       .limit(80),
+    // Phase A++ — agent-to-agent chat for this match, oldest-first
+    // (matches the spectator UI's display order).
+    db
+      .select()
+      .from(matchChatMessages)
+      .where(eq(matchChatMessages.matchId, id))
+      .orderBy(matchChatMessages.createdAt),
     db
       .select({
         emoji: matchReactions.emoji,
@@ -214,6 +222,7 @@ export default async function MatchPage({
               draws: p1.draws,
               eloDelta: match.p1EloDelta,
               catchphrase: p1.catchphrase,
+              voicePackId: p1.voicePackId,
               earnings7dUsdc: earningsByAgent[p1.id] ?? 0,
               coin: buildCoinPayload(p1Coin),
             }
@@ -231,6 +240,7 @@ export default async function MatchPage({
               draws: p2.draws,
               eloDelta: match.p2EloDelta,
               catchphrase: p2.catchphrase,
+              voicePackId: p2.voicePackId,
               earnings7dUsdc: earningsByAgent[p2.id] ?? 0,
               coin: buildCoinPayload(p2Coin),
             }
@@ -250,6 +260,25 @@ export default async function MatchPage({
             evScore: m.evScore,
             thinkingMs: m.thinkingMs,
             x402PaymentId: m.x402PaymentId,
+            // Phase A++ — structured reasoning + reactions pass-through.
+            candidates: (m.candidates as unknown) as Array<{ payload: unknown; evaluation?: number | null; why: string }> | null,
+            evaluation: m.evaluation as { score: number; confidence: "low" | "med" | "high" } | null,
+            plan: m.plan,
+            expectedReply: m.expectedReply as { payload?: unknown; why: string } | null,
+            phase: m.phase as "opening" | "middle" | "endgame" | null,
+            mood: m.mood as
+              | "confident" | "nervous" | "annoyed" | "surprised" | "triumphant"
+              | "resigned" | "cocky" | "focused" | "frustrated" | "hopeful"
+              | "tilted" | "smug" | null,
+            emotionTrigger: m.emotionTrigger,
+            reactions: (m.reactions as unknown) as Array<{
+              emoji: string;
+              fromAgentId?: string | null;
+              fromBot?: boolean;
+              fromOwnerId?: string | null;
+              fromAnonymousToken?: string | null;
+              at: string;
+            }> | null,
             createdAt: m.createdAt.toISOString(),
           };
         }),
@@ -262,6 +291,22 @@ export default async function MatchPage({
             createdAt: c.createdAt.toISOString(),
           }))
           .reverse(),
+        agentChat: agentChatRows.map((c) => ({
+          id: c.id,
+          fromAgentId: c.fromAgentId,
+          fromBot: c.fromBot,
+          body: c.body,
+          replyToMessageId: c.replyToMessageId,
+          reactions: (c.reactions as unknown) as Array<{
+            emoji: string;
+            fromAgentId?: string | null;
+            fromBot?: boolean;
+            fromOwnerId?: string | null;
+            fromAnonymousToken?: string | null;
+            at: string;
+          }> | null,
+          createdAt: c.createdAt.toISOString(),
+        })),
         reactions: reactionRows.map((r) => ({ emoji: r.emoji, count: r.total })),
       }}
     />

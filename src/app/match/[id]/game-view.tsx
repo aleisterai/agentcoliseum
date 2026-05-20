@@ -37,7 +37,7 @@ import { WinnerBanner } from "./winner-banner";
 import { AgentCard } from "./agent-card";
 import { ScrubberTrack } from "./scrubber-track";
 import { MoveLog, X402Log, AnnotLog } from "./log-tabs";
-import { ReasoningTimeline } from "./reasoning-timeline";
+import { ChatPanel } from "./chat-panel";
 import {
   REACTION_PALETTE,
   type Move,
@@ -79,6 +79,10 @@ export function MatchView({ initial }: MatchViewProps) {
   }, [moves]);
 
   const [chat, setChat] = useState(initial.chat);
+  // Phase A++ — agent-to-agent chat (distinct from spectator chat above).
+  // Bubbles render alongside moves in the ChatPanel; updated live via
+  // the ChatPosted realtime event below.
+  const [agentChat, setAgentChat] = useState(initial.agentChat ?? []);
   const [reactions, setReactions] = useState(initial.reactions);
   const [stateG, setStateG] = useState<unknown>(initial.stateG);
   const [currentTurnPlayerId, setCurrentTurnPlayerId] = useState<PlayerId>(
@@ -105,6 +109,25 @@ export function MatchView({ initial }: MatchViewProps) {
   const [logTab, setLogTab] = useState<"moves" | "x402" | "annot">("moves");
   const [chatInput, setChatInput] = useState("");
   const chatStreamRef = useRef<HTMLDivElement | null>(null);
+
+  // Stable anonymous token for tapback identity. Generated once per
+  // browser session + persisted to localStorage so dedupe semantics
+  // work across reloads. Falls back to a random non-persistent value
+  // in private-mode browsers where localStorage throws.
+  const [anonToken] = useState(() => {
+    if (typeof window === "undefined") return "ssr";
+    try {
+      const existing = window.localStorage.getItem("coliseumAnonToken");
+      if (existing) return existing;
+      const fresh = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+      window.localStorage.setItem("coliseumAnonToken", fresh);
+      return fresh;
+    } catch {
+      return `tmp-${Math.random().toString(36).slice(2, 18)}`;
+    }
+  });
 
   // Centre-panel focus. "board" (default) puts the live board front and
   // centre; "reasoning" swaps in the interleaved move-by-move reasoning
@@ -138,6 +161,9 @@ export function MatchView({ initial }: MatchViewProps) {
       onChatMessage: (p) => applyChat(p),
       onReaction: (p) => applyReaction(p),
       onGameEnded: (p) => applyGameEnded(p),
+      // Phase A++ — tapback reactions + agent chat.
+      onReactionAdded: (p) => applyReactionAdded(p),
+      onChatPosted: (p) => applyChatPosted(p),
     },
   );
 
@@ -193,6 +219,67 @@ export function MatchView({ initial }: MatchViewProps) {
     setLiveMode(false);
     setWinnerAgentId(p.winnerAgentId);
     setResultReason(p.resultReason);
+  }
+
+  // Phase A++ — apply a tapback reaction delivered from another tab/
+  // browser to the matching move or chat message. Server is source of
+  // truth; we replace the local reactions array wholesale.
+  function applyReactionAdded(p: {
+    targetKind: "move" | "chat";
+    moveNumber?: number;
+    chatMessageId?: string;
+    reactions: Array<{
+      emoji: string;
+      fromAgentId?: string | null;
+      fromBot?: boolean;
+      fromOwnerId?: string | null;
+      fromAnonymousToken?: string | null;
+      at: string;
+    }>;
+  }) {
+    if (p.targetKind === "move" && typeof p.moveNumber === "number") {
+      const moveNumber = p.moveNumber;
+      setMoves((prev) =>
+        prev.map((m) =>
+          m.moveNumber === moveNumber ? { ...m, reactions: p.reactions } : m,
+        ),
+      );
+      return;
+    }
+    if (p.targetKind === "chat" && p.chatMessageId) {
+      const id = p.chatMessageId;
+      setAgentChat((prev) =>
+        prev.map((c) => (c.id === id ? { ...c, reactions: p.reactions } : c)),
+      );
+    }
+  }
+
+  // Phase A++ — apply a new agent-to-agent chat message delivered via
+  // the ChatPosted broadcast.
+  function applyChatPosted(p: {
+    id: string;
+    matchId: string;
+    fromAgentId: string | null;
+    fromBot: boolean;
+    body: string;
+    replyToMessageId: string | null;
+    createdAt: string;
+  }) {
+    setAgentChat((prev) => {
+      if (prev.some((c) => c.id === p.id)) return prev;
+      return [
+        ...prev,
+        {
+          id: p.id,
+          fromAgentId: p.fromAgentId,
+          fromBot: p.fromBot,
+          body: p.body,
+          replyToMessageId: p.replyToMessageId,
+          reactions: null,
+          createdAt: p.createdAt,
+        },
+      ];
+    });
   }
 
   function applyPollSnapshot(snap: PollSnapshot) {
@@ -590,17 +677,23 @@ export function MatchView({ initial }: MatchViewProps) {
               </div>
             ) : (
               <div className="reasoning-stage">
-                <ReasoningTimeline
+                <ChatPanel
+                  matchId={initial.id}
                   gameType={initial.gameType}
                   moves={moves}
+                  agentChat={agentChat}
                   p1={initial.p1}
                   p2={initial.p2}
-                  currentIdx={effectiveIdx}
+                  p1VoicePackId={initial.p1?.voicePackId ?? null}
+                  p2VoicePackId={initial.p2?.voicePackId ?? null}
+                  p2IsBot={initial.isSystemGame}
+                  currentMoveIdx={effectiveIdx}
                   onJump={(idx) => {
                     setLiveMode(false);
                     setIsPlaying(false);
                     setScrubIndex(idx);
                   }}
+                  anonymousToken={anonToken}
                 />
               </div>
             )}

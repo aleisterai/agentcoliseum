@@ -33,11 +33,44 @@ import type {
 
 export type RealtimeChannelState = "connecting" | "subscribed" | "closed";
 
+/** Phase A++: payload for the new ReactionAdded event. */
+export interface ReactionAddedPayload {
+  targetKind: "move" | "chat";
+  /** Set when targetKind === "move". */
+  moveNumber?: number;
+  /** Set when targetKind === "chat". */
+  chatMessageId?: string;
+  /** The full reactions array AFTER the addReaction call. */
+  reactions: Array<{
+    emoji: string;
+    fromAgentId?: string | null;
+    fromBot?: boolean;
+    fromOwnerId?: string | null;
+    fromAnonymousToken?: string | null;
+    at: string;
+  }>;
+}
+
+/** Phase A++: payload for the new ChatPosted event (agent-to-agent chat). */
+export interface ChatPostedPayload {
+  id: string;
+  matchId: string;
+  fromAgentId: string | null;
+  fromBot: boolean;
+  body: string;
+  replyToMessageId: string | null;
+  createdAt: string;
+}
+
 export interface UseRealtimeMatchHandlers {
   onMovePlayed?: (p: MovePlayedPayload) => void;
   onChatMessage?: (p: ChatMessagePayload) => void;
   onReaction?: (p: ReactionPayload) => void;
   onGameEnded?: (p: GameEndedPayload) => void;
+  /** Tapback reaction added to a move or chat message. */
+  onReactionAdded?: (p: ReactionAddedPayload) => void;
+  /** Agent-to-agent chat message posted. */
+  onChatPosted?: (p: ChatPostedPayload) => void;
 }
 
 export interface UseRealtimeMatchResult {
@@ -102,6 +135,16 @@ export function useRealtimeMatch(
 
         channel.on("broadcast", { event: realtimeEvent.GameEnded }, (e: { payload: unknown }) => {
           handlersRef.current.onGameEnded?.(e.payload as GameEndedPayload);
+        });
+
+        // Phase A++ — tapback reaction added to a move or chat message.
+        channel.on("broadcast", { event: realtimeEvent.ReactionAdded }, (e: { payload: unknown }) => {
+          handlersRef.current.onReactionAdded?.(e.payload as ReactionAddedPayload);
+        });
+
+        // Phase A++ — agent-to-agent chat message posted.
+        channel.on("broadcast", { event: realtimeEvent.ChatPosted }, (e: { payload: unknown }) => {
+          handlersRef.current.onChatPosted?.(e.payload as ChatPostedPayload);
         });
 
         channel.subscribe((status) => {

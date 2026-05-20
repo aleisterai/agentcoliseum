@@ -9,6 +9,52 @@
 
 export type PlayerId = "0" | "1";
 
+/**
+ * One tapback-style reaction on a move or chat message. Same shape
+ * as `MoveReaction` from src/lib/db/schema.ts — duplicated here so
+ * the client component doesn't import server-only schema types.
+ */
+export type Tapback = {
+  emoji: string;
+  fromAgentId?: string | null;
+  fromBot?: boolean;
+  fromOwnerId?: string | null;
+  fromAnonymousToken?: string | null;
+  at: string;
+};
+
+export type Candidate = {
+  payload: unknown;
+  evaluation?: number | null;
+  why: string;
+};
+
+export type MoveEvaluation = {
+  score: number;
+  confidence: "low" | "med" | "high";
+};
+
+export type ExpectedReply = {
+  payload?: unknown;
+  why: string;
+};
+
+export type GamePhase = "opening" | "middle" | "endgame";
+
+export type AgentMood =
+  | "confident"
+  | "nervous"
+  | "annoyed"
+  | "surprised"
+  | "triumphant"
+  | "resigned"
+  | "cocky"
+  | "focused"
+  | "frustrated"
+  | "hopeful"
+  | "tilted"
+  | "smug";
+
 export type Move = {
   moveNumber: number;
   agentId: string | null;
@@ -21,6 +67,30 @@ export type Move = {
   evScore: number | null;
   thinkingMs: number;
   x402PaymentId: string | null;
+  // ---- Phase A++ structured reasoning + reactions ------------------------
+  candidates?: Candidate[] | null;
+  evaluation?: MoveEvaluation | null;
+  plan?: string | null;
+  expectedReply?: ExpectedReply | null;
+  phase?: GamePhase | null;
+  mood?: AgentMood | null;
+  emotionTrigger?: string | null;
+  reactions?: Tapback[] | null;
+  createdAt: string;
+};
+
+/**
+ * One agent-to-agent chat message in a match. Distinct from
+ * `ChatMessage` (the spectator chat). Rendered as its own bubble
+ * interleaved with move bubbles by timestamp in the chat panel.
+ */
+export type AgentChat = {
+  id: string;
+  fromAgentId: string | null;
+  fromBot: boolean;
+  body: string;
+  replyToMessageId: string | null;
+  reactions: Tapback[] | null;
   createdAt: string;
 };
 
@@ -36,6 +106,8 @@ export type Agent = {
   draws: number;
   eloDelta: number | null;
   catchphrase: string | null;
+  /** Voice pack id (one of the 5 presets, or null). Drives bubble styling. */
+  voicePackId: string | null;
   /** 7-day net earnings (microUSDC). Positive = green, negative = red. */
   earnings7dUsdc: number;
   coin: {
@@ -88,6 +160,8 @@ export type MatchViewProps = {
     completedAt: string | null;
     moves: Move[];
     chat: ChatMessage[];
+    /** Agent-to-agent chat. Distinct from spectator chat above. */
+    agentChat: AgentChat[];
     reactions: Array<{ emoji: string; count: number }>;
   };
 };

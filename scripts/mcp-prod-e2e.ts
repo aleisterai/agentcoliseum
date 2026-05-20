@@ -411,7 +411,9 @@ async function runToolBatteryWithBearer(
       pass(contract, "coliseum_match_move", `status=${moveResp.status} (structured payload)`, Date.now() - moveStart);
 
       // Re-read state — recentReasoning must include our structured
-      // move with its candidates + mood.
+      // move with its candidates + mood. Also verify the new Phase A++
+      // fields: opponentLastMove (from beta's POV would be alpha's
+      // move) and chat (full session, here empty pre-chat).
       const after = await callTool<{
         recentReasoning: Array<{
           byMe: boolean;
@@ -421,6 +423,7 @@ async function runToolBatteryWithBearer(
           phase: string | null;
         }>;
         recentMoods: string[];
+        chat: Array<{ id: string; body: string; byMe: boolean }>;
       }>(bearer, "coliseum_match_state", { matchId: acc.matchId });
       const ourMove = after.recentReasoning.find(
         (m) => m.byMe && m.reasoning?.startsWith("Center: strongest opening"),
@@ -434,12 +437,59 @@ async function runToolBatteryWithBearer(
       if (!after.recentMoods.includes("focused")) {
         throw new Error("recentMoods missing 'focused'");
       }
+      if (!Array.isArray(after.chat)) throw new Error("chat field missing");
       pass(
         contract,
         "phase_a_persistence",
         `candidates=${ourMove.candidates.length} mood=${ourMove.mood} phase=${ourMove.phase}`,
         0,
       );
+
+      // ── Phase A++: chat send + tapback react round-trip.
+      const chatStart = Date.now();
+      const sent = await callTool<{ error?: string; id: string; body: string }>(
+        bearer,
+        "coliseum_match_chat_send",
+        {
+          matchId: acc.matchId,
+          body: "gl hf — e2e probe",
+        },
+      );
+      if (sent.error) throw new Error(`chat_send: ${sent.error}`);
+      pass(contract, "coliseum_match_chat_send", `id=${sent.id.slice(0, 8)}`, Date.now() - chatStart);
+
+      // Tapback on alpha's own move (allowed — agent can react to their
+      // own move too, mostly useful for spectators but exercise the
+      // path here).
+      const reactStart = Date.now();
+      const reacted = await callTool<{ error?: string; reactions: Array<{ emoji: string }> }>(
+        bearer,
+        "coliseum_match_react",
+        {
+          matchId: acc.matchId,
+          target: { kind: "move", moveNumber: 0 },
+          emoji: "🔥",
+        },
+      );
+      if (reacted.error) throw new Error(`react: ${reacted.error}`);
+      if (!Array.isArray(reacted.reactions) || reacted.reactions.length === 0) {
+        throw new Error(`react: no reactions returned`);
+      }
+      pass(
+        contract,
+        "coliseum_match_react",
+        `reactions=${reacted.reactions.length}`,
+        Date.now() - reactStart,
+      );
+
+      // Verify the chat shows up in match_state.chat next read.
+      const afterChat = await callTool<{
+        chat: Array<{ body: string }>;
+      }>(bearer, "coliseum_match_state", { matchId: acc.matchId });
+      if (!afterChat.chat.some((c) => c.body === "gl hf — e2e probe")) {
+        throw new Error("chat not echoed back in match_state.chat");
+      }
+      pass(contract, "phase_a++_round_trip", `chat=${afterChat.chat.length}`, 0);
     } else {
       pass(contract, "coliseum_match_move", "skipped — beta's turn first", 0);
     }

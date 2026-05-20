@@ -1335,9 +1335,17 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
   .featured-stats .lbl, .game-stats .lbl, .profile-stats .lbl,
   .stat-grid .lbl, .ag-stats .lbl { font-size: 9px !important; }
 
-  /* Featured / game-detail buttons: stack vertically rather than wrap mid-word */
-  .game-hero-r .row, .featured-info .row { width: 100%; }
-  .game-hero-r .row .btn, .featured-info .row .btn { flex: 1 1 calc(50% - 4px); min-width: 0; }
+  /* Featured / game-detail buttons: wrap to 2-up rows on phones so a
+     3-button group becomes [btn][btn] / [btn] instead of cramming all
+     three into one squashed row that breaks the third button's label
+     across 3 lines. */
+  .game-hero-r .row, .featured-info .row { width: 100%; flex-wrap: wrap; }
+  .game-hero-r .row .btn, .featured-info .row .btn {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 0;
+    text-align: center;
+    justify-content: center;
+  }
 
   /* Hero board doesn't dominate */
   .game-hero { padding: 0 !important; gap: 14px !important; }
@@ -1356,6 +1364,32 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
   .post-field { min-width: calc(50% - 5px); }
   .post-actions { width: 100%; flex-direction: column; align-items: stretch; gap: 8px; }
   .post-summary { width: 100%; flex-wrap: wrap; }
+
+  /* Data tables (lobby book, history, leaderboard, etc.) — at 375px
+     viewport a 5-column table collapses each cell to ~60px, which
+     forces game names like "Tic-Tac-Toe" to wrap onto 3 lines and
+     handle columns into a single-char-per-line strip. Wrap the
+     panel-bd-flush in horizontal scroll, set a min-width on .t so
+     cells stay readable, and stop content from wrapping mid-cell.
+     CRITICAL: the .panel (and its grid track) must also constrain
+     itself so the unwrappable table doesn't force the panel wider
+     than the viewport — without min-width:0 + max-width:100% the
+     panel stretches to fit min-content of its inner table, blowing
+     out adjacent text panels. */
+  .panel:has(table.t) {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+  }
+  .panel-bd-flush:has(table.t) {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .t { font-size: 12px; min-width: 560px; }
+  .t thead th, .t tbody td { padding: 8px 10px; white-space: nowrap; }
+  .t tbody td .row { flex-wrap: nowrap; }
 
   /* Mini-board / chess-board / others: smaller font sizes for piece glyphs */
   .chess-board .sq { font-size: clamp(16px, 9%, 36px); }
@@ -2490,6 +2524,16 @@ html[data-theme="light"] .tapback-palette-item:hover {
 }
 .page-title { font-family: var(--font-display); font-size: 36px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
 .page-sub { margin: 4px 0 0; color: var(--text-mute); max-width: 540px; }
+/* Arena variant: one-line on desktop (the sentence fits ~720px wide),
+   wraps normally on tablet/phone so it isn't ellipsis-clipped. */
+.page-sub-arena { max-width: none; }
+@media (min-width: 900px) {
+  .page-sub-arena {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
 .title-actions { display: flex; gap: 10px; align-items: center; }
 
 .filters {
@@ -2629,9 +2673,12 @@ html[data-theme="light"] .tapback-palette-item:hover {
 .game-stats .val.money { color: var(--gold); }
 
 .game-grid {
-  display: grid; grid-template-columns: 1.4fr 1fr; gap: 14px;
+  /* minmax(0, …) lets the columns shrink below their min-content size
+     so panels with horizontally-scrollable tables don't blow out the
+     entire page width on narrow viewports. */
+  display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 14px;
 }
-@media (max-width: 1000px) { .game-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1000px) { .game-grid { grid-template-columns: minmax(0, 1fr); } }
 
 .rules-bd { padding: 22px 24px; line-height: 1.65; color: var(--text-2); }
 .rules-bd h1 { font-family: var(--font-display); font-size: 24px; margin: 0 0 12px; }

@@ -82,10 +82,10 @@ export default async function ArenaPage() {
       <section className="title-strip">
         <div>
           <h1 className="page-title">Arena</h1>
-          <p
-            className="page-sub"
-            style={{ maxWidth: "none", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
-          >
+          {/* page-sub-arena keeps the line single on desktop (wide
+              enough to fit ~110 chars), but allows wrap on phones so
+              the sentence isn't ellipsis-truncated. */}
+          <p className="page-sub page-sub-arena">
             Two-dimensional classics today. Three-dimensional titles next. Open-ended challenges any agent can post — after that.
           </p>
         </div>

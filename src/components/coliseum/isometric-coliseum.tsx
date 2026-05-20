@@ -1,42 +1,69 @@
+"use client";
+
 /**
  * IsometricColiseum — the hero "fig.01" graphic, ported 1:1 from the
- * claude.ai/design handoff bundle (2026-05-15, ruKmf6dd…).
+ * claude.ai/design handoff bundle (2026-05-15, ruKmf6dd…) WITH
+ * proper 3D rotation around the building's vertical axis.
  *
- * Visual layout:
+ * Why this is a client component:
+ *   The arena is a cylindrical building viewed from a fixed isometric
+ *   camera. Rotating a static 2D SVG via `transform: rotateY` flattens
+ *   it — it looks like paper turning, not a building spinning. The
+ *   actual 3D rotation effect comes from MARCHING the column ticks
+ *   around the cylinder's perimeter while the tier ellipse silhouettes
+ *   stay constant (they're invariant under Y-axis rotation in
+ *   isometric projection — a cylinder's outline from above is always
+ *   the same ellipse no matter how it's spun).
  *
- *   ┌── .coliseum-frame (square, hairline border) ──────────────────┐
- *   │  • .coliseum-grid    faint blueprint grid (radial-masked CSS) │
- *   │  • .coliseum-rings   2 concentric perspective rings (CSS)     │
- *   │  • .coliseum-stage   ↓ this is the SVG ↓                      │
- *   │      4-tier isometric arena, sand floor + sigil, 4 banner     │
- *   │      pylons on the outer rim                                  │
- *   │  • .coliseum-corners 4 calibration-crosshair ticks            │
- *   │  • .coliseum-badges  4 floating mono labels (TL/TR/BL/BR)     │
- *   │  • .coliseum-caption "fig.01 — the agent coliseum"            │
- *   └───────────────────────────────────────────────────────────────┘
+ *   So every frame:
+ *     - Tier walls / cornices / arena floor / sigil: STATIC (cached)
+ *     - Column ticks: recomputed at the current rotation angle θ;
+ *       only those on the FRONT half of the cylinder (sin(φ+θ) > 0)
+ *       are drawn; their y-position foreshortens correctly toward
+ *       the silhouette edges
+ *     - Banner pylons: 4 fixed building-coordinates rotate around; ones
+ *       on the back hide, ones on the front are gold/ox alternating
  *
- * Animation:
- *   - The whole stage SVG slowly rotates in-plane (~60s per turn) so
- *     the piece reads as a turntable view — keeps the isometric
- *     perspective intact (vs. rotateY which would distort it).
- *   - `.arena-glow` (the inner sigil ring) pulses on a 3.4s loop.
- *   - Dashed sigil halo counter-rotates faster (~24s) for layered
- *     motion.
- *   - All CSS animations — no JS, no rAF, no canvas. Server-renderable.
+ *   Net effect: spectator sees a true 3D coliseum spinning on its
+ *   vertical axis, with columns marching across the front and
+ *   disappearing into the back like a real rotating cylindrical
+ *   structure.
  *
- * Sized to fill `.hero-coliseum` exactly. The badges in the corners
- * are absolute-positioned over the frame and stay still while the
- * SVG rotates underneath, matching the design's "calibration
- * instrument" framing.
+ * Frame structure (matches the design):
+ *   ┌── coliseum-frame (square hairline border) ──────────────────┐
+ *   │  blueprint grid (faint, radial-masked CSS)                  │
+ *   │  2 concentric perspective rings (oxblood + gold)             │
+ *   │  ── SVG stage ──                                             │
+ *   │  • 4-tier isometric arena (silhouette static)                │
+ *   │  • COLUMN TICKS animated per-frame                           │
+ *   │  • gold sand floor with sigil (sigil halo counter-rotates)   │
+ *   │  • 4 banner pylons orbit visible front quadrant              │
+ *   │  4 corner calibration ticks                                  │
+ *   │  4 floating mono badges                                      │
+ *   │  "fig.01 — the agent coliseum" caption                       │
+ *   └─────────────────────────────────────────────────────────────┘
  */
 
-import { catalogEntry } from "@/lib/game/catalog";
+import { useEffect, useRef } from "react";
 
-interface Tier {
+interface TierSpec {
   rx: number;
   ry: number;
   h: number;
   cols: number;
+}
+
+interface TierData extends TierSpec {
+  baseY: number;
+  topY: number;
+}
+
+interface BannerData {
+  ref: React.RefObject<SVGGElement | null>;
+  /** Building-frame angle (where on the cylinder the pylon sits). */
+  angle: number;
+  /** Gold (true) or ox-bright (false). */
+  isGold: boolean;
 }
 
 const VIEW_W = 600;
@@ -44,16 +71,14 @@ const VIEW_H = 400;
 const CX = 300;
 const CY = 240;
 
-const TIERS: Tier[] = [
+const TIERS: TierSpec[] = [
   { rx: 270, ry: 92, h: 56, cols: 64 },
   { rx: 234, ry: 80, h: 42, cols: 52 },
   { rx: 196, ry: 66, h: 30, cols: 40 },
   { rx: 158, ry: 52, h: 18, cols: 30 },
 ];
 
-/** Cumulative-top: tier 0 sits on the ground (baseY = cy), tier 1
- *  sits on top of tier 0 (baseY = cy - tier0.h), etc. */
-function buildTierData() {
+function buildTierData(): TierData[] {
   let cumTop = 0;
   return TIERS.map((t) => {
     const baseY = CY - cumTop;
@@ -63,10 +88,9 @@ function buildTierData() {
   });
 }
 
-/** Front-facing wall path between an outer ellipse (at baseY) and the
- *  same ellipse offset up by `h` (at topY). The arcs run along the
- *  visible HALF of each ellipse so the wall reads as a curved facade
- *  rather than a flat panel. */
+/** Static front-wall path between an outer ellipse (at baseY) and the
+ *  top ellipse (at topY). Invariant under Y-axis rotation because the
+ *  cylinder's silhouette is the ellipse itself. */
 function wallPath(rx: number, ry: number, baseY: number, topY: number): string {
   return [
     `M ${CX - rx},${baseY}`,
@@ -77,55 +101,57 @@ function wallPath(rx: number, ry: number, baseY: number, topY: number): string {
   ].join(" ");
 }
 
-/** Column ticks (vertical seating-arch lines) evenly distributed along
- *  the front arc of the wall. We sweep theta from π → 2π so ticks
- *  only land on the front (visible) half of each ellipse. */
-function columnTicks(
-  rx: number,
-  ry: number,
-  baseY: number,
-  topY: number,
-  cols: number,
-): string {
-  const ticks: string[] = [];
-  for (let i = 1; i < cols; i++) {
-    const t = Math.PI + (i / cols) * Math.PI;
-    const x = CX + rx * Math.cos(t);
-    const y = baseY + ry * Math.sin(t);
-    ticks.push(
-      `M ${x.toFixed(2)},${y.toFixed(2)} L ${x.toFixed(2)},${topY.toFixed(2)}`,
-    );
-  }
-  return ticks.join(" ");
-}
-
-/** Front arc of the top ellipse — the highlighted "rim" of the tier
- *  where the seating step crests. */
 function topRim(rx: number, ry: number, topY: number): string {
   return `M ${CX - rx},${topY} A ${rx},${ry} 0 0 0 ${CX + rx},${topY}`;
 }
 
-/** Back arc of the top ellipse — peeks behind the front wall to add
- *  depth. */
 function backRim(rx: number, ry: number, topY: number): string {
   return `M ${CX - rx},${topY} A ${rx},${ry} 0 0 1 ${CX + rx},${topY}`;
 }
 
+/**
+ * Compute the visible column ticks for one tier at rotation angle θ.
+ * For each column k of cols total, its building-frame angle is
+ * φ = (k / cols) * 2π. Projected to screen at rotation θ:
+ *   x = cx + rx * cos(φ + θ)
+ *   y = baseY + ry * sin(φ + θ)
+ * Only columns on the FRONT half (sin(φ + θ) > 0) are drawn — the
+ * back half is occluded by the wall.
+ *
+ * This is the per-frame work. The output is a single SVG path `d`
+ * string that the rAF tick assigns to the tier's tick `<path>`.
+ */
+function columnTicksAtAngle(t: TierData, theta: number): string {
+  const ticks: string[] = [];
+  for (let k = 0; k < t.cols; k++) {
+    const phi = (k / t.cols) * Math.PI * 2;
+    const a = phi + theta;
+    const s = Math.sin(a);
+    // s > 0 = front half (positive y in screen coords means down,
+    // which for a top-down isometric ellipse means the front-facing
+    // arc). Hide back-half columns.
+    if (s <= 0) continue;
+    const c = Math.cos(a);
+    const x = CX + t.rx * c;
+    const y = t.baseY + t.ry * s;
+    ticks.push(`M ${x.toFixed(2)},${y.toFixed(2)} L ${x.toFixed(2)},${t.topY.toFixed(2)}`);
+  }
+  return ticks.join(" ");
+}
+
 export interface IsometricColiseumProps {
-  /** Optional override for the bottom-right "sigil" badge — gold by
-   *  default, used to indicate the platform's struck sigil. */
   sigilLabel?: string;
-  /** Optional override for the top-right status — defaults to "open".
-   *  Pass "live" + an integer matchCount to render a live indicator. */
   status?: { label: string; live?: boolean };
-  /** Optional override for the BL tier-count text. */
   capacity?: string;
+  /** Rotation period in seconds. Set null to freeze. */
+  rotationPeriodSec?: number | null;
 }
 
 export function IsometricColiseum({
   sigilLabel = "◆ struck",
   status = { label: "open" },
   capacity = "cap · 80,000",
+  rotationPeriodSec = 24,
 }: IsometricColiseumProps) {
   const tiers = buildTierData();
   const innermost = tiers[tiers.length - 1];
@@ -135,21 +161,99 @@ export function IsometricColiseum({
   const arenaRy = innermost.ry - 8;
   const arenaCy = innermost.topY;
 
-  // Sand-floor parallel lines — horizontal slices clipped to the
-  // arena ellipse so they read as a stadium-floor stripe pattern.
+  const sigilSize = 18;
+
+  // Refs for the per-frame DOM updates. One `<path>` per tier holds
+  // ALL of that tier's visible column ticks (joined into one path
+  // string for cheap updates), and one `<g>` per banner pylon for
+  // its transform. Declared at top level (not inside arrays) so the
+  // hook order is unambiguous to React's reconciler.
+  const tick0 = useRef<SVGPathElement | null>(null);
+  const tick1 = useRef<SVGPathElement | null>(null);
+  const tick2 = useRef<SVGPathElement | null>(null);
+  const tick3 = useRef<SVGPathElement | null>(null);
+  const tickRefs = [tick0, tick1, tick2, tick3];
+
+  const ban0 = useRef<SVGGElement | null>(null);
+  const ban1 = useRef<SVGGElement | null>(null);
+  const ban2 = useRef<SVGGElement | null>(null);
+  const ban3 = useRef<SVGGElement | null>(null);
+  const banners: BannerData[] = [
+    { ref: ban0, angle: 0, isGold: false },
+    { ref: ban1, angle: Math.PI / 2, isGold: true },
+    { ref: ban2, angle: Math.PI, isGold: true },
+    { ref: ban3, angle: (3 * Math.PI) / 2, isGold: false },
+  ];
+
+  useEffect(() => {
+    if (!rotationPeriodSec || rotationPeriodSec <= 0) return;
+
+    const startedAt = performance.now();
+    let frameId = 0;
+    let visible = !document.hidden;
+
+    function tick(now: number) {
+      const elapsed = (now - startedAt) / 1000;
+      const theta = (elapsed / rotationPeriodSec!) * Math.PI * 2;
+
+      // Tier column ticks
+      for (let i = 0; i < tiers.length; i++) {
+        const ref = tickRefs[i].current;
+        if (!ref) continue;
+        ref.setAttribute("d", columnTicksAtAngle(tiers[i], theta));
+      }
+
+      // Banner pylons — each fixed at a building-frame angle, projected
+      // to screen at theta. Hide ones on the back half (sin < 0).
+      for (const b of banners) {
+        const el = b.ref.current;
+        if (!el) continue;
+        const a = b.angle + theta;
+        const s = Math.sin(a);
+        if (s <= 0) {
+          el.setAttribute("opacity", "0");
+          continue;
+        }
+        const c = Math.cos(a);
+        const x = CX + outer.rx * c;
+        const y = outer.topY + outer.ry * s;
+        // Fade slightly at the silhouette edges where the pylon is
+        // almost edge-on — looks more natural than a hard cut.
+        const opacity = Math.min(1, s * 1.4).toFixed(2);
+        el.setAttribute("transform", `translate(${x.toFixed(1)} ${y.toFixed(1)})`);
+        el.setAttribute("opacity", opacity);
+      }
+
+      if (visible) frameId = requestAnimationFrame(tick);
+    }
+
+    function onVisibility() {
+      visible = !document.hidden;
+      if (visible) frameId = requestAnimationFrame(tick);
+      else cancelAnimationFrame(frameId);
+    }
+
+    frameId = requestAnimationFrame(tick);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      cancelAnimationFrame(frameId);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+    // tiers/banners arrays are stable across renders (constructed from
+    // module-level constants inside the component); refs persist;
+    // rotationPeriodSec is the only dependency that should trigger
+    // restart.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rotationPeriodSec]);
+
+  // Sand-floor parallel lines, clipped to the arena ellipse.
   const sandLines: Array<{ x1: number; x2: number; y: number }> = [];
   for (let i = -3; i <= 3; i++) {
     const fy = arenaCy + i * 8;
     const dx = Math.sqrt(Math.max(0, 1 - ((i * 8) / arenaRy) ** 2)) * arenaRx;
     if (dx > 0) sandLines.push({ x1: CX - dx, x2: CX + dx, y: fy });
   }
-
-  // Sigil — small triangle-in-circle at the arena center.
-  const sigilSize = 18;
-
-  // 4 banner pylons on the outer top rim at hand-picked angles so
-  // they sit on the visible front quadrants of the rim.
-  const pylonAngles = [Math.PI * 1.1, Math.PI * 1.35, Math.PI * 1.65, Math.PI * 1.9];
 
   return (
     <div className="coliseum-frame" aria-hidden="true">
@@ -181,7 +285,7 @@ export function IsometricColiseum({
             </radialGradient>
           </defs>
 
-          {/* Crosshair guides — faint dashed centerlines */}
+          {/* Crosshair guides */}
           <line
             x1="0"
             y1={CY}
@@ -201,154 +305,141 @@ export function IsometricColiseum({
             strokeDasharray="2 4"
           />
 
-          {/* This <g> rotates slowly via CSS — keeps the perspective
-              intact while giving the piece a turntable feel. */}
-          <g className="coliseum-rotor">
-            {tiers.map((t, i) => {
-              const stroke = `color-mix(in oklab, var(--ox) ${30 + i * 10}%, var(--line-3, var(--line)))`;
-              const fill =
-                i === 0
-                  ? "color-mix(in oklab, var(--bg-2) 90%, var(--ox))"
-                  : `color-mix(in oklab, var(--ox) ${14 + (i - 1) * 8}%, var(--bg-2))`;
-              const topFill =
-                i === 0
-                  ? "color-mix(in oklab, var(--bg-3) 80%, var(--ox))"
-                  : `color-mix(in oklab, var(--ox) ${22 + (i - 1) * 10}%, var(--bg-3))`;
-              return (
-                <g key={i} className="tier" data-i={i}>
-                  {/* back rim peeks behind the front wall */}
-                  <path
-                    d={backRim(t.rx, t.ry, t.topY)}
-                    stroke="color-mix(in oklab, var(--text) 30%, transparent)"
-                    strokeWidth="0.7"
-                    fill="none"
-                  />
-                  {/* the seating ring's floor (top step) */}
-                  <ellipse
-                    cx={CX}
-                    cy={t.topY}
-                    rx={t.rx}
-                    ry={t.ry}
-                    fill={topFill}
-                    stroke={stroke}
-                    strokeWidth="0.7"
-                  />
-                  {/* front-facing wall */}
-                  <path
-                    d={wallPath(t.rx, t.ry, t.baseY, t.topY)}
-                    fill={fill}
-                    stroke={stroke}
-                    strokeWidth="0.9"
-                  />
-                  {/* column ticks (seating arches) */}
-                  <path
-                    d={columnTicks(t.rx, t.ry, t.baseY, t.topY, t.cols)}
-                    stroke="color-mix(in oklab, var(--text) 18%, transparent)"
-                    strokeWidth="0.6"
-                    fill="none"
-                  />
-                  {/* front-edge highlight */}
-                  <path
-                    d={topRim(t.rx, t.ry, t.topY)}
-                    stroke="color-mix(in oklab, var(--text) 70%, transparent)"
-                    strokeWidth="0.8"
-                    fill="none"
-                  />
-                </g>
-              );
-            })}
+          {/* Static tier silhouettes — invariant under Y-rotation. */}
+          {tiers.map((t, i) => {
+            const stroke = `color-mix(in oklab, var(--ox) ${30 + i * 10}%, var(--line-3, var(--line)))`;
+            const fill =
+              i === 0
+                ? "color-mix(in oklab, var(--bg-2) 90%, var(--ox))"
+                : `color-mix(in oklab, var(--ox) ${14 + (i - 1) * 8}%, var(--bg-2))`;
+            const topFill =
+              i === 0
+                ? "color-mix(in oklab, var(--bg-3) 80%, var(--ox))"
+                : `color-mix(in oklab, var(--ox) ${22 + (i - 1) * 10}%, var(--bg-3))`;
+            return (
+              <g key={i} className="tier" data-i={i}>
+                {/* back rim (drawn behind front wall) */}
+                <path
+                  d={backRim(t.rx, t.ry, t.topY)}
+                  stroke="color-mix(in oklab, var(--text) 30%, transparent)"
+                  strokeWidth="0.7"
+                  fill="none"
+                />
+                {/* top step (the seating ring floor) */}
+                <ellipse
+                  cx={CX}
+                  cy={t.topY}
+                  rx={t.rx}
+                  ry={t.ry}
+                  fill={topFill}
+                  stroke={stroke}
+                  strokeWidth="0.7"
+                />
+                {/* front-facing wall */}
+                <path
+                  d={wallPath(t.rx, t.ry, t.baseY, t.topY)}
+                  fill={fill}
+                  stroke={stroke}
+                  strokeWidth="0.9"
+                />
+                {/* ANIMATED column ticks — d attribute updated per
+                    frame. Initial d is empty; rAF tick fills it in. */}
+                <path
+                  ref={tickRefs[i]}
+                  d=""
+                  stroke="color-mix(in oklab, var(--text) 18%, transparent)"
+                  strokeWidth="0.6"
+                  fill="none"
+                />
+                {/* front-edge highlight */}
+                <path
+                  d={topRim(t.rx, t.ry, t.topY)}
+                  stroke="color-mix(in oklab, var(--text) 70%, transparent)"
+                  strokeWidth="0.8"
+                  fill="none"
+                />
+              </g>
+            );
+          })}
 
-            {/* Arena floor (sand) on top of the innermost tier */}
-            <ellipse
-              cx={CX}
-              cy={arenaCy}
-              rx={arenaRx + 14}
-              ry={arenaRy + 6}
-              fill="url(#glowGrad)"
-            />
-            <ellipse
-              cx={CX}
-              cy={arenaCy}
-              rx={arenaRx}
-              ry={arenaRy}
-              fill="url(#sandGrad)"
-              stroke="color-mix(in oklab, var(--gold) 45%, var(--line))"
-              strokeWidth="0.8"
-            />
-            <g
-              stroke="color-mix(in oklab, var(--ox) 30%, transparent)"
-              strokeWidth="0.5"
-            >
-              {sandLines.map((l, i) => (
-                <line key={i} x1={l.x1} y1={l.y} x2={l.x2} y2={l.y} />
-              ))}
-            </g>
+          {/* Arena floor + sigil — static (the floor doesn't rotate
+              visually since it's circular). */}
+          <ellipse
+            cx={CX}
+            cy={arenaCy}
+            rx={arenaRx + 14}
+            ry={arenaRy + 6}
+            fill="url(#glowGrad)"
+          />
+          <ellipse
+            cx={CX}
+            cy={arenaCy}
+            rx={arenaRx}
+            ry={arenaRy}
+            fill="url(#sandGrad)"
+            stroke="color-mix(in oklab, var(--gold) 45%, var(--line))"
+            strokeWidth="0.8"
+          />
+          <g
+            stroke="color-mix(in oklab, var(--ox) 30%, transparent)"
+            strokeWidth="0.5"
+          >
+            {sandLines.map((l, i) => (
+              <line key={i} x1={l.x1} y1={l.y} x2={l.x2} y2={l.y} />
+            ))}
+          </g>
 
-            {/* Central sigil — small triangle-in-circle with a
-                glowing dashed halo. The halo counter-rotates via CSS. */}
-            <g className="arena-glow" transform={`translate(${CX} ${arenaCy})`}>
-              <circle
-                className="sigil-halo"
-                r={sigilSize + 6}
-                fill="none"
-                stroke="color-mix(in oklab, var(--gold) 55%, transparent)"
-                strokeWidth="0.6"
-                strokeDasharray="2 3"
-              />
-              <circle
-                r={sigilSize}
-                fill="color-mix(in oklab, var(--gold) 14%, transparent)"
-                stroke="color-mix(in oklab, var(--gold) 70%, transparent)"
-                strokeWidth="1"
+          <g className="arena-glow" transform={`translate(${CX} ${arenaCy})`}>
+            <circle
+              className="sigil-halo"
+              r={sigilSize + 6}
+              fill="none"
+              stroke="color-mix(in oklab, var(--gold) 55%, transparent)"
+              strokeWidth="0.6"
+              strokeDasharray="2 3"
+            />
+            <circle
+              r={sigilSize}
+              fill="color-mix(in oklab, var(--gold) 14%, transparent)"
+              stroke="color-mix(in oklab, var(--gold) 70%, transparent)"
+              strokeWidth="1"
+            />
+            <path
+              d={`M 0,${-sigilSize * 0.55} L ${sigilSize * 0.5},${sigilSize * 0.32} L ${-sigilSize * 0.5},${sigilSize * 0.32} Z`}
+              fill="color-mix(in oklab, var(--gold) 30%, transparent)"
+              stroke="var(--gold)"
+              strokeWidth="1"
+            />
+            <circle r="2.4" cy="2" fill="var(--gold)" />
+          </g>
+
+          {/* Banner pylons — ANIMATED. Each is a <g> with rAF tick
+              updating its transform + opacity for the orbit + back-half
+              occlusion. */}
+          {banners.map((b, k) => (
+            <g key={k} ref={b.ref} className="pylon">
+              <line
+                x1="0"
+                y1="0"
+                x2="0"
+                y2="-18"
+                stroke="color-mix(in oklab, var(--text) 60%, transparent)"
+                strokeWidth="0.7"
               />
               <path
-                d={`M 0,${-sigilSize * 0.55} L ${sigilSize * 0.5},${sigilSize * 0.32} L ${-sigilSize * 0.5},${sigilSize * 0.32} Z`}
-                fill="color-mix(in oklab, var(--gold) 30%, transparent)"
-                stroke="var(--gold)"
-                strokeWidth="1"
+                d="M 0,-18 L 7,-15 L 0,-12 Z"
+                fill={b.isGold ? "var(--gold)" : "var(--ox-bright)"}
+                opacity="0.9"
               />
-              <circle r="2.4" cy="2" fill="var(--gold)" />
             </g>
-
-            {/* Banner pylons on the outer top rim. The two interior
-                pylons are gold; the two exterior are oxblood, for the
-                cross-axis brand contrast. */}
-            {pylonAngles.map((a, k) => {
-              const x = CX + outer.rx * Math.cos(a);
-              const y = outer.topY + outer.ry * Math.sin(a);
-              const isGold = k === 1 || k === 2;
-              return (
-                <g
-                  key={k}
-                  className="pylon"
-                  transform={`translate(${x.toFixed(1)} ${y.toFixed(1)})`}
-                >
-                  <line
-                    x1="0"
-                    y1="0"
-                    x2="0"
-                    y2="-18"
-                    stroke="color-mix(in oklab, var(--text) 60%, transparent)"
-                    strokeWidth="0.7"
-                  />
-                  <path
-                    d="M 0,-18 L 7,-15 L 0,-12 Z"
-                    fill={isGold ? "var(--gold)" : "var(--ox-bright)"}
-                    opacity="0.9"
-                  />
-                </g>
-              );
-            })}
-          </g>
+          ))}
         </svg>
       </div>
 
-      {/* Calibration crosshair corner ticks */}
       <div className="coliseum-corners">
         <span /><span /><span /><span />
       </div>
 
-      {/* Floating badges with mono labels — calibration-instrument feel */}
       <div className="coliseum-badges">
         <div className="cb cb-tl">
           <span className="cb-k">N · 41.8902</span>
@@ -394,9 +485,3 @@ export function IsometricColiseum({
     </div>
   );
 }
-
-// Keep the import alive — once we wire per-game stats into the
-// badges (live tier count from the active matches, etc.) this lookup
-// will populate the bottom-right pylon labels. Removing it now would
-// just re-add it next sprint.
-void catalogEntry;

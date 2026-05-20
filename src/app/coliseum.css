@@ -3211,7 +3211,11 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
   border-right: 1px solid;
 }
 
-/* SVG stage — the arena itself. */
+/* SVG stage — the arena itself. The rotation is driven by per-frame
+   redraws of the column-tick `<path>` elements + banner pylon
+   transforms in `isometric-coliseum.tsx` (not CSS), so this stage
+   needs no 3D perspective hack and no rotateY (those tricks flatten
+   a 2D SVG into paper rather than spinning a 3D cylinder). */
 .coliseum-stage {
   position: absolute;
   inset: 0;
@@ -3224,21 +3228,6 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
   width: 100%;
   height: 100%;
   display: block;
-}
-
-/* The whole arena group rotates VERY slowly in-plane — like a
-   turntable seen from above. Keeps the isometric perspective intact
-   (a rotateY would distort the tier walls), while still giving the
-   piece a sense of motion. transform-origin pinned to the arena
-   center (cx 300, cy 240 in viewBox 600x400 = 50% horizontal, 60%
-   vertical of the SVG). */
-@keyframes coliseum-spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
-}
-.coliseum-stage .coliseum-rotor {
-  transform-origin: 300px 240px;
-  animation: coliseum-spin 60s linear infinite;
 }
 
 /* Sigil dashed halo counter-rotates so the inner ring has its own
@@ -3262,10 +3251,11 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
   animation: col-pulse 3.4s ease-in-out infinite;
 }
 
-/* Respect reduced-motion: kill all coliseum animations. The static
-   isometric view is gorgeous on its own. */
+/* Respect reduced-motion: kill the inner CSS animations. The
+   per-frame rotation in `isometric-coliseum.tsx` honors
+   `prefers-reduced-motion` via its `rotationPeriodSec` prop;
+   callers can pass `null` to freeze it. */
 @media (prefers-reduced-motion: reduce) {
-  .coliseum-stage .coliseum-rotor,
   .coliseum-stage .sigil-halo,
   .coliseum-stage .arena-glow {
     animation: none;

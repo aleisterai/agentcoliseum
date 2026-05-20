@@ -2199,7 +2199,7 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
 
 /* Defaults — neutral; used when no voice pack is set. */
 .chat-bubble.voice-default {
-  background: rgba(255,255,255,0.07);
+  background: rgba(255,255,255,0.10);
 }
 
 /* Calm professor — soft lavender. Measured serif body. */
@@ -2223,7 +2223,7 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
 
 /* Stoic samurai — austere graphite. Monospace body. */
 .chat-bubble.voice-stoic-samurai {
-  background: rgba(60,60,70,0.45);
+  background: rgba(110,110,125,0.22);
 }
 .chat-bubble.voice-stoic-samurai .chat-handle { color: rgba(220,220,220,0.95); }
 .chat-bubble.voice-stoic-samurai .chat-body {
@@ -2255,6 +2255,82 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
   font-family: var(--font-mono);
   font-size: 12.5px;
   color: var(--text-1);
+}
+
+/* ── Light-theme chat overrides ───────────────────────────────────
+   The dark-mode chat styles use rgba(255,255,255,…) on translucent
+   tinted backgrounds. Both fail on a near-white page: the white
+   chips become invisible and the saturated voice tints (16% alpha)
+   wash out against the bone background. Re-target everything to
+   darker / saturated bases so the chat reads with the same hierarchy
+   it has in dark mode — speaker color first, body text second,
+   meta chrome last. */
+/* Bubble base on bone needs the deeper bg-2 + subtle shadow so the
+   bubble actually reads as a *bubble*, not a faint outline. Voice
+   tints sit on top of that base with higher saturation than the
+   dark-mode 16% tints — the same alpha against a bone page reads
+   maybe a quarter as strongly, so we double down. */
+html[data-theme="light"] .chat-bubble {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  box-shadow: 0 1px 2px rgba(60, 30, 20, 0.04);
+}
+html[data-theme="light"] .chat-bubble.voice-default        { background: var(--bg-2); border-color: var(--line-3); }
+html[data-theme="light"] .chat-bubble.voice-calm-professor { background: color-mix(in oklab, oklch(0.50 0.22 290) 18%, var(--bg-2)); border-color: color-mix(in oklab, oklch(0.50 0.22 290) 45%, var(--line)); }
+html[data-theme="light"] .chat-bubble.voice-calm-professor .chat-handle { color: oklch(0.42 0.22 290); }
+html[data-theme="light"] .chat-bubble.voice-trash-talker   { background: color-mix(in oklab, oklch(0.55 0.22 25) 18%, var(--bg-2)); border-color: color-mix(in oklab, oklch(0.55 0.22 25) 48%, var(--line)); }
+html[data-theme="light"] .chat-bubble.voice-trash-talker .chat-handle { color: oklch(0.42 0.22 25); }
+html[data-theme="light"] .chat-bubble.voice-stoic-samurai  { background: color-mix(in oklab, oklch(0.40 0.02 270) 14%, var(--bg-2)); border-color: color-mix(in oklab, oklch(0.40 0.02 270) 42%, var(--line)); }
+html[data-theme="light"] .chat-bubble.voice-stoic-samurai .chat-handle { color: oklch(0.28 0.02 270); }
+html[data-theme="light"] .chat-bubble.voice-anxious-nerd   { background: color-mix(in oklab, oklch(0.55 0.18 240) 18%, var(--bg-2)); border-color: color-mix(in oklab, oklch(0.55 0.18 240) 45%, var(--line)); }
+html[data-theme="light"] .chat-bubble.voice-anxious-nerd .chat-handle { color: oklch(0.42 0.20 240); }
+html[data-theme="light"] .chat-bubble.voice-degen          { background: color-mix(in oklab, oklch(0.65 0.22 145) 20%, var(--bg-2)); border-color: color-mix(in oklab, oklch(0.65 0.22 145) 50%, var(--line)); }
+html[data-theme="light"] .chat-bubble.voice-degen .chat-handle { color: oklch(0.42 0.22 145); }
+html[data-theme="light"] .chat-bubble.voice-system-bot     { background: color-mix(in oklab, oklch(0.65 0.16 78) 20%, var(--bg-2)); border-color: color-mix(in oklab, oklch(0.65 0.16 78) 50%, var(--line)); }
+html[data-theme="light"] .chat-bubble.voice-system-bot .chat-handle { color: oklch(0.40 0.16 78); }
+
+/* Chat meta chrome — handle, mood pill, payload chip, candidate
+   ladder, etc. The dark-mode whites become invisible on bone, so
+   re-base them to a translucent dark + use text-2/text-1 for type. */
+html[data-theme="light"] .chat-handle      { color: var(--text); }
+html[data-theme="light"] .chat-mood        { background: rgba(0,0,0,0.05); color: var(--text-2); }
+html[data-theme="light"] .chat-phase       { color: var(--text-mute); }
+html[data-theme="light"] .chat-move-num    { color: var(--text-mute); }
+html[data-theme="light"] .chat-move-payload {
+  background: rgba(0,0,0,0.04);
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+html[data-theme="light"] .chat-ts          { color: var(--text-mute); }
+html[data-theme="light"] .chat-body        { color: var(--text); }
+html[data-theme="light"] .chat-body .mute  { color: var(--text-mute); }
+html[data-theme="light"] .chat-candidates-toggle { color: var(--text-mute); }
+html[data-theme="light"] .chat-candidates-toggle:hover { color: var(--text); }
+html[data-theme="light"] .chat-candidates-list { border-left-color: var(--line); }
+html[data-theme="light"] .chat-candidate       { color: var(--text-2); }
+html[data-theme="light"] .chat-candidate-eval  { color: var(--text-mute); }
+html[data-theme="light"] .chat-meta            { color: var(--text-mute); }
+html[data-theme="light"] .chat-meta-label      { color: var(--text-mute); }
+html[data-theme="light"] .chat-meta-body       { color: var(--text-2); }
+
+/* Tapbacks + emoji palette — dark-mode whites + dark popover are
+   wrong on light. Use a dark-on-white chip + a light glassy popover
+   so the reactions stay readable. */
+html[data-theme="light"] .tapback {
+  background: rgba(0,0,0,0.05);
+  border-color: var(--line);
+}
+html[data-theme="light"] .tapback:hover { background: rgba(0,0,0,0.09); }
+html[data-theme="light"] .tapback-count { color: var(--text); }
+html[data-theme="light"] .tapback-add   { color: var(--text-mute); }
+html[data-theme="light"] .tapback-add:hover { color: var(--text); }
+html[data-theme="light"] .tapback-palette {
+  background: rgba(255,255,255,0.94);
+  border-color: var(--line);
+  box-shadow: 0 12px 32px rgba(40,20,10,0.10), 0 0 0 0.5px var(--line);
+}
+html[data-theme="light"] .tapback-palette-item:hover {
+  background: rgba(0,0,0,0.06);
 }
 
 /* ── Mobile (≤720px) — chat panel + match layout ───────────────────
@@ -2523,17 +2599,17 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
   padding: 24px;
   border: 1px solid var(--line); border-radius: 4px;
   background-color: var(--bg-1);
-  /* Constrain the game-preview board to its 320px column. Some games
-     (Mancala's horizontal 2-row layout, Hex's 11-row board) render
-     wider than the column's intrinsic width by default; without this
-     they spill into the right column and cover the page title. */
+  /* Constrain the preview to its 320px column. Boards use
+     aspect-ratio + width:100%, so the column itself is what sets
+     their drawn size — keep block layout (NOT flex; flex collapses
+     children that rely on parent-stretch sizing). min-width:0 lets
+     us shrink under the 320px grid track; overflow:hidden clips the
+     few games whose internal grids overflow slightly at narrow
+     widths (Mancala's horizontal pits, Hex's 11-row board). */
   min-width: 0;
   overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
-.game-hero-l > * { max-width: 100%; }
+.game-hero-l > * { width: 100%; max-width: 100%; }
 .game-hero-l svg,
 .game-hero-l canvas,
 .game-hero-l img { max-width: 100%; height: auto; }

@@ -261,7 +261,32 @@ export const matches = pgTable(
     }),
     turnStartedAt: timestamp("turn_started_at", { withTimezone: true }).defaultNow().notNull(),
 
-    // Per-agent clocks (ms remaining at start of the current turn)
+    // Per-move clock state.
+    //
+    //   clockBudgetMs — chosen at challenge creation (one of 15/30/45/60
+    //                   seconds, in ms). Sealed onto the match at accept
+    //                   time so a challenge edit can't change live matches.
+    //                   This is the authoritative "you have N ms to move"
+    //                   number; finalizeMatch + applyMove + enforceClockExpiry
+    //                   all read from here.
+    //
+    //   p1MsLeft /     — In the previous (total-budget) model, these were
+    //   p2MsLeft         "remaining ms of your total clock". Under the
+    //                    current per-move model, they always equal
+    //                    clockBudgetMs — they DON'T decrement mid-game.
+    //                    Kept on the row because:
+    //                      (a) the UI / MCP / polling-snapshot wire contracts
+    //                          expose them as actual numbers (simpler than
+    //                          "compute from clockBudgetMs and elapsed"),
+    //                      (b) findStaleMatches' SQL prefilter reads them
+    //                          to identify expired-clock matches without
+    //                          a JOIN to the adapter's default,
+    //                      (c) historical rows from before the per-move
+    //                          switchover have meaningful values we don't
+    //                          want to overwrite.
+    //                    Safe to drop in a future schema migration once
+    //                    every consumer reads from clockBudgetMs + the
+    //                    derived `now() - turn_started_at` instead.
     p1MsLeft: integer("p1_ms_left").notNull(),
     p2MsLeft: integer("p2_ms_left").notNull(),
     clockBudgetMs: integer("clock_budget_ms").notNull(),

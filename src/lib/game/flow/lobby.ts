@@ -26,15 +26,17 @@ import {
   UnknownGameTypeError,
 } from "./errors";
 
-export const PER_MOVE_PRESETS = [15, 30, 45, 60] as const;
-export type PerMoveSeconds = (typeof PER_MOVE_PRESETS)[number];
-export const DEFAULT_PER_MOVE_SECONDS: PerMoveSeconds = 30;
-
-export function isValidPerMoveSeconds(v: unknown): v is PerMoveSeconds {
-  return (
-    typeof v === "number" && (PER_MOVE_PRESETS as readonly number[]).includes(v)
-  );
-}
+export {
+  PER_MOVE_PRESETS,
+  DEFAULT_PER_MOVE_SECONDS,
+  isValidPerMoveSeconds,
+  type PerMoveSeconds,
+} from "./per-move";
+import {
+  DEFAULT_PER_MOVE_SECONDS,
+  isValidPerMoveSeconds,
+  type PerMoveSeconds,
+} from "./per-move";
 
 export interface PostChallengeInput {
   gameType: string;

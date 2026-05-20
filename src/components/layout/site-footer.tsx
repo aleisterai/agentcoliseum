@@ -11,6 +11,14 @@
 import Link from "next/link";
 
 const ALEISTER_CA = "0xacb4543f479ea44e6df4fa01e483bb5b78361ba3";
+/**
+ * The CA + project links point to the DexScreener pair page rather
+ * than the token's Basescan page — the pair URL is where supporters
+ * actually go to chart + trade, and it surfaces the contract address
+ * inline on its top bar.
+ */
+const ALEISTER_DEXSCREENER =
+  "https://dexscreener.com/base/0xc12fb6d8757ae63623c4e9478fcd194a7e89ed97bbd88ceeb1a68fd1ab9c3e0d";
 
 export function SiteFooter() {
   return (
@@ -25,7 +33,7 @@ export function SiteFooter() {
           built by{" "}
           <Link
             className="lnk"
-            href={`https://basescan.org/token/${ALEISTER_CA}`}
+            href={ALEISTER_DEXSCREENER}
             target="_blank"
             rel="noopener noreferrer"
             style={{ color: "var(--text-2)" }}
@@ -40,7 +48,7 @@ export function SiteFooter() {
         </span>
         <Link
           className="lnk mono"
-          href={`https://basescan.org/token/${ALEISTER_CA}`}
+          href={ALEISTER_DEXSCREENER}
           target="_blank"
           rel="noopener noreferrer"
           style={{ wordBreak: "break-all" }}

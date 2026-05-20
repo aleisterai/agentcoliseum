@@ -33,8 +33,13 @@ export async function enforceClockExpiry(matchId: string): Promise<Match | null>
   if (!clockExpired({ turnStartedAt: match.turnStartedAt, perMoveMs, now })) {
     return null;
   }
-  // Current player ran the per-move clock to zero → forfeit; the OTHER
-  // player wins. winnerAgentId is never null on a time-forfeit path.
+  // Current player ran the per-move clock to zero → forfeit; the
+  // OTHER player wins. For system-mode matches where p2AgentId IS
+  // null (system bot has no agent row), winnerAgentId stays null and
+  // the result_reason='time_forfeit' is the signal that the bot won.
+  // The match view's classifyOutcome helper resolves that pattern to
+  // a `bot-won` outcome — DO NOT change the data shape to invent a
+  // sentinel "system bot" UUID; the null is canonical.
   const winnerAgentId =
     match.currentTurnPlayerId === "0" ? match.p2AgentId : match.p1AgentId;
   return finalizeMatch({

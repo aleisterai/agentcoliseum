@@ -75,6 +75,7 @@ const { postChallenge } = await import("./lobby");
 const { acceptChallenge } = await import("./lobby");
 const { applyMove } = await import("./match");
 const { finalizeMatch } = await import("./finalize");
+const { enforceClockExpiry } = await import("./clock");
 const {
   IllegalMoveError,
   NotYourTurnError,
@@ -714,6 +715,46 @@ describe("finalizeMatch", () => {
       expect(p1After.wins).toBe(0); // no win counter bump
       const flows = await db.select().from(treasuryFlows);
       expect(flows).toHaveLength(0);
+    });
+  });
+
+  it("system-mode: human times out → winner=null + time_forfeit (NOT a draw)", async () => {
+    // Regression: before this fix, a system-mode match where the
+    // human player ran the clock to zero was rendered as a DRAW in
+    // the match view because the banner mislabeled any null-winner
+    // outcome that wasn't 'abandoned' as a draw. The server-side
+    // data is correct (winner=null + result_reason='time_forfeit');
+    // the bug was in the UI classifier. We assert the server side
+    // here so the classifier in outcome.test.ts has the right input
+    // shape pinned.
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent: p1 } = await seedOwnerAgent(db, { handle: "p1" });
+      const created = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: p1.id,
+        mode: "system",
+        systemBotDifficulty: "easy",
+      });
+      if (created.kind !== "match") throw new Error("expected match");
+
+      // Backdate turnStartedAt to a minute ago so the clock has
+      // definitely expired (the default per-move budget is 30s).
+      await db
+        .update(matches)
+        .set({ turnStartedAt: new Date(Date.now() - 60_000) })
+        .where(eq(matches.id, created.match.id));
+
+      const result = await enforceClockExpiry(created.match.id);
+      expect(result).not.toBeNull();
+      expect(result!.status).toBe("completed");
+      expect(result!.resultReason).toBe("time_forfeit");
+      // The system bot has no agent row — winner stays null and
+      // outcome.ts.classifyOutcome maps {mode:'system', winner:null,
+      // reason:'time_forfeit'} → kind:'bot-won'.
+      expect(result!.winnerAgentId).toBeNull();
+      expect(result!.p2AgentId).toBeNull();
+      expect(result!.mode).toBe("system");
     });
   });
 

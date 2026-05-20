@@ -6,17 +6,23 @@
  * spectator who won and why, with reason-specific copy so a forfeit
  * doesn't look like a draw.
  *
- * Outcome categories:
- *   - natural: engine declared a winner (4-in-a-row, checkmate, mill, …)
- *   - draw: explicit engine draw or stalemate
- *   - time_forfeit: the loser ran the per-move clock to zero
- *   - invalid_move_forfeit: the loser submitted 2 illegal moves in a row
- *   - abandoned / disputed: rare ops paths
+ * Outcome classification lives in `./outcome.ts` (pure, unit-tested)
+ * so this component stays purely presentational. The five outcome
+ * kinds we render:
  *
- * winnerAgentId === null with reason "draw" is the only legitimate
- * no-winner outcome. Anything else missing a winnerAgentId is a server
- * bug and we fall back to a neutral "match concluded" copy.
+ *   - win-p1 / win-p2: one of the recorded agents won. Gold ribbon +
+ *     trophy + handle + reason detail.
+ *   - bot-won: system-mode match where the bot beat the human. NO
+ *     fake "draw" label — clearly attribute the win to the system
+ *     bot and the loss to the human.
+ *   - draw: only when resultReason === "draw". Paid-mode draws show
+ *     the refund note ($0 platform fee, full stake returned to each
+ *     owner — Option A in the lifecycle docs).
+ *   - abandoned: operator-close / refund path.
+ *   - unknown: data inconsistency. Renders a neutral "match
+ *     concluded" — log surface still tells the operator what's broken.
  */
+import { classifyOutcome, describeOutcomeDetail } from "./outcome";
 import { formatUsdcMicro } from "./utils";
 
 export function WinnerBanner({
@@ -34,18 +40,19 @@ export function WinnerBanner({
   mode: "free" | "paid" | "system";
   stakeUsdc: number | null;
 }) {
-  const isDraw =
-    resultReason === "draw" ||
-    (winnerAgentId === null && resultReason !== "abandoned");
-  const winner =
-    winnerAgentId === p1?.id ? p1 : winnerAgentId === p2?.id ? p2 : null;
-  const loser = winner == null ? null : winner.id === p1?.id ? p2 : p1;
-  const winnerSide: "red" | "gold" | null =
-    winner == null ? null : winner.id === p1?.id ? "red" : "gold";
+  const outcome = classifyOutcome({
+    mode,
+    winnerAgentId,
+    resultReason,
+    p1Id: p1?.id ?? null,
+    p2Id: p2?.id ?? null,
+  });
+  const detail = describeOutcomeDetail(outcome, {
+    p1Handle: p1?.handle ?? null,
+    p2Handle: p2?.handle ?? null,
+  });
 
-  const detail = describeReason(resultReason, loser);
-
-  if (isDraw) {
+  if (outcome.kind === "draw") {
     // For paid draws, settlement-sweep refunds each owner's full stake
     // (Option A — no platform fee on draws). Surface that explicitly so
     // an owner watching the match doesn't think they lost money.
@@ -92,87 +99,116 @@ export function WinnerBanner({
     );
   }
 
-  if (!winner) {
+  // System bot won — render a real loss banner attributing the win to
+  // the bot and the action to the human (p1). Same chrome as a
+  // recorded-agent win, just without an agent handle on the winner
+  // side.
+  if (outcome.kind === "bot-won") {
     return (
       <div
         className="row"
         style={{
-          padding: "10px 14px",
+          padding: "12px 16px",
           margin: "0 12px",
           marginTop: 8,
-          borderTop: "1px solid var(--border)",
-          borderBottom: "1px solid var(--border)",
+          borderRadius: 6,
+          background:
+            "linear-gradient(90deg, color-mix(in oklab, var(--gold) 14%, transparent), transparent)",
+          borderLeft: "3px solid var(--gold)",
           gap: 10,
-          justifyContent: "center",
-          fontSize: 12,
+          alignItems: "center",
+          fontSize: 13,
         }}
       >
+        <span aria-hidden style={{ fontSize: 18, lineHeight: 1 }}>
+          🤖
+        </span>
+        <span
+          className="mono"
+          style={{ color: "var(--gold)", fontWeight: 600 }}
+        >
+          System bot
+        </span>
+        <span className="mono" style={{ color: "var(--text)" }}>
+          won
+        </span>
+        <span className="dim mono">·</span>
         <span className="mono" style={{ color: "var(--text-mute)" }}>
-          match concluded · {detail}
+          {detail}
         </span>
       </div>
     );
   }
 
+  if (outcome.kind === "win-p1" || outcome.kind === "win-p2") {
+    const winner = outcome.kind === "win-p1" ? p1 : p2;
+    const winnerSide = outcome.kind === "win-p1" ? "red" : "gold";
+    if (!winner) {
+      // Defensive: classifier said a side won but we don't have the
+      // corresponding agent row. Fall through to neutral banner.
+      return <NeutralBanner detail={detail} />;
+    }
+    return (
+      <div
+        className="row"
+        style={{
+          padding: "12px 16px",
+          margin: "0 12px",
+          marginTop: 8,
+          borderRadius: 6,
+          background:
+            "linear-gradient(90deg, color-mix(in oklab, var(--gold) 14%, transparent), transparent)",
+          borderLeft: "3px solid var(--gold)",
+          gap: 10,
+          alignItems: "center",
+          fontSize: 13,
+        }}
+      >
+        <span aria-hidden style={{ fontSize: 18, lineHeight: 1 }}>
+          🏆
+        </span>
+        <span
+          className="mono"
+          style={{
+            color: winnerSide === "red" ? "var(--red, #ef4444)" : "var(--gold)",
+            fontWeight: 600,
+          }}
+        >
+          @{winner.handle}
+        </span>
+        <span className="mono" style={{ color: "var(--text)" }}>
+          won
+        </span>
+        <span className="dim mono">·</span>
+        <span className="mono" style={{ color: "var(--text-mute)" }}>
+          {detail}
+        </span>
+      </div>
+    );
+  }
+
+  // abandoned / unknown — neutral
+  return <NeutralBanner detail={detail} />;
+}
+
+function NeutralBanner({ detail }: { detail: string }) {
   return (
     <div
       className="row"
       style={{
-        padding: "12px 16px",
+        padding: "10px 14px",
         margin: "0 12px",
         marginTop: 8,
-        borderRadius: 6,
-        background:
-          "linear-gradient(90deg, color-mix(in oklab, var(--gold) 14%, transparent), transparent)",
-        borderLeft: "3px solid var(--gold)",
+        borderTop: "1px solid var(--border)",
+        borderBottom: "1px solid var(--border)",
         gap: 10,
-        alignItems: "center",
-        fontSize: 13,
+        justifyContent: "center",
+        fontSize: 12,
       }}
     >
-      <span aria-hidden style={{ fontSize: 18, lineHeight: 1 }}>
-        🏆
-      </span>
-      <span
-        className="mono"
-        style={{
-          color: winnerSide === "red" ? "var(--red, #ef4444)" : "var(--gold)",
-          fontWeight: 600,
-        }}
-      >
-        @{winner.handle}
-      </span>
-      <span className="mono" style={{ color: "var(--text)" }}>
-        won
-      </span>
-      <span className="dim mono">·</span>
       <span className="mono" style={{ color: "var(--text-mute)" }}>
-        {detail}
+        match concluded · {detail}
       </span>
     </div>
   );
-}
-
-function describeReason(
-  reason: string | null,
-  loser: { handle: string } | null,
-): string {
-  switch (reason) {
-    case "natural":
-      return "natural win";
-    case "time_forfeit":
-      return loser ? `@${loser.handle} ran out of time` : "opponent ran out of time";
-    case "invalid_move_forfeit":
-      return loser
-        ? `@${loser.handle} forfeited on two illegal moves`
-        : "opponent forfeited on illegal moves";
-    case "resign":
-      return loser ? `@${loser.handle} resigned` : "opponent resigned";
-    case "draw":
-      return "draw";
-    case "abandoned":
-      return "match abandoned";
-    default:
-      return reason ?? "match concluded";
-  }
 }

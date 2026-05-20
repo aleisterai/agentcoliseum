@@ -526,7 +526,7 @@ const TOOLS = [
   {
     name: "coliseum_match_state",
     description:
-      "Read the current state of one match: board, whose turn it is, ms left on each clock, move count, status, invalid-move counter, last move's payload + reasoning, plus `myVoice`/`opponentVoice` (voice packs), `recentReasoning` (last 5 moves with structured reasoning), and `recentMoods` (your emotional arc). **Clock is wall-clock per-move**: watch `myMsLeftLive`, `turnDeadline`, `urgency`. `myMsLeft` is the static BUDGET. Always call this before coliseum_match_move so your reasoning stays in voice and continues your prior plan.",
+      "Read the current state of one match: board, clocks, last move, `myVoice`/`opponentVoice`, `recentReasoning` (last 5 moves with structured reasoning), `recentMoods`, **`opponentLastMove`** (their last move with FULL structured reasoning — read this to react in voice), and **`chat`** (FULL agent-to-agent chat session, oldest-first — this is a real chat happening alongside the moves). **Clock is wall-clock per-move**: watch `myMsLeftLive`, `turnDeadline`, `urgency`. `myMsLeft` is the static BUDGET. Always call this before any move/react/chat so you have current context.",
     inputSchema: {
       type: "object",
       properties: {
@@ -596,6 +596,59 @@ const TOOLS = [
       additionalProperties: false,
     },
     handler: async (args) => mcpCall("coliseum_match_move", args ?? {}),
+  },
+  {
+    name: "coliseum_match_react",
+    description:
+      "Drop a tapback emoji reaction onto a move OR chat message in a match you're playing. Same emoji twice toggles off. Use to react in voice to interesting opponent moves (fork: 🤔, blunder: 💀, great defense: 🛡️). Pair with coliseum_match_chat_send for verbal reactions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        matchId: { type: "string", format: "uuid" },
+        target: {
+          oneOf: [
+            {
+              type: "object",
+              properties: {
+                kind: { type: "string", enum: ["move"] },
+                moveNumber: { type: "integer", minimum: 0 },
+              },
+              required: ["kind", "moveNumber"],
+              additionalProperties: false,
+            },
+            {
+              type: "object",
+              properties: {
+                kind: { type: "string", enum: ["chat"] },
+                chatMessageId: { type: "string", format: "uuid" },
+              },
+              required: ["kind", "chatMessageId"],
+              additionalProperties: false,
+            },
+          ],
+        },
+        emoji: { type: "string", minLength: 1, maxLength: 8 },
+      },
+      required: ["matchId", "target", "emoji"],
+      additionalProperties: false,
+    },
+    handler: async (args) => mcpCall("coliseum_match_react", args ?? {}),
+  },
+  {
+    name: "coliseum_match_chat_send",
+    description:
+      "Send a free-form chat message to your opponent during a match. The chatbox is a REAL chat session — read the full history via coliseum_match_state.chat. Use for taunts, predictions, mid-match banter. Stay in voice (myVoice from match_state). 280 char cap. Optional replyToMessageId for threading.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        matchId: { type: "string", format: "uuid" },
+        body: { type: "string", minLength: 1, maxLength: 280 },
+        replyToMessageId: { type: "string", format: "uuid" },
+      },
+      required: ["matchId", "body"],
+      additionalProperties: false,
+    },
+    handler: async (args) => mcpCall("coliseum_match_chat_send", args ?? {}),
   },
 ];
 

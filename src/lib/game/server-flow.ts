@@ -52,3 +52,12 @@ export {
   finalizeMatch,
   type FinalizeArgs,
 } from "./flow/finalize";
+
+export {
+  addReaction,
+  appendReaction,
+  applyTapback,
+  postMatchChat,
+  type ReactionTarget,
+  type ReactionSource,
+} from "./flow/interactions";

@@ -33,13 +33,25 @@
  *   recentMoods      your last 5 mood values, oldest-first, so the
  *                      emotional arc is visible (e.g. ["cocky", "cocky",
  *                      "surprised", "annoyed"] → tilt is starting).
+ *   opponentLastMove the opponent's most recent move with their FULL
+ *                      structured reasoning payload promoted to a single
+ *                      easy-to-spot object (don't make the LLM dig
+ *                      through recentReasoning). Includes their reasoning,
+ *                      candidates, plan, expectedReply, mood, and the
+ *                      reactions stamped on it. The LLM should read this
+ *                      BEFORE every move and react in voice.
+ *   recentChat       last 10 agent-to-agent chat messages (with sender,
+ *                      body, reactions). Lets the LLM follow + respond to
+ *                      mid-match conversation. Distinct from spectator
+ *                      chat (which lives in the public chat_messages
+ *                      table and is not exposed to agents).
  */
 
 import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db/client";
-import { agents, matches, matchMoves } from "@/lib/db/schema";
-import { voicePackById } from "@/lib/voice-packs";
+import { agents, matches, matchChatMessages, matchMoves } from "@/lib/db/schema";
+import { SYSTEM_BOT_VOICE, voicePackById } from "@/lib/voice-packs";
 import type { ToolDef } from "./_types";
 
 const StateArgs = z.object({ matchId: z.string().uuid() }).strict();
@@ -205,6 +217,82 @@ export const matchState: ToolDef = {
       .filter((m) => m.byMe && m.mood)
       .map((m) => m.mood);
 
+    // opponentLastMove — promote the opponent's most recent move with
+    // its FULL structured reasoning payload to a top-level field so the
+    // LLM doesn't have to dig through recentReasoning. This is the
+    // canonical "what just happened from the other side" surface; the
+    // LLM should react to its `reasoning` / `plan` / `expectedReply` /
+    // `mood` / `reactions` in voice on its next move.
+    const opponentLastRowDesc = await db
+      .select({
+        moveNumber: matchMoves.moveNumber,
+        agentId: matchMoves.agentId,
+        playerId: matchMoves.playerId,
+        payload: matchMoves.payload,
+        reasoning: matchMoves.reasoning,
+        candidates: matchMoves.candidates,
+        evaluation: matchMoves.evaluation,
+        plan: matchMoves.plan,
+        expectedReply: matchMoves.expectedReply,
+        phase: matchMoves.phase,
+        mood: matchMoves.mood,
+        emotionTrigger: matchMoves.emotionTrigger,
+        reactions: matchMoves.reactions,
+        createdAt: matchMoves.createdAt,
+      })
+      .from(matchMoves)
+      .where(eq(matchMoves.matchId, match.id))
+      .orderBy(desc(matchMoves.moveNumber))
+      .limit(20);
+    const myPid = match.p1AgentId === agent.id ? "0" : "1";
+    const opponentLastRow = opponentLastRowDesc.find((m) => m.playerId !== myPid);
+    const opponentLastMove = opponentLastRow
+      ? {
+          moveNumber: opponentLastRow.moveNumber,
+          payload: opponentLastRow.payload,
+          reasoning: opponentLastRow.reasoning,
+          candidates: opponentLastRow.candidates,
+          evaluation: opponentLastRow.evaluation,
+          plan: opponentLastRow.plan,
+          expectedReply: opponentLastRow.expectedReply,
+          phase: opponentLastRow.phase,
+          mood: opponentLastRow.mood,
+          emotionTrigger: opponentLastRow.emotionTrigger,
+          reactions: opponentLastRow.reactions ?? [],
+          byBot: opponentLastRow.agentId === null && match.mode === "system",
+          at: opponentLastRow.createdAt.toISOString(),
+        }
+      : null;
+
+    // chat — FULL agent-to-agent chat session for THIS match, ordered
+    // oldest-first. Spectators don't see this stream (their chat is the
+    // existing chat_messages table). Agents see the full history so a
+    // late-game message can reference something said in move 3 — this
+    // IS a chat session, not a feed of headlines.
+    const chatRowsAsc = await db
+      .select({
+        id: matchChatMessages.id,
+        fromAgentId: matchChatMessages.fromAgentId,
+        fromBot: matchChatMessages.fromBot,
+        body: matchChatMessages.body,
+        replyToMessageId: matchChatMessages.replyToMessageId,
+        reactions: matchChatMessages.reactions,
+        createdAt: matchChatMessages.createdAt,
+      })
+      .from(matchChatMessages)
+      .where(eq(matchChatMessages.matchId, match.id))
+      .orderBy(matchChatMessages.createdAt);
+    const chat = chatRowsAsc.map((m) => ({
+      id: m.id,
+      fromAgentId: m.fromAgentId,
+      fromBot: m.fromBot,
+      byMe: m.fromAgentId === agent.id,
+      body: m.body,
+      replyToMessageId: m.replyToMessageId,
+      reactions: m.reactions ?? [],
+      at: m.createdAt.toISOString(),
+    }));
+
     // Wall-clock derivation — game-agnostic since every match in
     // every game uses the same per-move clock model (see
     // src/lib/game/lifecycle.ts:clockExpired). Fixed in one place
@@ -259,9 +347,30 @@ export const matchState: ToolDef = {
         : null,
       // Phase A — voice + reasoning continuity.
       myVoice: me ? buildVoiceContext(me) : null,
-      opponentVoice: opponent ? buildVoiceContext(opponent) : null,
+      // opponentVoice resolves to the human opponent's voice OR — when
+      // the match is system-mode and there's no opponent agent row —
+      // to the dedicated SYSTEM_BOT_VOICE ("Coliseum Engine"). That
+      // way the LLM can react to the bot in voice the same way it
+      // reacts to a human.
+      opponentVoice: opponent
+        ? buildVoiceContext(opponent)
+        : match.mode === "system"
+          ? {
+              voicePackId: SYSTEM_BOT_VOICE.id,
+              catchphrase: SYSTEM_BOT_VOICE.catchphrase,
+              winLine: SYSTEM_BOT_VOICE.winLine,
+              lossLine: SYSTEM_BOT_VOICE.lossLine,
+              trashTalkTemplates: SYSTEM_BOT_VOICE.trashTalkTemplates,
+            }
+          : null,
       recentReasoning,
       recentMoods,
+      // Phase A++ — the opponent's last move with its full structured
+      // payload, promoted to top-level. Reactions array included so the
+      // LLM can see what emojis it's been tagged with.
+      opponentLastMove,
+      // Phase A++ — full agent-to-agent chat session for this match.
+      chat,
       boardState: match.state, // game-specific shape; see docs.read({topic:'games'})
       lastMove: lastMoveArr[0]
         ? {

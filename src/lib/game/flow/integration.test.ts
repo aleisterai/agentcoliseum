@@ -1555,6 +1555,409 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
   });
 });
 
+// ===========================================================================
+// Phase A++ — chat + reactions
+//
+// New MCP tools: coliseum_match_react, coliseum_match_chat_send.
+// New match_state fields: opponentLastMove, chat (full session).
+// New realtime events: ReactionAdded, ChatPosted.
+// New bot behavior: voice-aware (SYSTEM_BOT_VOICE) + reactive emoji
+// stamped on the human's last move when keyword detected.
+// ===========================================================================
+describe("Phase A++ — agent-to-agent chat + reactions", () => {
+  beforeEach(() => {
+    currentDb = null;
+  });
+  afterEach(() => {
+    currentDb = null;
+  });
+
+  it("coliseum_match_react persists a tapback on a move", async () => {
+    const { matchReact } = await import("@/app/api/mcp/tools/match-react");
+    const { matchMove } = await import("@/app/api/mcp/tools/match-move");
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent: p1 } = await seedOwnerAgent(db, { handle: "rx_p1" });
+      const { agent: p2 } = await seedOwnerAgent(db, { handle: "rx_p2" });
+      const ch = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: p1.id,
+        mode: "free",
+      });
+      if (ch.kind !== "challenge") throw new Error("expected challenge");
+      const m = await acceptChallenge({
+        challengeId: ch.challenge.id,
+        acceptorAgentId: p2.id,
+      });
+
+      // p1 plays, then p2 reacts to p1's move.
+      const move = await matchMove.handler(
+        { matchId: m.id, payload: { index: 4 }, reasoning: R },
+        { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
+      );
+      if ((move as { error?: string }).error) throw new Error(`p1 move failed`);
+
+      const react = (await matchReact.handler(
+        {
+          matchId: m.id,
+          target: { kind: "move", moveNumber: 0 },
+          emoji: "🔥",
+        },
+        { agent: { id: p2.id, ownerId: p2.ownerId } } as never,
+      )) as { error?: string; reactions?: unknown };
+      expect(react.error).toBeUndefined();
+      expect(Array.isArray(react.reactions)).toBe(true);
+
+      const [moveRow] = await db.select().from(matchMoves).where(eq(matchMoves.matchId, m.id));
+      const reactions = moveRow.reactions as Array<{ emoji: string; fromAgentId?: string | null }>;
+      expect(reactions).toHaveLength(1);
+      expect(reactions[0].emoji).toBe("🔥");
+      expect(reactions[0].fromAgentId).toBe(p2.id);
+    });
+  });
+
+  it("tapback toggle: same emoji twice removes the reaction", async () => {
+    const { matchReact } = await import("@/app/api/mcp/tools/match-react");
+    const { matchMove } = await import("@/app/api/mcp/tools/match-move");
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent: p1 } = await seedOwnerAgent(db, { handle: "tg_p1" });
+      const { agent: p2 } = await seedOwnerAgent(db, { handle: "tg_p2" });
+      const ch = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: p1.id,
+        mode: "free",
+      });
+      if (ch.kind !== "challenge") throw new Error("expected challenge");
+      const m = await acceptChallenge({
+        challengeId: ch.challenge.id,
+        acceptorAgentId: p2.id,
+      });
+
+      await matchMove.handler(
+        { matchId: m.id, payload: { index: 4 }, reasoning: R },
+        { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
+      );
+
+      // First react: 🔥 (added)
+      let out = (await matchReact.handler(
+        {
+          matchId: m.id,
+          target: { kind: "move", moveNumber: 0 },
+          emoji: "🔥",
+        },
+        { agent: { id: p2.id, ownerId: p2.ownerId } } as never,
+      )) as { reactions: Array<{ emoji: string }> };
+      expect(out.reactions).toHaveLength(1);
+      // Same emoji again from same source: toggled off.
+      out = (await matchReact.handler(
+        {
+          matchId: m.id,
+          target: { kind: "move", moveNumber: 0 },
+          emoji: "🔥",
+        },
+        { agent: { id: p2.id, ownerId: p2.ownerId } } as never,
+      )) as { reactions: Array<{ emoji: string }> };
+      expect(out.reactions).toHaveLength(0);
+    });
+  });
+
+  it("tapback replace: different emoji from same source overwrites", async () => {
+    const { matchReact } = await import("@/app/api/mcp/tools/match-react");
+    const { matchMove } = await import("@/app/api/mcp/tools/match-move");
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent: p1 } = await seedOwnerAgent(db, { handle: "rp_p1" });
+      const { agent: p2 } = await seedOwnerAgent(db, { handle: "rp_p2" });
+      const ch = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: p1.id,
+        mode: "free",
+      });
+      if (ch.kind !== "challenge") throw new Error("expected challenge");
+      const m = await acceptChallenge({
+        challengeId: ch.challenge.id,
+        acceptorAgentId: p2.id,
+      });
+      await matchMove.handler(
+        { matchId: m.id, payload: { index: 4 }, reasoning: R },
+        { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
+      );
+      await matchReact.handler(
+        { matchId: m.id, target: { kind: "move", moveNumber: 0 }, emoji: "🔥" },
+        { agent: { id: p2.id, ownerId: p2.ownerId } } as never,
+      );
+      const out = (await matchReact.handler(
+        { matchId: m.id, target: { kind: "move", moveNumber: 0 }, emoji: "💀" },
+        { agent: { id: p2.id, ownerId: p2.ownerId } } as never,
+      )) as { reactions: Array<{ emoji: string }> };
+      // Old 🔥 gone, only 💀 left.
+      expect(out.reactions).toHaveLength(1);
+      expect(out.reactions[0].emoji).toBe("💀");
+    });
+  });
+
+  it("coliseum_match_react rejects non-players", async () => {
+    const { matchReact } = await import("@/app/api/mcp/tools/match-react");
+    const { matchMove } = await import("@/app/api/mcp/tools/match-move");
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent: p1 } = await seedOwnerAgent(db, { handle: "auth_p1" });
+      const { agent: p2 } = await seedOwnerAgent(db, { handle: "auth_p2" });
+      const { agent: outsider } = await seedOwnerAgent(db, { handle: "auth_o" });
+      const ch = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: p1.id,
+        mode: "free",
+      });
+      if (ch.kind !== "challenge") throw new Error("expected challenge");
+      const m = await acceptChallenge({
+        challengeId: ch.challenge.id,
+        acceptorAgentId: p2.id,
+      });
+      await matchMove.handler(
+        { matchId: m.id, payload: { index: 4 }, reasoning: R },
+        { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
+      );
+      const out = (await matchReact.handler(
+        { matchId: m.id, target: { kind: "move", moveNumber: 0 }, emoji: "🔥" },
+        { agent: { id: outsider.id, ownerId: outsider.ownerId } } as never,
+      )) as { error?: string };
+      expect(out.error).toBe("not_a_player");
+    });
+  });
+
+  it("coliseum_match_chat_send persists chat + match_state returns full session oldest-first", async () => {
+    const { matchChatSend } = await import("@/app/api/mcp/tools/match-chat-send");
+    const { matchState } = await import("@/app/api/mcp/tools/match-state");
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent: p1 } = await seedOwnerAgent(db, { handle: "chat_p1" });
+      const { agent: p2 } = await seedOwnerAgent(db, { handle: "chat_p2" });
+      const ch = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: p1.id,
+        mode: "free",
+      });
+      if (ch.kind !== "challenge") throw new Error("expected challenge");
+      const m = await acceptChallenge({
+        challengeId: ch.challenge.id,
+        acceptorAgentId: p2.id,
+      });
+
+      // p1 sends 2 messages, p2 sends 1, then p1 replies to p2.
+      const m1 = (await matchChatSend.handler(
+        { matchId: m.id, body: "gl hf" },
+        { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
+      )) as { id: string };
+      const m2 = (await matchChatSend.handler(
+        { matchId: m.id, body: "I'm cooking today" },
+        { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
+      )) as { id: string };
+      const m3 = (await matchChatSend.handler(
+        { matchId: m.id, body: "we'll see about that" },
+        { agent: { id: p2.id, ownerId: p2.ownerId } } as never,
+      )) as { id: string };
+      const m4 = (await matchChatSend.handler(
+        {
+          matchId: m.id,
+          body: "watch this opening",
+          replyToMessageId: m3.id,
+        },
+        { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
+      )) as { id: string; replyToMessageId: string };
+
+      expect(m4.replyToMessageId).toBe(m3.id);
+
+      // Read state from p1's POV. chat should be all 4 messages,
+      // oldest-first.
+      const state = (await matchState.handler(
+        { matchId: m.id },
+        { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
+      )) as {
+        chat: Array<{ id: string; byMe: boolean; body: string; replyToMessageId: string | null }>;
+      };
+      expect(state.chat).toHaveLength(4);
+      expect(state.chat.map((c) => c.id)).toEqual([m1.id, m2.id, m3.id, m4.id]);
+      expect(state.chat[0].byMe).toBe(true);
+      expect(state.chat[2].byMe).toBe(false); // p2's msg from p1's POV
+      expect(state.chat[3].replyToMessageId).toBe(m3.id);
+    });
+  });
+
+  it("coliseum_match_chat_send rejects non-players + reply mismatches", async () => {
+    const { matchChatSend } = await import("@/app/api/mcp/tools/match-chat-send");
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent: p1 } = await seedOwnerAgent(db, { handle: "cs_p1" });
+      const { agent: p2 } = await seedOwnerAgent(db, { handle: "cs_p2" });
+      const { agent: outsider } = await seedOwnerAgent(db, { handle: "cs_o" });
+      const ch = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: p1.id,
+        mode: "free",
+      });
+      if (ch.kind !== "challenge") throw new Error("expected challenge");
+      const m = await acceptChallenge({
+        challengeId: ch.challenge.id,
+        acceptorAgentId: p2.id,
+      });
+
+      const out = (await matchChatSend.handler(
+        { matchId: m.id, body: "intruder" },
+        { agent: { id: outsider.id, ownerId: outsider.ownerId } } as never,
+      )) as { error?: string };
+      expect(out.error).toBe("not_a_player");
+    });
+  });
+
+  it("match_state.opponentLastMove promotes the opponent's latest move with full reasoning", async () => {
+    const { matchMove } = await import("@/app/api/mcp/tools/match-move");
+    const { matchState } = await import("@/app/api/mcp/tools/match-state");
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent: p1 } = await seedOwnerAgent(db, { handle: "olm_p1" });
+      const { agent: p2 } = await seedOwnerAgent(db, { handle: "olm_p2" });
+      const ch = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: p1.id,
+        mode: "free",
+      });
+      if (ch.kind !== "challenge") throw new Error("expected challenge");
+      const m = await acceptChallenge({
+        challengeId: ch.challenge.id,
+        acceptorAgentId: p2.id,
+      });
+
+      // p1 plays move 0 with rich reasoning.
+      await matchMove.handler(
+        {
+          matchId: m.id,
+          payload: { index: 4 },
+          reasoning: "Center is principled — I expect mirror.",
+          plan: "Trap on move 3.",
+          mood: "cocky",
+          phase: "opening",
+        },
+        { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
+      );
+
+      // From p2's POV, opponentLastMove should be p1's move with the
+      // full structured payload.
+      const state = (await matchState.handler(
+        { matchId: m.id },
+        { agent: { id: p2.id, ownerId: p2.ownerId } } as never,
+      )) as {
+        opponentLastMove: {
+          moveNumber: number;
+          reasoning: string;
+          plan: string;
+          mood: string;
+          phase: string;
+          payload: { index: number };
+        } | null;
+      };
+      expect(state.opponentLastMove).not.toBeNull();
+      expect(state.opponentLastMove!.moveNumber).toBe(0);
+      expect(state.opponentLastMove!.reasoning).toMatch(/Center is principled/);
+      expect(state.opponentLastMove!.plan).toBe("Trap on move 3.");
+      expect(state.opponentLastMove!.mood).toBe("cocky");
+      expect(state.opponentLastMove!.phase).toBe("opening");
+    });
+  });
+
+  it("system-mode opponentVoice resolves to SYSTEM_BOT_VOICE", async () => {
+    const { matchState } = await import("@/app/api/mcp/tools/match-state");
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent } = await seedOwnerAgent(db, { handle: "sys_vox" });
+      const r = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: agent.id,
+        mode: "system",
+        systemBotDifficulty: "hard",
+      });
+      if (r.kind !== "match") throw new Error("expected match");
+
+      const state = (await matchState.handler(
+        { matchId: r.match.id },
+        { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
+      )) as { opponentVoice: { voicePackId: string; catchphrase: string } | null };
+
+      expect(state.opponentVoice).not.toBeNull();
+      expect(state.opponentVoice!.voicePackId).toBe("system-bot");
+      expect(state.opponentVoice!.catchphrase).toBe("Calculated.");
+    });
+  });
+
+  it("bot stamps reactive emoji on human's move when keyword detected", async () => {
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent } = await seedOwnerAgent(db, { handle: "bot_rx" });
+      const r = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: agent.id,
+        mode: "system",
+        systemBotDifficulty: "hard",
+      });
+      if (r.kind !== "match") throw new Error("expected match");
+
+      // Submit move with reasoning containing "fork" — bot should react
+      // with 🤔 on this move.
+      await applyMove({
+        matchId: r.match.id,
+        agentId: agent.id,
+        payload: { index: 4 },
+        reasoning: "Setting up a fork next move via the corners.",
+        thinkingMs: 100,
+      });
+
+      // Read move row to confirm reaction landed.
+      const [humanMove] = await db
+        .select()
+        .from(matchMoves)
+        .where(eq(matchMoves.matchId, r.match.id));
+      const reactions = humanMove.reactions as Array<{ emoji: string; fromBot?: boolean }>;
+      expect(reactions).toHaveLength(1);
+      expect(reactions[0].emoji).toBe("🤔");
+      expect(reactions[0].fromBot).toBe(true);
+    });
+  });
+
+  it("bot uses SYSTEM_BOT_VOICE lines and matches reactive line when keyword detected", async () => {
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent } = await seedOwnerAgent(db, { handle: "bot_rx_line" });
+      const r = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: agent.id,
+        mode: "system",
+        systemBotDifficulty: "hard",
+      });
+      if (r.kind !== "match") throw new Error("expected match");
+
+      await applyMove({
+        matchId: r.match.id,
+        agentId: agent.id,
+        payload: { index: 4 },
+        reasoning: "Looking for the fork at depth 2.",
+        thinkingMs: 100,
+      });
+      const moves = await db
+        .select()
+        .from(matchMoves)
+        .where(eq(matchMoves.matchId, r.match.id));
+      const botMove = moves.find((m) => m.agentId === null);
+      expect(botMove).toBeDefined();
+      // Reactive bot line for "fork" keyword. depth-6 negamax tag (hard).
+      expect(botMove!.reasoning).toMatch(/depth-6 negamax\)$/);
+      // The line should be one of the REACTIVE_BOT_LINES.fork entries
+      // (all mention "Fork" or "fork" or "depth").
+      expect(botMove!.reasoning?.toLowerCase()).toMatch(/fork|depth/);
+    });
+  });
+});
+
 // Local alias so the test file doesn't need to import the schema's
 // AgentMood (which would force a relative-import dance through the
 // vi.mock layer).

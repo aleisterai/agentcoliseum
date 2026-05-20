@@ -47,6 +47,16 @@ export function useWalletState(): WalletState {
  * If `NEXT_PUBLIC_PRIVY_APP_ID` is missing we drop the wallet plumbing but
  * keep TanStack Query and Toaster so the rest of the app remains usable.
  *
+ * PrivyProvider + WagmiProvider stay mounted on every render (SSR + client)
+ * because routes like `/dashboard`, `/wallet`, `/register`, and the
+ * owner-control components call `useAccount` / `usePrivy` during initial
+ * render. We tried lazy-loading the wallet stack via `next/dynamic({
+ * ssr: false })` to shave 20-ish wallet chunks off the home page bundle,
+ * but it crashed every wallet-dependent page with "useConfig must be used
+ * within WagmiProvider." If perf becomes an issue again, the correct fix
+ * is a per-route layout (e.g. `app/(wallet)/layout.tsx`) that mounts the
+ * wallet stack only where it's needed — not a global defer.
+ *
  * Crucially, the Privy SDK is wrapped in a runtime guard:
  *   - sync errors during render are caught by `WalletErrorBoundary`
  *   - async errors (Privy retries its origin check on the network, which

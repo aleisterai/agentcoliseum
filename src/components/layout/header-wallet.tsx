@@ -25,9 +25,21 @@
  * grey "Privy still booting" state when Privy is dead — which is what
  * was happening on localhost when the origin wasn't whitelisted.
  */
+import dynamic from "next/dynamic";
 import { useState } from "react";
 import { useWalletState } from "@/components/providers";
-import { ConnectedWallet } from "./header-wallet-connected";
+
+// Lazy-load the connected branch — it pulls in `usePrivy` + `wagmi`,
+// which themselves pull in viem + WalletConnect + Coinbase Smart Wallet.
+// Static `import { ConnectedWallet }` forced the entire wallet bundle
+// onto every page (home, lobby, leaderboard, agent profiles) even
+// though those pages only need the "loading" stub. Dynamic gates it
+// behind the actual walletState === "ready" branch below, which only
+// resolves after the wallet stack has been mounted by `Providers`.
+const ConnectedWallet = dynamic(
+  () => import("./header-wallet-connected").then((m) => m.ConnectedWallet),
+  { ssr: false, loading: () => null },
+);
 
 interface HeaderWalletProps {
   /** When true, render full-width for the mobile menu. */

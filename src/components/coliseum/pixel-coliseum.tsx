@@ -67,21 +67,19 @@ export function PixelColiseum({
 
     // ---- camera --------------------------------------------------------
     // Orthographic for a clean voxel-game look — no foreshortening
-    // distortion across the tiers. Frustum widened from the
-    // original 5.2 → 7.2 to give the coliseum room to breathe with
-    // the surrounding ground + scattered stones.
-    const aspect = 1; // resized in resize() below
-    const frustum = 7.2;
-    const camera = new THREE.OrthographicCamera(
-      (-frustum * aspect) / 2,
-      (frustum * aspect) / 2,
-      frustum / 2,
-      -frustum / 2,
-      0.1,
-      100,
-    );
-    camera.position.set(5.5, 4.2, 5.5);
-    camera.lookAt(0, 0.8, 0);
+    // distortion across the tiers. The frustum is recomputed on every
+    // resize so the WHOLE scene (coliseum + ground + ruins) always
+    // fits regardless of container size or aspect, with a margin of
+    // breathing room. See the `resize()` closure below.
+    //
+    // Empirically the scene's tightest fit needs ~10 units of square
+    // space (ground disc + outermost stones). We center the lookAt
+    // slightly above the ground so the coliseum sits in the upper
+    // 2/3 of the frame and the ground anchors the lower third.
+    const minFrustum = 10.0;
+    const camera = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 100);
+    camera.position.set(7.0, 5.2, 7.0);
+    camera.lookAt(0, 0.4, 0);
 
     // ---- lights --------------------------------------------------------
     // Hemisphere for ambient fill + a low-angle key from the front-left.
@@ -430,16 +428,30 @@ export function PixelColiseum({
     mount.appendChild(renderer.domElement);
 
     // ---- resize --------------------------------------------------------
+    // Fit-to-content sizing: regardless of container size or aspect,
+    // we keep `minFrustum` units visible on the SHORTER axis. The
+    // longer axis just shows more empty space (which is fine — the
+    // ground extends out and the glow fades into the background).
+    //
+    // This guarantees the coliseum + ground + scattered ruins are
+    // always fully on-screen, on any device size, in any column
+    // width — previous attempts pegged a fixed frustum which cut
+    // the lower tiers off on landscape-leaning canvases.
     function resize() {
       if (!mount) return;
       const w = mount.clientWidth || 1;
       const h = mount.clientHeight || 1;
       renderer.setSize(w, h, false);
       const a = w / h;
-      camera.left = (-frustum * a) / 2;
-      camera.right = (frustum * a) / 2;
-      camera.top = frustum / 2;
-      camera.bottom = -frustum / 2;
+      // Scale frustum so the shorter axis spans minFrustum units.
+      // (For a 1:1 canvas this == minFrustum; for a wide 16:9 canvas
+      //  vertical stays minFrustum and horizontal expands.)
+      const fy = minFrustum;
+      const fx = minFrustum * a;
+      camera.left = -fx / 2;
+      camera.right = fx / 2;
+      camera.top = fy / 2;
+      camera.bottom = -fy / 2;
       camera.updateProjectionMatrix();
     }
     resize();

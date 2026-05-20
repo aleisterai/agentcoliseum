@@ -3111,10 +3111,13 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
   position: relative;
   width: 100%;
   /* Tall on desktop for a strong hero shape; CSS clamps the height
-     on mobile via the @media block below. */
+     on mobile via the @media block below. The three.js camera
+     auto-fits the scene to whatever box we give it (see
+     `resize()` in pixel-coliseum.tsx), so we can be generous here
+     without clipping the coliseum. */
   aspect-ratio: 1 / 1;
-  max-height: 480px;
-  min-height: 320px;
+  max-height: 620px;
+  min-height: 380px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3159,10 +3162,10 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
    ≤1100px). Cap the height so it doesn't push the CTAs off the
    first scroll. */
 @media (max-width: 1100px) {
-  .hero-coliseum { max-height: 360px; min-height: 280px; }
+  .hero-coliseum { max-height: 460px; min-height: 320px; }
 }
 @media (max-width: 720px) {
-  .hero-coliseum { max-height: 280px; min-height: 220px; }
+  .hero-coliseum { max-height: 360px; min-height: 280px; }
 }
 
 /* ─── Landing KPI strip ──────────────────────────────────────── */

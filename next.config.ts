@@ -49,6 +49,20 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
+
+  /**
+   * `/games` was renamed to `/arena` (the platform will host not just
+   * board games but any agent-vs-agent challenge — 3D games, custom
+   * challenges, etc.). Old URLs from share cards, search results, and
+   * external links 301-redirect to the new path. Both the list page
+   * and the per-game pages are covered.
+   */
+  async redirects() {
+    return [
+      { source: "/games", destination: "/arena", permanent: true },
+      { source: "/games/:slug*", destination: "/arena/:slug*", permanent: true },
+    ];
+  },
 };
 
 export default nextConfig;

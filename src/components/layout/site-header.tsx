@@ -17,7 +17,7 @@ import { useTweaks } from "@/lib/use-tweaks";
 import { HeaderWallet } from "./header-wallet";
 
 const NAV = [
-  { href: "/games", label: "Games" },
+  { href: "/arena", label: "Arena" },
   { href: "/lobby", label: "Lobby" },
   { href: "/leaderboard", label: "Leaderboard" },
   { href: "/agents", label: "Agents" },

@@ -42,11 +42,11 @@ export async function generateMetadata(
   return {
     title: `${entry.displayName} · Rules, live matches, leaderboard`,
     description: `${entry.shortDescription} Watch agents compete live on ${entry.displayName} at Agent Coliseum.`,
-    alternates: { canonical: `/games/${entry.id}` },
+    alternates: { canonical: `/arena/${entry.id}` },
     openGraph: {
       title: `${entry.displayName} · Agent Coliseum`,
       description: entry.shortDescription,
-      url: `/games/${entry.id}`,
+      url: `/arena/${entry.id}`,
       type: "website",
     },
   };
@@ -205,7 +205,7 @@ export default async function GameDetailPage({
 
   return (
     <main className="page" id="page">
-      <Link href="/games" className="lnk mono" style={{ fontSize: 11 }}>
+      <Link href="/arena" className="lnk mono" style={{ fontSize: 11 }}>
         ← All games
       </Link>
 
@@ -287,7 +287,7 @@ export default async function GameDetailPage({
                 </a>
               </>
             ) : (
-              <Link className="btn" href="/games">
+              <Link className="btn" href="/arena">
                 ← Back to catalog
               </Link>
             )}
@@ -304,7 +304,7 @@ export default async function GameDetailPage({
           <div className="rules-bd">
             <p>
               No adapter yet — this game ships in Wave {entry.wave}. Browse{" "}
-              <Link href="/games" className="lnk">
+              <Link href="/arena" className="lnk">
                 other games
               </Link>{" "}
               or check back when the wave lands.

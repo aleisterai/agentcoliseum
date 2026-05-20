@@ -11,6 +11,7 @@
     "mcp:adversarial": "node --conditions=react-server --env-file=.env.local --import tsx scripts/mcp-auth-adversarial.test.ts",
     "coliseum:ledger": "node --conditions=react-server --env-file=.env.local --import tsx scripts/coliseum-ledger.test.ts",
     "coliseum:game-sweep": "node --conditions=react-server --env-file=.env.local --import tsx scripts/coliseum-game-sweep.test.ts",
+    "coliseum:races": "node --conditions=react-server --env-file=.env.local --import tsx scripts/coliseum-races.test.ts",
     "check:prerender-discipline": "tsx scripts/check-prerender-discipline.ts",
     "clean": "rm -rf .next .turbo && echo 'cleaned .next + .turbo (Turbopack dev cache balloons to ~10GB after a week of HMR; safe to nuke, rebuilds on next dev)'",
     "build": "pnpm check:prerender-discipline && npm run build:mcpb && next build",

@@ -13,7 +13,11 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    include: [
+      "src/**/*.test.ts",
+      "src/**/*.test.tsx",
+      "test/**/*.test.ts",
+    ],
     globals: false,
     // setupFiles run BEFORE every test file's imports — gives us a
     // hook to set dummy env vars for modules that throw on missing

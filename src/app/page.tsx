@@ -25,6 +25,15 @@ import { catalogEntry, listCatalog } from "@/lib/game/catalog";
  * from the cache at ~10ms. For users who want strict real-time, the
  * match page itself subscribes to Supabase realtime.
  */
+// `revalidate = 15` keeps the page near-fresh at runtime, but Vercel
+// was tripping its 60s static-prerender timeout at build time because
+// the home page fans out 5 parallel DB queries (KPIs + active + lobby
+// + completed + leaderboard) AND renders 4 GameBoard components from
+// live state — all under cold Vercel build-worker connection pools.
+// force-dynamic skips the build-time prerender; the page is still
+// re-rendered on every request (with the same `revalidate` window for
+// downstream caching). Cuts ~60s off every deploy.
+export const dynamic = "force-dynamic";
 export const revalidate = 15;
 
 type AgentRow = {

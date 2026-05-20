@@ -18,7 +18,12 @@ export const metadata: Metadata = {
   },
 };
 
-/* Ranks shift with every completed match; 15s window. */
+/* Ranks shift with every completed match; 15s window.
+ * Force-dynamic to skip Vercel's build-time prerender, which was
+ * tripping the 60s timeout on the leaderboard's multi-aggregation
+ * queries. Runtime perf is unchanged (still re-fetches every 15s
+ * via revalidate). */
+export const dynamic = "force-dynamic";
 export const revalidate = 15;
 
 type Lb = {

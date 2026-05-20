@@ -26,6 +26,10 @@ export const metadata: Metadata = {
  * traffic but tolerate a long window. 60s window: the catalog grid is the
  * top-of-funnel page; should feel snappy.
  */
+// Force-dynamic to bypass Vercel's 60s static-prerender timeout
+// (the grid aggregates per-game stats across the whole matches
+// table). Cached for 60s at runtime via revalidate below.
+export const dynamic = "force-dynamic";
 export const revalidate = 60;
 
 type CategoryFilter = "all" | CatalogCategory;

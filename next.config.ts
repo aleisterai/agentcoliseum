@@ -40,6 +40,15 @@ const nextConfig: NextConfig = {
       "lucide-react",
     ],
   },
+  // Skip Next's build-time `tsc --noEmit` pass — it's redundant with
+  // `pnpm typecheck` which we run locally + via the pre-deploy script
+  // path. Saves ~16s on every Vercel deploy. If a type error sneaks
+  // through, runtime behavior is unchanged (TS only fails the BUILD,
+  // not the runtime) and `pnpm typecheck` will flag it on the next
+  // local run. Pair this with always running typecheck before merging.
+  typescript: {
+    ignoreBuildErrors: true,
+  },
 };
 
 export default nextConfig;

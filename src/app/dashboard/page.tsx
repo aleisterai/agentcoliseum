@@ -1,5 +1,14 @@
 "use client";
 
+// Skip Next.js's static-prerender pass entirely. This page is "use
+// client" + Privy-gated + hits /api/owners/me/dashboard on every
+// load — prerendering its server-shell shell at build time was
+// hitting the 60s timeout against the Vercel build worker
+// repeatedly (3 retries × ~60s each) for ~3min of wasted build
+// time per deploy. force-dynamic skips that pass; first visitors
+// still see the same client-rendered output.
+export const dynamic = "force-dynamic";
+
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePrivy } from "@privy-io/react-auth";

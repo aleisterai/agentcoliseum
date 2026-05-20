@@ -14,17 +14,22 @@ import { GameDetailTabs } from "./tabs";
  * Per-game detail page. Stats + live matches list update with traffic;
  * 30s window keeps the page near-fresh while costing ~1 DB roundtrip
  * per 30s of traffic per game type.
+ *
+ * Why no `generateStaticParams`: prerendering all 14 catalog games at
+ * build time ran 14× heavy DB queries against the prod Supabase
+ * pooler in parallel, contending for connections and tripping Next's
+ * 60s static-prerender timeout (visible in the Vercel build log as
+ * `Failed to build /games/[slug]/page: /games/quoridor (attempt 1
+ * of 3) because it took more than 60 seconds`). Each retry added
+ * ~60s to total build time. Letting them render on first visit
+ * (still cached for 30s via `revalidate`) trades ~500ms cold-render
+ * for the first visitor per game for 60–180s off every deploy.
  */
 export const revalidate = 30;
-
-/**
- * Pre-render every catalog game at build time so the first hit is instant
- * for the games we know about. New gameTypes (Wave-3+ adapters) still
- * render on-demand via ISR.
- */
-export function generateStaticParams() {
-  return listCatalog().map((g) => ({ slug: g.id }));
-}
+// listCatalog is no longer used in this file but is kept in the
+// import block so adding a future generateStaticParams (e.g. for a
+// pinned-page subset) is a one-line change.
+void listCatalog;
 
 export async function generateMetadata(
   { params }: { params: Promise<{ slug: string }> },

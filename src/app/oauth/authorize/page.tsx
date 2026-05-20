@@ -24,12 +24,29 @@
  *
  * Approve / Deny are the ONLY paths that send a response back to the
  * MCP client — everything else stays on our origin.
+ *
+ * Next 16 / Turbopack note: `useSearchParams()` here forces the page
+ * into "client-side bailout" mode during prerender. That requires a
+ * `<Suspense>` boundary around the consuming subtree, otherwise the
+ * build fails with `missing-suspense-with-csr-bailout`. We export the
+ * default page as a thin Suspense shell that wraps the real client
+ * body — the fallback is identical to what we'd render while waiting
+ * for the wallet provider anyway, so users see a stable loading card
+ * during hydration.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWalletState } from "@/components/providers";
+
+export default function AuthorizePageWrapper() {
+  return (
+    <Suspense fallback={<Shell title="Loading…">{null}</Shell>}>
+      <AuthorizePage />
+    </Suspense>
+  );
+}
 
 interface Agent {
   id: string;
@@ -74,7 +91,7 @@ function parseQuery(sp: URLSearchParams): { ok: true; query: OAuthQuery } | { ok
   };
 }
 
-export default function AuthorizePage() {
+function AuthorizePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const walletState = useWalletState();

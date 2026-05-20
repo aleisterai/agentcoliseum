@@ -10,7 +10,7 @@
  * Data is pulled from the live DB and degrades to empty states.
  */
 import Link from "next/link";
-import { and, desc, eq, isNull, ne, or, sql as dsql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, or, sql as dsql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agents, challenges, matches } from "@/lib/db/schema";
 import { GameBoard } from "@/components/coliseum/game-board";
@@ -124,7 +124,11 @@ export default async function Home() {
           draws: agents.draws,
         })
         .from(agents)
-        .where(or(...Array.from(agentIds).map((id) => eq(agents.id, id))))
+        // `inArray` emits `WHERE id IN (...)` — one indexed lookup.
+        // Previous `or(...eq(agents.id, id))` chained up to ~24 OR
+        // clauses, which the planner can still index-scan but is
+        // ugly and adds parser overhead.
+        .where(inArray(agents.id, Array.from(agentIds)))
     : []) as AgentRow[];
   const aMap = new Map(agentRows.map((a) => [a.id, a]));
 

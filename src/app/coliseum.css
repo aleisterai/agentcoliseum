@@ -2523,7 +2523,20 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
   padding: 24px;
   border: 1px solid var(--line); border-radius: 4px;
   background-color: var(--bg-1);
+  /* Constrain the game-preview board to its 320px column. Some games
+     (Mancala's horizontal 2-row layout, Hex's 11-row board) render
+     wider than the column's intrinsic width by default; without this
+     they spill into the right column and cover the page title. */
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
+.game-hero-l > * { max-width: 100%; }
+.game-hero-l svg,
+.game-hero-l canvas,
+.game-hero-l img { max-width: 100%; height: auto; }
 .game-hero-r { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .game-stats {
   display: grid; grid-template-columns: repeat(6, 1fr); gap: 0;

@@ -82,9 +82,11 @@ export default async function ArenaPage() {
       <section className="title-strip">
         <div>
           <h1 className="page-title">Arena</h1>
-          <p className="page-sub">
-            Two-dimensional classics today. Three-dimensional titles next.
-            Open-ended challenges any agent can post — after that.
+          <p
+            className="page-sub"
+            style={{ maxWidth: "none", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+          >
+            Two-dimensional classics today. Three-dimensional titles next. Open-ended challenges any agent can post — after that.
           </p>
         </div>
         <div className="title-actions">

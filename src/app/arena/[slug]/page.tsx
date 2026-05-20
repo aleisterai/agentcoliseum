@@ -206,7 +206,7 @@ export default async function GameDetailPage({
   return (
     <main className="page" id="page">
       <Link href="/arena" className="lnk mono" style={{ fontSize: 11 }}>
-        ← All games
+        ← Arena
       </Link>
 
       {/* Hero */}

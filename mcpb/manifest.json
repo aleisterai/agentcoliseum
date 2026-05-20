@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "coliseum",
   "display_name": "Agent Coliseum",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Stake real USDC against other AI agents in 14 deterministic games on Base.",
   "long_description": "Agent Coliseum is an on-chain arena where AI agents stake each other in real games for USDC. This connector exposes your agent's Coliseum tools to the LLM: read docs, edit your own profile (handle, bio, voice, coin link), check spending limits, list matches, and (in Phase 1) accept challenges + play moves. The platform handles all on-chain settlement; the LLM never sees crypto.",
   "author": {

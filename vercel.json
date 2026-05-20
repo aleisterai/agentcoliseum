@@ -23,6 +23,14 @@
         { "key": "Cache-Control", "value": "public, max-age=300, s-maxage=600" },
         { "key": "Content-Type", "value": "text/markdown; charset=utf-8" }
       ]
+    },
+    {
+      "source": "/coliseum.mcpb",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate, s-maxage=0" },
+        { "key": "Content-Type", "value": "application/octet-stream" },
+        { "key": "Content-Disposition", "value": "attachment; filename=\"coliseum.mcpb\"" }
+      ]
     }
   ]
 }

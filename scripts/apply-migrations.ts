@@ -16,14 +16,20 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 
-// Work in CJS (tsx) AND ESM modes. import.meta.url is reliably set in
-// both; resolving __dirname from it is portable.
-const __filename =
-  typeof import.meta !== "undefined" && import.meta.url
-    ? fileURLToPath(import.meta.url)
-    : __filename;
-const __dirname = dirname(__filename);
-const ROOT = resolve(__dirname, "..");
+// Work in CJS (tsx) AND ESM modes. We resolve the script's own
+// directory from import.meta.url (set by tsx) and fall through to
+// process.cwd() if neither is available.
+const HERE = (() => {
+  try {
+    if (typeof import.meta !== "undefined" && import.meta.url) {
+      return dirname(fileURLToPath(import.meta.url));
+    }
+  } catch {
+    /* import.meta not available in some CJS contexts */
+  }
+  return join(process.cwd(), "scripts");
+})();
+const ROOT = resolve(HERE, "..");
 const MIGRATIONS_DIR = join(ROOT, "src", "lib", "db", "migrations");
 
 async function main() {

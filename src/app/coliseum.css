@@ -1845,8 +1845,8 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
 .chat-panel {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 16px;
+  gap: 4px;
+  padding: 20px 16px 32px;
   overflow-y: auto;
   height: 100%;
   scroll-behavior: smooth;
@@ -1859,28 +1859,56 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
   font-style: italic;
 }
 
+/* iMessage/Telegram-style bubbles — borderless, rounded, with a
+   subtle squared corner on the speaker side as the "tail" hint.
+   Move bubbles carry the move's structured reasoning; chat bubbles
+   are smaller and just carry body text. */
 .chat-bubble {
   display: flex;
   flex-direction: column;
   gap: 6px;
   max-width: 78%;
-  padding: 10px 12px;
-  border-radius: 14px;
-  border: 1px solid var(--border-1);
-  background: var(--bg-1);
+  padding: 10px 14px;
+  border-radius: 18px;
+  border: none;
+  background: var(--bg-2);
   position: relative;
-  transition: outline-color 120ms ease;
+  transition: outline-color 120ms ease, transform 80ms ease;
+  /* Slightly tighter consecutive-bubble spacing (CSS adjacent below). */
 }
-.chat-bubble.side-left { align-self: flex-start; border-bottom-left-radius: 4px; }
-.chat-bubble.side-right { align-self: flex-end; border-bottom-right-radius: 4px; }
+.chat-bubble + .chat-bubble {
+  margin-top: 0;
+}
+.chat-bubble.side-left {
+  align-self: flex-start;
+  border-bottom-left-radius: 6px;
+  margin-right: auto;
+}
+.chat-bubble.side-right {
+  align-self: flex-end;
+  border-bottom-right-radius: 6px;
+  margin-left: auto;
+}
 
+/* Consecutive bubbles from the same side get even tighter corners
+   on the speaker-side — gives the natural "stacked messages" feel. */
+.chat-bubble.side-left + .chat-bubble.side-left {
+  margin-top: 2px;
+  border-top-left-radius: 6px;
+}
+.chat-bubble.side-right + .chat-bubble.side-right {
+  margin-top: 2px;
+  border-top-right-radius: 6px;
+}
+
+/* Chat-only (non-move) bubbles: smaller, no head metadata. */
 .chat-bubble.kind-chat {
   max-width: 60%;
-  padding: 8px 12px;
-  border-radius: 18px;
-  font-size: 13px;
-  background: var(--bg-2);
+  padding: 8px 14px;
+  font-size: 13.5px;
+  line-height: 1.4;
 }
+
 .chat-bubble.cur {
   outline: 2px solid var(--gold);
   outline-offset: -1px;
@@ -1898,52 +1926,65 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
   color: inherit;
   font: inherit;
 }
-.chat-bubble-jump:hover { opacity: 0.92; }
+.chat-bubble-jump:hover { opacity: 0.94; }
 
 .chat-bubble-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--text-mute);
+  /* Slight breathing room above the body. */
+  margin-bottom: 1px;
 }
 .chat-handle {
   font-weight: 600;
   color: var(--text-2);
   font-family: var(--font-mono);
+  font-size: 11px;
 }
 .chat-mood {
-  background: var(--bg-2);
+  background: rgba(255,255,255,0.06);
   border-radius: 999px;
-  padding: 1px 8px;
-  font-size: 10.5px;
+  padding: 0 7px;
+  font-size: 10px;
   letter-spacing: 0.02em;
+  line-height: 1.5;
 }
-.chat-phase { font-style: italic; }
+.chat-phase {
+  font-style: italic;
+  font-size: 10px;
+  color: var(--text-dim);
+}
 .chat-move-num {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--text-dim);
 }
 .chat-move-payload {
   font-family: var(--font-mono);
   font-weight: 600;
   color: var(--text-1);
-  font-size: 12px;
+  font-size: 11.5px;
+  background: rgba(255,255,255,0.04);
+  padding: 0 6px;
+  border-radius: 4px;
 }
 .chat-ts {
   margin-left: auto;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 9.5px;
   color: var(--text-dim);
+  opacity: 0.7;
 }
 
 .chat-body {
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: 13.5px;
+  line-height: 1.45;
   color: var(--text-1);
   word-wrap: break-word;
+  letter-spacing: -0.005em;
 }
 .chat-body .mute {
   color: var(--text-mute);
@@ -2007,23 +2048,28 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
 }
 .chat-meta-body { color: var(--text-2); }
 
-/* Tapback reactions — chips at the bottom of every bubble. */
+/* Tapback reactions — iMessage-style chips anchored to the bottom-
+   trailing edge of the bubble. Slight negative margin pulls them
+   into the bubble's corner so they "stick" to it like real tapbacks. */
 .chat-reactions {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  align-items: center;
+  gap: 3px;
   position: relative;
-  margin-top: 2px;
+  margin-top: 3px;
+  margin-bottom: -2px;
 }
 .tapback {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 1px 8px;
+  height: 22px;
+  padding: 0 7px;
   font-size: 12px;
-  border: 1px solid var(--border-1);
+  border: 1px solid transparent;
   border-radius: 999px;
-  background: var(--bg-0);
+  background: rgba(255,255,255,0.06);
   cursor: pointer;
   /* Prefer Apple Color Emoji on devices that have it (iOS / macOS).
      Fallthrough to other platform emoji fonts elsewhere. The
@@ -2031,101 +2077,151 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
      cross-platform full Apple-style rendering. */
   font-family: "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol",
     "Noto Color Emoji", system-ui;
-  transition: background 100ms ease, border-color 100ms ease;
+  transition: background 100ms ease, transform 80ms ease;
+  line-height: 1;
 }
 .tapback:hover {
-  background: var(--bg-2);
-  border-color: var(--border-2);
+  background: rgba(255,255,255,0.12);
+  transform: scale(1.04);
 }
-.tapback-emoji { line-height: 1; }
+.tapback:active {
+  transform: scale(0.96);
+}
+.tapback-emoji {
+  line-height: 1;
+  font-size: 13px;
+}
 .tapback-count {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--text-2);
+  font-weight: 600;
+  letter-spacing: -0.02em;
 }
-.tapback-add { color: var(--text-mute); font-family: var(--font-mono); }
+.tapback-add {
+  color: var(--text-mute);
+  font-family: var(--font-mono);
+  width: 22px;
+  padding: 0;
+  justify-content: center;
+}
+.tapback-add:hover {
+  color: var(--text-1);
+}
 
+/* Emoji palette popover — iMessage Reactions-style floating bubble.
+   Smaller, cleaner, drop shadow + backdrop blur. */
 .tapback-palette {
   position: absolute;
-  bottom: calc(100% + 6px);
+  bottom: calc(100% + 8px);
   left: 0;
   display: grid;
   grid-template-columns: repeat(8, 1fr);
-  gap: 4px;
-  padding: 8px;
-  background: var(--bg-1);
-  border: 1px solid var(--border-2);
-  border-radius: 12px;
+  gap: 2px;
+  padding: 6px;
+  background: rgba(28, 28, 30, 0.92);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 16px;
   z-index: 20;
-  box-shadow: 0 8px 28px rgba(0,0,0,0.35);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.45), 0 0 0 0.5px rgba(255,255,255,0.06);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  animation: tapback-pop 140ms ease-out;
+}
+@keyframes tapback-pop {
+  from { opacity: 0; transform: translateY(4px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 .tapback-palette-item {
   background: transparent;
   border: none;
   cursor: pointer;
-  padding: 4px 6px;
-  font-size: 18px;
-  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 19px;
+  border-radius: 50%;
   font-family: "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol",
     "Noto Color Emoji", system-ui;
+  transition: background 100ms ease, transform 80ms ease;
+  line-height: 1;
+  padding: 0;
 }
-.tapback-palette-item:hover { background: var(--bg-2); }
+.tapback-palette-item:hover {
+  background: rgba(255,255,255,0.12);
+  transform: scale(1.12);
+}
+.tapback-palette-item:active {
+  transform: scale(0.92);
+}
 
-/* ── Voice-pack-styled bubbles ───────────────────────────────────── */
+/* ── Voice-pack-styled bubbles ───────────────────────────────────
+   iMessage-style flat-color bubbles with a subtle voice-tinted
+   background. No borders — the color IS the signal. Each voice has
+   a distinct background + handle color so spectators can identify
+   the speaker at a glance, even with the avatar cropped. */
 
 /* Defaults — neutral; used when no voice pack is set. */
-.chat-bubble.voice-default {}
+.chat-bubble.voice-default {
+  background: rgba(255,255,255,0.07);
+}
 
-/* Calm professor — soft lavender accent, serif body. */
+/* Calm professor — soft lavender. Measured serif body. */
 .chat-bubble.voice-calm-professor {
-  background: linear-gradient(180deg, rgba(168,143,255,0.07) 0%, var(--bg-1) 100%);
-  border-color: rgba(168,143,255,0.25);
+  background: rgba(168,143,255,0.16);
 }
-.chat-bubble.voice-calm-professor .chat-body { font-family: var(--font-serif, Georgia, serif); }
+.chat-bubble.voice-calm-professor .chat-handle { color: rgba(196,179,255,0.95); }
+.chat-bubble.voice-calm-professor .chat-body {
+  font-family: var(--font-serif, Georgia, serif);
+}
 
-/* Trash talker — bold accent, slight emphasis. */
+/* Trash talker — warm red. Bold body. */
 .chat-bubble.voice-trash-talker {
-  background: linear-gradient(180deg, rgba(255,86,86,0.08) 0%, var(--bg-1) 100%);
-  border-color: rgba(255,86,86,0.28);
+  background: rgba(255,86,86,0.18);
 }
-.chat-bubble.voice-trash-talker .chat-body { font-weight: 600; letter-spacing: 0.01em; }
+.chat-bubble.voice-trash-talker .chat-handle { color: rgba(255,150,150,0.95); }
+.chat-bubble.voice-trash-talker .chat-body {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
 
-/* Stoic samurai — austere monospace, muted border. */
+/* Stoic samurai — austere graphite. Monospace body. */
 .chat-bubble.voice-stoic-samurai {
-  background: rgba(20,20,20,0.4);
-  border-color: rgba(255,255,255,0.18);
+  background: rgba(60,60,70,0.45);
 }
+.chat-bubble.voice-stoic-samurai .chat-handle { color: rgba(220,220,220,0.95); }
 .chat-bubble.voice-stoic-samurai .chat-body {
   font-family: var(--font-mono);
   font-weight: 500;
   letter-spacing: 0.01em;
 }
 
-/* Anxious nerd — pale accent, italic body. */
+/* Anxious nerd — pale blue. Italic body. */
 .chat-bubble.voice-anxious-nerd {
-  background: linear-gradient(180deg, rgba(126,194,255,0.07) 0%, var(--bg-1) 100%);
-  border-color: rgba(126,194,255,0.25);
+  background: rgba(126,194,255,0.16);
 }
+.chat-bubble.voice-anxious-nerd .chat-handle { color: rgba(160,210,255,0.95); }
 .chat-bubble.voice-anxious-nerd .chat-body { font-style: italic; }
 
-/* Degen — green accent, irreverent typography. */
+/* Degen — green meme. Heavy body. */
 .chat-bubble.voice-degen {
-  background: linear-gradient(180deg, rgba(80,255,145,0.07) 0%, var(--bg-1) 100%);
-  border-color: rgba(80,255,145,0.30);
+  background: rgba(80,255,145,0.16);
 }
+.chat-bubble.voice-degen .chat-handle { color: rgba(120,255,170,0.95); }
 .chat-bubble.voice-degen .chat-body { font-weight: 600; }
 
-/* System bot — distinctive bronze/gold accent, monospace body. */
+/* System bot — bronze/gold. Mono body. */
 .chat-bubble.voice-system-bot {
-  background: linear-gradient(180deg, rgba(212,175,55,0.06) 0%, var(--bg-1) 100%);
-  border-color: rgba(212,175,55,0.32);
+  background: rgba(212,175,55,0.15);
 }
+.chat-bubble.voice-system-bot .chat-handle { color: rgba(232,200,90,0.98); }
 .chat-bubble.voice-system-bot .chat-body {
   font-family: var(--font-mono);
   font-size: 12.5px;
   color: var(--text-1);
 }
-.chat-bubble.voice-system-bot .chat-handle { color: rgba(212,175,55,0.95); }
 
 /* Small board card that lives in the left rail when reasoning mode is on. */
 .rail-board { display: flex; flex-direction: column; }

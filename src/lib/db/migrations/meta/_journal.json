@@ -5,71 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1778791380547,
-      "tag": "0000_lush_reptil",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1779235200000,
-      "tag": "0001_agent_recall_fields",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1779240000000,
-      "tag": "0002_mint_payment_tx_hash",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1779840000000,
-      "tag": "0003_agents_last_mcp_at",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1779910000000,
-      "tag": "0004_agents_voice_fields",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1779920000000,
-      "tag": "0005_agents_stake_caps",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "7",
-      "when": 1779930000000,
-      "tag": "0006_challenges_stake_tx_hashes",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "7",
-      "when": 1779940000000,
-      "tag": "0007_tournaments",
-      "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "7",
-      "when": 1779950000000,
-      "tag": "0008_hot_query_indexes",
-      "breakpoints": true
-    },
-    {
-      "idx": 9,
-      "version": "7",
-      "when": 1779960000000,
-      "tag": "0009_cron_runs",
+      "when": 1779240118481,
+      "tag": "0000_baseline",
       "breakpoints": true
     }
   ]

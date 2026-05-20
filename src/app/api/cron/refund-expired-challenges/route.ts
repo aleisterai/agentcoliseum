@@ -1,24 +1,37 @@
 /**
  * GET /api/cron/refund-expired-challenges
  *
- * Refunds the proposer's stake on challenges that expired without being
- * accepted. Runs every minute (vercel.json). Mirrors the settlement-sweep
- * cron pattern: bounded batch, idempotent (`proposer_stake_refund_tx_hash
- * IS NULL`), best-effort on individual failures.
+ * Sweeps challenges that expired without being accepted. Runs every
+ * minute (vercel.json). Mirrors the settlement-sweep cron pattern:
+ * bounded batch, idempotent, best-effort on individual failures.
  *
- * Selection criteria:
- *   - status = 'posted'
- *   - mode   = 'paid'
- *   - proposer_stake_tx_hash IS NOT NULL  (i.e. we actually pulled stake)
- *   - proposer_stake_refund_tx_hash IS NULL  (idempotency)
- *   - expires_at < now  (challenge has actually timed out)
+ * Two parallel paths in one cron run:
  *
- * For each:
- *   1. refundStake(ownerWallet, stake) → USDC.transfer operator → owner
- *   2. Update challenge: refund tx hash + status='abandoned' + expiredAt
+ *   Paid challenges  (mode='paid' + proposer_stake_tx_hash IS NOT NULL):
+ *     1. refundStake(ownerWallet, stake) — USDC.transfer operator → owner
+ *     2. set proposer_stake_refund_tx_hash + status='abandoned'
+ *     Idempotent on `proposer_stake_refund_tx_hash IS NULL`.
+ *
+ *   Free challenges  (mode='free' + no stake was ever locked):
+ *     1. set status='abandoned'  — nothing to refund, just close the row
+ *     Otherwise these ghost-row forever and pollute the lobby UI + MCP
+ *     match_list (until we added a NOW() filter; even then, having
+ *     stale rows around hides the cron failing).
+ *
+ * System-mode challenges shouldn't appear here at all (they go
+ * straight to a match on propose), but we belt-and-braces include
+ * them in the free path in case a propose+immediate-failure leaves
+ * one stuck.
+ *
+ * Selection (paid):
+ *   status='posted' AND mode='paid' AND proposer_stake_tx_hash IS NOT NULL
+ *   AND proposer_stake_refund_tx_hash IS NULL AND expires_at < now
+ *
+ * Selection (free / system):
+ *   status='posted' AND mode IN ('free','system') AND expires_at < now
  */
 import { NextResponse } from "next/server";
-import { and, eq, isNotNull, isNull, lt } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agents, challenges, owners } from "@/lib/db/schema";
 import { refundStake } from "@/lib/chain/stake";
@@ -47,6 +60,42 @@ async function handleRefundCron({
   setMetadata: (m: Record<string, unknown>) => void;
 }) {
   const now = new Date();
+
+  // Pass A — free / system challenges. No on-chain refund needed;
+  // just close the row so the lobby + MCP stop surfacing them.
+  // Returning UPDATE's affected count would be cleaner if drizzle's
+  // postgres-js driver surfaced it; we just do a SELECT-then-UPDATE
+  // bound by id so the audit log matches what we touched.
+  const freeStale = await db
+    .select({ id: challenges.id, mode: challenges.mode })
+    .from(challenges)
+    .where(
+      and(
+        eq(challenges.status, "posted"),
+        inArray(challenges.mode, ["free", "system"]),
+        lt(challenges.expiresAt, now),
+      ),
+    )
+    .limit(BATCH_LIMIT);
+  let freeAbandoned = 0;
+  if (freeStale.length > 0) {
+    await db
+      .update(challenges)
+      .set({
+        status: "abandoned",
+        abandonedAt: now,
+        abandonedReason: "expired",
+      })
+      .where(
+        inArray(
+          challenges.id,
+          freeStale.map((r) => r.id),
+        ),
+      );
+    freeAbandoned = freeStale.length;
+  }
+
+  // Pass B — paid challenges. These need an on-chain refund first.
   const candidates = await db
     .select({
       id: challenges.id,
@@ -67,7 +116,18 @@ async function handleRefundCron({
     .limit(BATCH_LIMIT);
 
   if (candidates.length === 0) {
-    return NextResponse.json({ ok: true, refunded: 0, message: "no expired challenges" });
+    // Even with no paid work, free pass might have closed rows.
+    setItems(freeAbandoned);
+    setMetadata({ refunded: 0, freeAbandoned, skipped: 0, errored: 0 });
+    return NextResponse.json({
+      ok: true,
+      refunded: 0,
+      freeAbandoned,
+      message:
+        freeAbandoned > 0
+          ? `closed ${freeAbandoned} expired free/system challenges`
+          : "no expired challenges",
+    });
   }
 
   if (!process.env.PLATFORM_OPERATOR_PRIVATE_KEY) {
@@ -141,11 +201,18 @@ async function handleRefundCron({
   const refunded = results.filter((r) => r.outcome === "refunded").length;
   const skipped = results.filter((r) => r.outcome === "skipped").length;
   const errored = results.filter((r) => r.outcome === "error").length;
-  setItems(refunded);
-  setMetadata({ refunded, skipped, errored, batchSize: results.length });
+  setItems(refunded + freeAbandoned);
+  setMetadata({
+    refunded,
+    freeAbandoned,
+    skipped,
+    errored,
+    batchSize: results.length,
+  });
   return NextResponse.json({
     ok: true,
     refunded,
+    freeAbandoned,
     results,
   });
 }

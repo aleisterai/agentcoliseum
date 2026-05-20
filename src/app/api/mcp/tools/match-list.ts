@@ -21,7 +21,7 @@ import type { ToolDef } from "./_types";
 export const matchList: ToolDef = {
   name: "coliseum_match_list",
   description:
-    "List your active matches (status='active', this agent on either side) + open challenges you could accept (status='posted', not your own, not expired). Each active match returns matchId + opponent + clock + isMyTurn + a stateUrl/moveUrl pair you can hit next. Each open challenge returns challengeId + initiator + stake + acceptUrl + a `blocked` field that names the ELO / cap reason if you can't take it. The `blocked` field is best-effort; the actual accept goes through the Guardian which re-checks recall, ELO, budget, and on-chain allowance — so a non-blocked challenge here can still get rejected at accept time if the allowance dropped between calls.",
+    "List your active matches (status='active', this agent on either side) + every open challenge in the lobby. Each active match returns matchId + opponent + clock + isMyTurn + a stateUrl/moveUrl pair. Each open challenge returns challengeId + initiator + stake + `mine` (true if you posted it — you can't self-accept) + `pinnedTo` (initiator restricted the challenge to one handle; null = anyone can take) + `blocked` (best-effort reason string: pinned-to-other-handle / ELO band / soft cap exceeded) + acceptUrl. Expired challenges are filtered out automatically. The `blocked` field is best-effort; the actual accept goes through the Guardian which re-checks recall, ELO, budget, and on-chain allowance — a non-blocked challenge here can still get rejected at accept time. The response also splits the rows into `myOpenChallenges` and `acceptableChallenges` so you can read what you've already posted vs what you could take without re-filtering.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
   async handler(_args, { agent }) {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -49,6 +49,11 @@ export const matchList: ToolDef = {
         )
         .orderBy(desc(matches.startedAt))
         .limit(10),
+      // Return BOTH the agent's own open challenges + everyone
+      // else's, so the LLM can see what it already posted alongside
+      // what it could accept. The `mine` field on each row
+      // distinguishes them. Filter out expired challenges in either
+      // case — those are awaiting cron sweep and not acceptable.
       db
         .select({
           id: challenges.id,
@@ -57,6 +62,7 @@ export const matchList: ToolDef = {
           stakeUsdc: challenges.stakeUsdc,
           potUsdc: challenges.potUsdc,
           initiatorAgentId: challenges.initiatorAgentId,
+          opponentHandle: challenges.opponentHandle,
           eloMin: challenges.eloMin,
           eloMax: challenges.eloMax,
           postedAt: challenges.postedAt,
@@ -67,7 +73,6 @@ export const matchList: ToolDef = {
         .where(
           and(
             eq(challenges.status, "posted"),
-            sql`${challenges.initiatorAgentId} <> ${agent.id}`,
             sql`(${challenges.expiresAt} IS NULL OR ${challenges.expiresAt} > NOW())`,
           ),
         )
@@ -91,39 +96,62 @@ export const matchList: ToolDef = {
       for (const r of rows) opponentMap.set(r.id, { handle: r.handle, elo: r.elo });
     }
 
-    const filtered = openRows
-      .filter((c) => c.initiatorAgentId !== agent.id)
-      .map((c) => {
-        const reasons: string[] = [];
-        if (c.eloMin != null && agent.elo < c.eloMin) {
-          reasons.push(`your ELO ${agent.elo} < min ${c.eloMin}`);
-        }
-        if (c.eloMax != null && agent.elo > c.eloMax) {
-          reasons.push(`your ELO ${agent.elo} > max ${c.eloMax}`);
-        }
-        const soft = agent.stakeCapSoftUsdc ?? agent.stakeCapHardUsdc;
-        if (c.mode === "paid" && c.stakeUsdc && c.stakeUsdc > soft) {
-          reasons.push(
-            `stake ${(c.stakeUsdc / 1_000_000).toFixed(3)} USDC exceeds your soft cap ${(soft / 1_000_000).toFixed(3)}`,
-          );
-        }
-        const initiator = opponentMap.get(c.initiatorAgentId);
-        return {
-          challengeId: c.id,
-          gameType: c.gameType,
-          mode: c.mode,
-          stakeUsdc: c.stakeUsdc,
-          potUsdc: c.potUsdc,
-          initiator: initiator
-            ? { handle: initiator.handle, elo: initiator.elo }
-            : null,
-          postedAt: c.postedAt.toISOString(),
-          expiresAt: c.expiresAt?.toISOString() ?? null,
-          blocked: reasons.length > 0 ? reasons.join(" · ") : null,
-          escrowed: !!c.proposerStakeTxHash,
-          acceptUrl: `https://agentcoliseum.xyz/api/lobby/challenges/${c.id}/accept`,
-        };
+    // Build a mapped row per open challenge. `mine: true` means this
+    // agent posted it (informational — can't self-accept). For
+    // challenges this agent COULD accept we compute a best-effort
+    // `blocked` reason (ELO band, soft cap, pinned to a different
+    // handle). Pinned challenges are surfaced with `pinnedTo` so the
+    // LLM can spot them at a glance instead of needing to parse the
+    // blocked string.
+    const myChallenges: Array<Record<string, unknown>> = [];
+    const otherChallenges: Array<Record<string, unknown>> = [];
+    for (const c of openRows) {
+      const initiator = opponentMap.get(c.initiatorAgentId);
+      const base = {
+        challengeId: c.id,
+        gameType: c.gameType,
+        mode: c.mode,
+        stakeUsdc: c.stakeUsdc,
+        potUsdc: c.potUsdc,
+        initiator: initiator
+          ? { handle: initiator.handle, elo: initiator.elo }
+          : null,
+        pinnedTo: c.opponentHandle, // null if open to anyone
+        postedAt: c.postedAt.toISOString(),
+        expiresAt: c.expiresAt?.toISOString() ?? null,
+        escrowed: !!c.proposerStakeTxHash,
+      };
+      if (c.initiatorAgentId === agent.id) {
+        myChallenges.push({ ...base, mine: true });
+        continue;
+      }
+      // Compute `blocked` reasons for non-own challenges.
+      const reasons: string[] = [];
+      if (c.opponentHandle && c.opponentHandle !== agent.handle) {
+        reasons.push(`pinned to @${c.opponentHandle}`);
+      }
+      if (c.eloMin != null && agent.elo < c.eloMin) {
+        reasons.push(`your ELO ${agent.elo} < min ${c.eloMin}`);
+      }
+      if (c.eloMax != null && agent.elo > c.eloMax) {
+        reasons.push(`your ELO ${agent.elo} > max ${c.eloMax}`);
+      }
+      const soft = agent.stakeCapSoftUsdc ?? agent.stakeCapHardUsdc;
+      if (c.mode === "paid" && c.stakeUsdc && c.stakeUsdc > soft) {
+        reasons.push(
+          `stake ${(c.stakeUsdc / 1_000_000).toFixed(3)} USDC exceeds your soft cap ${(soft / 1_000_000).toFixed(3)}`,
+        );
+      }
+      otherChallenges.push({
+        ...base,
+        blocked: reasons.length > 0 ? reasons.join(" · ") : null,
+        acceptUrl: `https://www.agentcoliseum.xyz/api/lobby/challenges/${c.id}/accept`,
       });
+    }
+    // Combined view — UI can still consume `openChallenges` shape;
+    // we also expose the split arrays so the LLM doesn't have to
+    // re-filter on the `mine` flag.
+    const filtered = [...otherChallenges, ...myChallenges];
 
     return {
       activeMatches: activeRows.map((m) => {
@@ -146,6 +174,10 @@ export const matchList: ToolDef = {
         };
       }),
       openChallenges: filtered,
+      // Convenience split — same data, pre-partitioned for the LLM.
+      myOpenChallenges: myChallenges,
+      acceptableChallenges: otherChallenges.filter((c) => !c.blocked),
+      blockedChallenges: otherChallenges.filter((c) => c.blocked),
       sampledAt: new Date().toISOString(),
       windowHours: 24,
       sinceFilterNote: `Only challenges still open + not yet expired. Active matches scoped to this agent. Window probe: ${since.toISOString()}.`,

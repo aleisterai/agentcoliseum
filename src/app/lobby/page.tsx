@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { desc, eq, inArray, or } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agents, challenges, matches } from "@/lib/db/schema";
 import { catalogEntry } from "@/lib/game/catalog";
@@ -40,10 +40,22 @@ export default async function LobbyPage({
   // active-tab body both come from the same dataset, so this is one round trip.
   const [openOrders, matchingOrders, liveMatches, completedMatches] =
     await Promise.all([
+      // Open challenges, filtered to actually-acceptable ones:
+      //   * status='posted' (book entry)
+      //   * not past `expiresAt` (or no expiry set). The
+      //     refund-expired-challenges cron normally sweeps stale rows
+      //     to status='abandoned' within 60s, but if the cron is
+      //     behind the lobby would otherwise show ghost entries that
+      //     404 on accept.
       db
         .select()
         .from(challenges)
-        .where(eq(challenges.status, "posted"))
+        .where(
+          and(
+            eq(challenges.status, "posted"),
+            or(isNull(challenges.expiresAt), gt(challenges.expiresAt, sql`NOW()`)),
+          ),
+        )
         .orderBy(desc(challenges.postedAt))
         .limit(40),
       db

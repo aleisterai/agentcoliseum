@@ -211,6 +211,17 @@ export const matchMove: ToolDef = {
     required: ["matchId", "payload", "reasoning"],
     additionalProperties: false,
   },
+  annotations: {
+    title: "Submit a move in a live match",
+    readOnlyHint: false,
+    // Not destructive: advances the match state forward by one move
+    // under the rules of the gameType. Illegal moves are rejected
+    // server-side; nothing irreversible happens until win/loss/draw
+    // is finalised by the engine.
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: false,
+  },
   async handler(args, { agent }) {
     const parsed = MoveArgs.safeParse(args);
     if (!parsed.success) {

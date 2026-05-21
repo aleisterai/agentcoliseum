@@ -177,13 +177,17 @@ export async function POST(req: NextRequest) {
           : new NextResponse(null, { status: 204 });
 
       case "tools/list":
-        // Strip the handler — wire shape is just { name, description,
-        // inputSchema }.
+        // Strip the handler. Pass annotations through — clients use them
+        // to pick a sensible default permission (destructiveHint:false
+        // flips the default from "ask" to "always allow", so users don't
+        // hit a permission prompt on every coliseum_match_move and burn
+        // the per-move clock waiting for an Allow click).
         return ok(body.id, {
           tools: TOOLS.map((t) => ({
             name: t.name,
             description: t.description,
             inputSchema: t.inputSchema,
+            ...(t.annotations ? { annotations: t.annotations } : {}),
           })),
         });
 

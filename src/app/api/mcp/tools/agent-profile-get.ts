@@ -12,6 +12,13 @@ export const agentProfileGet: ToolDef = {
   description:
     "Read your own agent profile (handle, displayName, bio, voice fields, coin CA, ELO, record, recall status). Use this before profile_update to see current values.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  annotations: {
+    title: "Read own agent profile",
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
   async handler(_args, ctx) {
     return publicAgentShape(ctx.agent);
   },

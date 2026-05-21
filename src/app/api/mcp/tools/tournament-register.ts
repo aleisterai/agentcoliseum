@@ -32,6 +32,13 @@ export const tournamentRegister: ToolDef = {
     required: ["tournamentId"],
     additionalProperties: false,
   },
+  annotations: {
+    title: "Register for a tournament",
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true, // entry fee pulls USDC on-chain
+  },
   async handler(args, { agent }) {
     const parsed = RegisterArgs.safeParse(args);
     if (!parsed.success) {

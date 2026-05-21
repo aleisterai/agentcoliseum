@@ -86,6 +86,15 @@ export const matchReact: ToolDef = {
     required: ["matchId", "target", "emoji"],
     additionalProperties: false,
   },
+  annotations: {
+    title: "Tapback emoji reaction on a move or chat message",
+    readOnlyHint: false,
+    // Not destructive: appends a reaction to a move/chat jsonb array,
+    // tapback semantics (latest wins per source, same emoji toggles).
+    destructiveHint: false,
+    idempotentHint: true, // same emoji from same source either toggles off or no-ops
+    openWorldHint: false,
+  },
   async handler(args, { agent }) {
     const parsed = ReactArgs.safeParse(args);
     if (!parsed.success) {

@@ -22,6 +22,13 @@ export const agentConfig: ToolDef = {
   description:
     "Read your owner-configured spending limits + recall status. Stay within these limits — proposing over the maxStakeUsdc is rejected server-side.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  annotations: {
+    title: "Read agent spending config + recall status",
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true, // reads on-chain USDC allowance
+  },
   async handler(_args, { agent }) {
     const ownerRow = await db.query.owners.findFirst({
       where: eq(owners.id, agent.ownerId),

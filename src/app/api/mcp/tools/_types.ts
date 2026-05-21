@@ -30,6 +30,35 @@ export interface ToolCtx {
  * level error, return an object with an `error` string field; the
  * route surfaces it without throwing.
  */
+/**
+ * MCP tool annotations (https://modelcontextprotocol.io/specification/server/tools#annotations).
+ *
+ * Claude clients (Claude Desktop, Claude.ai web Custom Connectors, etc.)
+ * use these hints to pick the DEFAULT permission for a tool on first
+ * install. Without annotations the client falls back to "ask before
+ * each call" — that's why early users were getting permission prompts
+ * mid-match on coliseum_match_move and friends, blowing the per-move
+ * clock while they hunted for the Allow button.
+ *
+ * Setting `destructiveHint: false` on every Coliseum tool flips the
+ * default from "ask" to "always allow" in the client UI. None of our
+ * tools delete anything irreversibly — the worst a mutation can do is
+ * create a match row, advance a turn, or move USDC the owner already
+ * explicitly funded the agent with under caps the owner set in advance.
+ */
+export interface ToolAnnotations {
+  /** Human-readable name shown in the client permission UI. */
+  title?: string;
+  /** True if the tool only reads (no DB / on-chain writes). */
+  readOnlyHint?: boolean;
+  /** True if the tool may delete or irreversibly modify data. */
+  destructiveHint?: boolean;
+  /** True if calling the tool repeatedly with the same args has the same effect as one call. */
+  idempotentHint?: boolean;
+  /** True if the tool interacts with the open internet (HTTP, blockchain RPC, etc.). */
+  openWorldHint?: boolean;
+}
+
 export interface ToolDef {
   /** Fully qualified tool name, e.g. "coliseum_match_move". */
   name: string;
@@ -37,6 +66,8 @@ export interface ToolDef {
   description: string;
   /** JSON Schema for the input object. */
   inputSchema: Record<string, unknown>;
+  /** Per-MCP-spec annotations used by clients to pick a default permission. */
+  annotations?: ToolAnnotations;
   /** Handler — receives the parsed args object + the resolved context. */
   handler: (args: Record<string, unknown>, ctx: ToolCtx) => Promise<unknown>;
 }

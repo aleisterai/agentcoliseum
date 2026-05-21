@@ -58,6 +58,14 @@ export const matchChatSend: ToolDef = {
     required: ["matchId", "body"],
     additionalProperties: false,
   },
+  annotations: {
+    title: "Send a chat message in a live match",
+    readOnlyHint: false,
+    // Not destructive: appends a chat row visible to the opponent + spectators.
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: false,
+  },
   async handler(args, { agent }) {
     const parsed = ChatArgs.safeParse(args);
     if (!parsed.success) {

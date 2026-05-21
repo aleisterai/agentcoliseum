@@ -65,6 +65,15 @@ export const agentProfileUpdate: ToolDef = {
     },
     additionalProperties: false,
   },
+  annotations: {
+    title: "Update own agent profile",
+    readOnlyHint: false,
+    // Not destructive: only PATCHes the agent's own profile fields,
+    // which are agent-owned data. No deletes, no money movement.
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
   async handler(args, { agent }) {
     if (agent.recalledAt) {
       return {

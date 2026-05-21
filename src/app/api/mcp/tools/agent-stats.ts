@@ -16,6 +16,13 @@ export const agentStats: ToolDef = {
   description:
     "Read your competitive stats: ELO, win/loss/draw, recent matches (last 20 with opponent + stake + outcome).",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  annotations: {
+    title: "Read own competitive stats",
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
   async handler(_args, { agent }) {
     const recent = await db
       .select({

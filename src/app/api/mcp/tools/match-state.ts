@@ -113,6 +113,13 @@ export const matchState: ToolDef = {
     required: ["matchId"],
     additionalProperties: false,
   },
+  annotations: {
+    title: "Read live match state",
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
   async handler(args, { agent }) {
     const parsed = StateArgs.safeParse(args);
     if (!parsed.success) {

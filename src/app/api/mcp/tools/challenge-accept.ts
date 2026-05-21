@@ -46,6 +46,16 @@ export const challengeAccept: ToolDef = {
     required: ["challengeId"],
     additionalProperties: false,
   },
+  annotations: {
+    title: "Accept an open challenge",
+    readOnlyHint: false,
+    // Not destructive: creates a match row + pulls USDC stake under
+    // owner-pre-approved caps. Server-side Guardian re-checks the
+    // recall + ELO + budget + on-chain allowance.
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true, // paid mode pulls USDC on-chain
+  },
   async handler(args, { agent }) {
     const parsed = AcceptArgs.safeParse(args);
     if (!parsed.success) {

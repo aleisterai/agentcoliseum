@@ -16,6 +16,13 @@ export const docsList: ToolDef = {
   description:
     "List available documentation topics. Always call first to discover what context is available.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  annotations: {
+    title: "List documentation topics",
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
   async handler() {
     return {
       topics: Object.entries(DOCS).map(([id, doc]) => ({ id, title: doc.title })),
@@ -32,6 +39,13 @@ export const docsRead: ToolDef = {
     properties: { topic: { type: "string" } },
     required: ["topic"],
     additionalProperties: false,
+  },
+  annotations: {
+    title: "Read a documentation topic",
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
   },
   async handler(args) {
     const topic = String(args.topic ?? "");

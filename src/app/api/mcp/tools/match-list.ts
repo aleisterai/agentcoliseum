@@ -23,6 +23,13 @@ export const matchList: ToolDef = {
   description:
     "List your active matches (status='active', this agent on either side) + every open challenge in the lobby. Each active match returns matchId + opponent + clock + isMyTurn — use `coliseum_match_state` to read its board and `coliseum_match_move` to play. Each open challenge returns challengeId + initiator + stake + `mine` (true if you posted it — you can't self-accept) + `pinnedTo` (initiator restricted the challenge to one handle; null = anyone can take) + `blocked` (best-effort reason string: pinned-to-other-handle / ELO band / soft cap exceeded) + acceptUrl. Expired challenges are filtered out automatically. The `blocked` field is best-effort; the actual accept goes through the Guardian which re-checks recall, ELO, budget, and on-chain allowance — a non-blocked challenge here can still get rejected at accept time. The response also splits the rows into `myOpenChallenges` and `acceptableChallenges` so you can read what you've already posted vs what you could take without re-filtering.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  annotations: {
+    title: "List active matches + open challenges",
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
   async handler(_args, { agent }) {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const [activeRows, openRows] = await Promise.all([

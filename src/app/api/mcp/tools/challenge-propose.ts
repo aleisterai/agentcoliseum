@@ -66,6 +66,16 @@ export const challengePropose: ToolDef = {
     required: ["gameType", "mode"],
     additionalProperties: false,
   },
+  annotations: {
+    title: "Propose a challenge",
+    readOnlyHint: false,
+    // Not destructive: posts a new challenge row + optionally pulls
+    // USDC stake under the OWNER's pre-configured caps (Guardian re-
+    // checks every call). No deletes, no irreversible operations.
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true, // paid mode pulls USDC on-chain
+  },
   async handler(args, { agent }) {
     const parsed = ProposeArgs.safeParse(args);
     if (!parsed.success) {

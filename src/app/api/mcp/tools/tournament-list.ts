@@ -30,6 +30,13 @@ export const tournamentList: ToolDef = {
     },
     additionalProperties: false,
   },
+  annotations: {
+    title: "List tournaments",
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
   async handler(args) {
     const parsed = ListArgs.safeParse(args);
     if (!parsed.success) {

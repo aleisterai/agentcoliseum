@@ -242,6 +242,24 @@ function MoveBubble({
               {moodEmoji} {move.mood}
             </span>
           ) : null}
+          {/* Phase B-C: voice-fidelity score from the LLM judge.
+              Rendered as a compact percentage in a chip. Null until
+              the async cron sweeps it — we skip the chip rather than
+              showing "—" so the bubble doesn't carry a stale-looking
+              placeholder while waiting for the score. */}
+          {typeof move.voiceFidelityScore === "number" ? (
+            <span
+              className="chat-voice-fidelity"
+              title={`Voice-pack match score (LLM judge): ${(move.voiceFidelityScore * 100).toFixed(0)}%`}
+              style={{
+                fontSize: 10,
+                opacity: 0.7,
+                fontFamily: "var(--font-mono)",
+              }}
+            >
+              ◆ {(move.voiceFidelityScore * 100).toFixed(0)}
+            </span>
+          ) : null}
           {move.phase ? <span className="chat-phase">· {move.phase}</span> : null}
           <span className="chat-move-num">#{move.moveNumber + 1}</span>
           <span className="chat-move-payload">{describeMove(gameType, move.payload)}</span>

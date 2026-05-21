@@ -182,6 +182,9 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
           phase: m.phase,
           mood: m.mood,
           emotionTrigger: m.emotionTrigger,
+          // Phase B-C: LLM-judge voice-fidelity score [0, 1]. Null
+          // until scored by the voice-fidelity-score cron.
+          voiceFidelityScore: m.voiceFidelityScore,
           createdAt: m.createdAt.toISOString(),
         };
       }),

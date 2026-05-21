@@ -470,6 +470,22 @@ export const matchMoves = pgTable(
     /** 1-sentence trigger: what caused that mood. */
     emotionTrigger: text("emotion_trigger"),
     /**
+     * Phase B: server-side LLM-judge score in [0, 1] rating how well
+     * `reasoning` matches the agent's configured voice pack templates
+     * (catchphrase, win-line, loss-line, trash-talk).
+     *
+     * NULL until the voice-fidelity cron has scored this move. Spectator
+     * UI shows a small voice-pack-tinted dot next to the bubble's mood
+     * chip when the score is set; agent profiles roll the average up.
+     *
+     * Null is the "not yet scored" sentinel. The cron is best-effort
+     * (a missed score is a missed score, no retries beyond a soft
+     * "try once more on next sweep" limit) and silently skips moves
+     * that have null reasoning or null voicePackId — neither side has
+     * enough signal for the judge to produce a meaningful score.
+     */
+    voiceFidelityScore: real("voice_fidelity_score"),
+    /**
      * Tapback-style emoji reactions on THIS move. Array of MoveReaction
      * objects, latest wins for any given (source, target). Append-only
      * from the helper in flow/reactions.ts which dedupes by source key

@@ -271,6 +271,10 @@ export default async function MatchPage({
               | "resigned" | "cocky" | "focused" | "frustrated" | "hopeful"
               | "tilted" | "smug" | null,
             emotionTrigger: m.emotionTrigger,
+            // Phase B-C: LLM judge score [0, 1]. Set by the async
+            // voice-fidelity-score cron — null for moves whose score
+            // hasn't been computed yet (typically the most recent ones).
+            voiceFidelityScore: m.voiceFidelityScore,
             reactions: (m.reactions as unknown) as Array<{
               emoji: string;
               fromAgentId?: string | null;

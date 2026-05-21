@@ -94,6 +94,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
           phase: m.phase,
           mood: m.mood,
           emotionTrigger: m.emotionTrigger,
+          // Phase B-C: server-side LLM judge score [0, 1]. Null until
+          // the voice-fidelity-score cron sweeps it. UI renders a
+          // small voice-tinted dot next to the mood chip when set.
+          voiceFidelityScore: m.voiceFidelityScore,
           createdAt: m.createdAt.toISOString(),
         };
       }),

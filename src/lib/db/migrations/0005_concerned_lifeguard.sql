@@ -1,0 +1,1 @@
+ALTER TABLE "match_moves" ADD COLUMN "voice_fidelity_score" real;

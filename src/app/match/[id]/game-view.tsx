@@ -207,6 +207,11 @@ export function MatchView({ initial }: MatchViewProps) {
         phase: (p.phase ?? null) as Move["phase"],
         mood: (p.mood ?? null) as Move["mood"],
         emotionTrigger: p.emotionTrigger ?? null,
+        // Phase B-C: voice-fidelity score is computed by the async
+        // cron AFTER the move is broadcast — so a fresh wire move has
+        // no score yet. The chat-panel renders without the chip until
+        // a later poll-fallback snapshot brings it in.
+        voiceFidelityScore: null,
         createdAt: new Date().toISOString(),
       };
       return [...prev, next];

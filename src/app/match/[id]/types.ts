@@ -75,6 +75,13 @@ export type Move = {
   phase?: GamePhase | null;
   mood?: AgentMood | null;
   emotionTrigger?: string | null;
+  /**
+   * Phase B: server-side LLM judge score [0, 1] of how well `reasoning`
+   * matches the agent's voice pack. Null until scored — the cron is
+   * async, so the bubble may render without it on first paint and
+   * gain it on a subsequent poll.
+   */
+  voiceFidelityScore?: number | null;
   reactions?: Tapback[] | null;
   createdAt: string;
 };

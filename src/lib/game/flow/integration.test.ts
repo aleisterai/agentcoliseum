@@ -767,7 +767,12 @@ describe("finalizeMatch", () => {
     // data is correct (winner=null + result_reason='time_forfeit');
     // the bug was in the UI classifier. We assert the server side
     // here so the classifier in outcome.test.ts has the right input
-    // shape pinned.
+    // shape pinned. As of the moveCount=0 fairness gate, a system-mode
+    // match where the human's clock runs out BEFORE move 1 → abandoned
+    // (no winner, no ELO, refund). That replaces the previous
+    // time_forfeit semantics for the moveCount=0 case; clock expiry
+    // mid-game (moveCount >= 1) continues to yield time_forfeit, as
+    // covered by the sibling test that runs through after a real move.
     await withTestDb(async ({ db }) => {
       currentDb = db;
       const { agent: p1 } = await seedOwnerAgent(db, { handle: "p1" });
@@ -779,23 +784,28 @@ describe("finalizeMatch", () => {
       });
       if (created.kind !== "match") throw new Error("expected match");
 
-      // Backdate turnStartedAt to a minute ago so the clock has
-      // definitely expired (the default per-move budget is 30s).
+      // Backdate turnStartedAt + mark the agent ready (so the readiness
+      // gate doesn't keep the clock frozen). Then expire the clock.
+      // This isolates the moveCount=0 fairness branch we want to test.
       await db
         .update(matches)
-        .set({ turnStartedAt: new Date(Date.now() - 60_000) })
+        .set({
+          turnStartedAt: new Date(Date.now() - 60_000),
+          agentReadyAt: new Date(Date.now() - 60_000),
+        })
         .where(eq(matches.id, created.match.id));
 
       const result = await enforceClockExpiry(created.match.id);
       expect(result).not.toBeNull();
       expect(result!.status).toBe("completed");
-      expect(result!.resultReason).toBe("time_forfeit");
-      // The system bot has no agent row — winner stays null and
-      // outcome.ts.classifyOutcome maps {mode:'system', winner:null,
-      // reason:'time_forfeit'} → kind:'bot-won'.
+      // Move 0 + clock expired → abandoned (no game was played);
+      // NOT time_forfeit (which implies the opponent earned the win).
+      expect(result!.resultReason).toBe("abandoned");
       expect(result!.winnerAgentId).toBeNull();
       expect(result!.p2AgentId).toBeNull();
       expect(result!.mode).toBe("system");
+      // No ELO impact because nothing was played.
+      expect(result!.p1EloDelta).toBe(0);
     });
   });
 
@@ -874,10 +884,17 @@ describe("coliseum_match_state — wall-clock fields (all games)", () => {
 
         // Set turnStartedAt 10 seconds ago so myMsLeftLive should
         // show ~50_000ms left out of the 60_000 budget.
+        // Also stamp agentReadyAt so the readiness gate doesn't fire
+        // on the matchState call below — that gate resets
+        // turnStartedAt = now() on the FIRST state read by the on-turn
+        // agent of a moveCount=0 match, which would invalidate the
+        // backdated timestamp we just set up. With agentReadyAt
+        // already set, the gate is a no-op and the live remaining
+        // computation walks the backdated turnStartedAt as intended.
         const tenSecAgo = new Date(Date.now() - 10_000);
         await db
           .update(matches)
-          .set({ turnStartedAt: tenSecAgo })
+          .set({ turnStartedAt: tenSecAgo, agentReadyAt: tenSecAgo })
           .where(eq(matches.id, matchId));
 
         const state = (await matchState.handler(

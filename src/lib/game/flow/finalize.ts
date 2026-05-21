@@ -74,9 +74,20 @@ export async function finalizeMatch(args: FinalizeArgs): Promise<Match> {
     const adapter = getAdapter(match.gameType);
 
     // Compute Elo if both sides are real agents and the match wasn't system mode.
+    // ABANDONED matches (no game actually played — both sides got refunded;
+    // see flow/clock.ts:enforceClockExpiry moveCount=0 gate) skip ELO + W/L/D
+    // entirely. Treating them like draws would have given a "draw" ELO Δ
+    // and incremented agent.draws on a match where neither side played a
+    // single move — punishing one player for the other's offline state.
+    const isAbandoned = args.resultReason === "abandoned";
     let p1Delta = 0;
     let p2Delta = 0;
-    if (match.mode !== "system" && match.p1AgentId && match.p2AgentId) {
+    if (
+      !isAbandoned &&
+      match.mode !== "system" &&
+      match.p1AgentId &&
+      match.p2AgentId
+    ) {
       const [p1Agent, p2Agent] = await Promise.all([
         tx.select().from(agents).where(eq(agents.id, match.p1AgentId)).limit(1),
         tx.select().from(agents).where(eq(agents.id, match.p2AgentId)).limit(1),

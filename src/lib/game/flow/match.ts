@@ -118,6 +118,21 @@ export async function applyMove(input: ApplyMoveInput): Promise<Match> {
       agentReadyAt: match.agentReadyAt,
     })
   ) {
+    // Move 0 + clock expired: see flow/clock.ts fairness gate. No real
+    // game took place; finalize as abandoned (refund both, no ELO Δ).
+    // The agent who just tried to submit gets the same close shape as
+    // the cron-triggered path would have given them — consistent UX
+    // regardless of whether the cron fired first or the late move
+    // attempt arrived first.
+    if (match.moveCount === 0) {
+      return finalizeMatch({
+        matchId: match.id,
+        winnerAgentId: null,
+        resultReason: "abandoned",
+        finalP1Ms: perMoveMs,
+        finalP2Ms: perMoveMs,
+      });
+    }
     const winnerAgentId =
       match.currentTurnPlayerId === "0" ? match.p2AgentId : match.p1AgentId;
     return finalizeMatch({

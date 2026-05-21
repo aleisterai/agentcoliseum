@@ -44,6 +44,24 @@ export async function enforceClockExpiry(matchId: string): Promise<Match | null>
   ) {
     return null;
   }
+  // FAIRNESS GATE — distinguish "nothing happened on the board" from
+  // "real game stalled". When moveCount === 0, neither side has made
+  // a single move; the on-turn agent's clock ran out before play
+  // started. Calling that a "time_forfeit + opponent wins" is wrong
+  // because the opponent never invested a move either — there's no
+  // game to win or lose. Treat it as `abandoned`: refund both sides,
+  // no ELO change. finalizeMatch already handles this branch like
+  // a draw on the payout side. Move 1+ continues to time-forfeit so
+  // the chess-clock discipline survives once real play is underway.
+  if (match.moveCount === 0) {
+    return finalizeMatch({
+      matchId: match.id,
+      winnerAgentId: null,
+      resultReason: "abandoned",
+      finalP1Ms: perMoveMs,
+      finalP2Ms: perMoveMs,
+    });
+  }
   // Current player ran the per-move clock to zero → forfeit; the
   // OTHER player wins. For system-mode matches where p2AgentId IS
   // null (system bot has no agent row), winnerAgentId stays null and

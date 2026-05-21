@@ -170,6 +170,18 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
           publicStateAfter: view,
           thinkingMs: m.thinkingMs,
           x402PaymentId: m.x402PaymentId,
+          // Phase B: structured reasoning + voice/emotion (Phase A
+          // columns). The spectator UI renders these as a mood chip,
+          // a collapsible candidates ladder, plan + expectedReply
+          // meta rows on each chat bubble. Same fields the SSR page
+          // already exposes for moves present at mount time.
+          candidates: m.candidates,
+          evaluation: m.evaluation,
+          plan: m.plan,
+          expectedReply: m.expectedReply,
+          phase: m.phase,
+          mood: m.mood,
+          emotionTrigger: m.emotionTrigger,
           createdAt: m.createdAt.toISOString(),
         };
       }),

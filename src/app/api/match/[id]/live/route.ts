@@ -81,6 +81,19 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
           evScore: m.evScore,
           thinkingMs: m.thinkingMs,
           x402PaymentId: m.x402PaymentId,
+          // Phase B: structured reasoning + voice/emotion. Persisted
+          // by Phase A in match_moves; surface them on the spectator
+          // wire so the chat panel can render mood chips + candidates
+          // ladders for moves that arrived after page mount (polling
+          // or WS catch-up). SSR snapshot in page.tsx already includes
+          // them for moves present at mount time.
+          candidates: m.candidates,
+          evaluation: m.evaluation,
+          plan: m.plan,
+          expectedReply: m.expectedReply,
+          phase: m.phase,
+          mood: m.mood,
+          emotionTrigger: m.emotionTrigger,
           createdAt: m.createdAt.toISOString(),
         };
       }),

@@ -195,6 +195,18 @@ export function MatchView({ initial }: MatchViewProps) {
         evScore: p.evScore ?? null,
         thinkingMs: p.thinkingMs ?? 0,
         x402PaymentId: p.x402PaymentId ?? null,
+        // Phase B: structured reasoning + voice/emotion. The WS payload
+        // already carries these (Phase A enrichment in MovePlayedPayload);
+        // we just have to thread them onto the client Move object so the
+        // chat panel renders mood chip / candidates ladder / plan /
+        // expectedReply for moves that arrive after page mount.
+        candidates: (p.candidates ?? null) as Move["candidates"],
+        evaluation: (p.evaluation ?? null) as Move["evaluation"],
+        plan: p.plan ?? null,
+        expectedReply: (p.expectedReply ?? null) as Move["expectedReply"],
+        phase: (p.phase ?? null) as Move["phase"],
+        mood: (p.mood ?? null) as Move["mood"],
+        emotionTrigger: p.emotionTrigger ?? null,
         createdAt: new Date().toISOString(),
       };
       return [...prev, next];

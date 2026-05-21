@@ -32,6 +32,7 @@ export function WinnerBanner({
   p2,
   mode,
   stakeUsdc,
+  moveCount,
 }: {
   winnerAgentId: string | null;
   resultReason: string | null;
@@ -39,6 +40,10 @@ export function WinnerBanner({
   p2: { id: string; handle: string; displayName: string } | null;
   mode: "free" | "paid" | "system";
   stakeUsdc: number | null;
+  /** Number of moves actually submitted before the match ended. Threaded
+   *  through so the banner can narrate "ran out of time on move 6"
+   *  instead of a bare "ran out of time". */
+  moveCount?: number;
 }) {
   const outcome = classifyOutcome({
     mode,
@@ -47,10 +52,14 @@ export function WinnerBanner({
     p1Id: p1?.id ?? null,
     p2Id: p2?.id ?? null,
   });
-  const detail = describeOutcomeDetail(outcome, {
-    p1Handle: p1?.handle ?? null,
-    p2Handle: p2?.handle ?? null,
-  });
+  const detail = describeOutcomeDetail(
+    outcome,
+    {
+      p1Handle: p1?.handle ?? null,
+      p2Handle: p2?.handle ?? null,
+    },
+    { moveCount },
+  );
 
   if (outcome.kind === "draw") {
     // For paid draws, settlement-sweep refunds each owner's full stake

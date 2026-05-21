@@ -663,6 +663,7 @@ export function MatchView({ initial }: MatchViewProps) {
                 p2={initial.p2}
                 mode={initial.mode}
                 stakeUsdc={initial.stakeUsdc}
+                moveCount={moves.length}
               />
             ) : null}
             {focusMode === "board" ? (

@@ -67,15 +67,25 @@ export function classifyOutcome(input: OutcomeInput): MatchOutcome {
  * the correct side. The old `describeReason(loser)` helper assumed
  * the loser was an agent; for `bot-won` outcomes the loser is the
  * recorded human and the actor is the system bot.
+ *
+ * Optional context (moveCount) sharpens the narration so spectators
+ * see "ran out of time on move 6" instead of just "ran out of time".
+ * abandoned matches with moveCount=0 surface "no moves played"
+ * explicitly so a refunded match doesn't read as "agent ghosted".
  */
 export function describeOutcomeDetail(
   outcome: MatchOutcome,
   agents: { p1Handle: string | null; p2Handle: string | null },
+  context: { moveCount?: number } = {},
 ): string {
   const { kind, reason } = outcome;
+  const onMove = (n: number | undefined): string =>
+    n != null && n >= 1 ? ` on move ${n}` : "";
   switch (reason) {
     case "natural":
-      return kind === "bot-won" ? "system bot won" : "natural win";
+      return kind === "bot-won"
+        ? `system bot won${onMove(context.moveCount)}`
+        : `natural win${onMove(context.moveCount)}`;
     case "time_forfeit": {
       const loser =
         kind === "win-p1"
@@ -85,7 +95,12 @@ export function describeOutcomeDetail(
             : kind === "bot-won"
               ? agents.p1Handle // human (p1) ran out
               : null;
-      return loser ? `@${loser} ran out of time` : "ran out of time";
+      // moveCount on the match is the count of moves SUBMITTED before
+      // the forfeit — the forfeit itself happened ON the next move.
+      const nextMove = context.moveCount != null ? context.moveCount + 1 : undefined;
+      return loser
+        ? `@${loser} ran out of time${onMove(nextMove)}`
+        : `ran out of time${onMove(nextMove)}`;
     }
     case "invalid_move_forfeit": {
       const loser =
@@ -96,9 +111,10 @@ export function describeOutcomeDetail(
             : kind === "bot-won"
               ? agents.p1Handle
               : null;
+      const nextMove = context.moveCount != null ? context.moveCount + 1 : undefined;
       return loser
-        ? `@${loser} forfeited on two illegal moves`
-        : "forfeited on illegal moves";
+        ? `@${loser} forfeited on two illegal moves${onMove(nextMove)}`
+        : `forfeited on illegal moves${onMove(nextMove)}`;
     }
     case "resign": {
       const loser =
@@ -109,12 +125,21 @@ export function describeOutcomeDetail(
             : kind === "bot-won"
               ? agents.p1Handle
               : null;
-      return loser ? `@${loser} resigned` : "resigned";
+      return loser
+        ? `@${loser} resigned${onMove(context.moveCount)}`
+        : `resigned${onMove(context.moveCount)}`;
     }
     case "draw":
-      return "draw";
+      return context.moveCount != null && context.moveCount > 0
+        ? `draw after ${context.moveCount} moves`
+        : "draw";
     case "abandoned":
-      return "match abandoned";
+      // moveCount=0 means the match was reaped before either side
+      // played — spell that out so the spectator doesn't mistake
+      // "abandoned" for "agent rage-quit mid-game".
+      return context.moveCount === 0
+        ? "no moves played · both sides refunded"
+        : `match abandoned${onMove(context.moveCount)}`;
     default:
       return reason ?? "match concluded";
   }

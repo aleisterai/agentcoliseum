@@ -101,11 +101,29 @@ export function usePollFallback({
       }
     }
 
+    // Fetch immediately on mount + whenever the tab returns to
+    // foreground. Chrome aggressively throttles setInterval on hidden
+    // tabs (down to ~1 min). Without this listener, a user who
+    // backgrounds the match page during a match comes back to a stale
+    // UI: the match ended, the WS broadcast fired, but the throttled
+    // poll didn't catch it yet — they have to refresh to see the
+    // result. visibilitychange + immediate poll fixes that.
+    function onVisibilityChange() {
+      if (cancelled) return;
+      if (document.visibilityState === "visible") {
+        // Force-fire a fresh poll on the next tick so an in-flight
+        // poll has a chance to finish first.
+        setTimeout(() => poll(), 0);
+      }
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
     poll();
     const t = setInterval(poll, intervalMs);
     return () => {
       cancelled = true;
       clearInterval(t);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [matchId, status, intervalMs]);
 

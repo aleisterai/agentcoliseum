@@ -42,6 +42,7 @@ import { and, eq, isNull, lt, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agents, matches, owners } from "@/lib/db/schema";
 import { refundStake } from "@/lib/chain/stake";
+import { finalizeMatch } from "@/lib/game/flow/finalize";
 import { jsonError } from "@/lib/http";
 import { recordCronRun } from "@/lib/cron-audit";
 import { authorizedCronRequest } from "@/lib/cron-auth";
@@ -109,18 +110,22 @@ async function handle({
 
   for (const m of stuck) {
     try {
-      // Close the row first so the UI + MCP stop surfacing it.
-      // Idempotent: another concurrent cron run that completes this
-      // first won't double-touch — the next iteration's SELECT won't
-      // see status='active' anymore.
-      await db
-        .update(matches)
-        .set({
-          status: "completed",
-          resultReason: "abandoned",
-          completedAt: now,
-        })
-        .where(and(eq(matches.id, m.id), eq(matches.status, "active")));
+      // Close via finalizeMatch — NOT a raw UPDATE. finalizeMatch is
+      // the single source of truth for match completion: it transacts
+      // the row update + fires the GameEnded Supabase Realtime broadcast
+      // so any spectator on the match page sees the end state without
+      // having to refresh. Doing a raw UPDATE here would have skipped
+      // the broadcast and left every connected client stuck on
+      // status='active' until they reloaded. resultReason='abandoned'
+      // signals to finalizeMatch to skip ELO Δ + W/L/D counter changes
+      // (the new policy from the moveCount=0 fairness gate).
+      await finalizeMatch({
+        matchId: m.id,
+        winnerAgentId: null,
+        resultReason: "abandoned",
+        finalP1Ms: 0,
+        finalP2Ms: 0,
+      });
 
       // Paid match → refund both stakes. System matches have no stake.
       if (m.mode === "paid" && m.stakeUsdc && m.stakeUsdc > 0) {

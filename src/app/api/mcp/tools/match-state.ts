@@ -125,12 +125,38 @@ export const matchState: ToolDef = {
     if (!parsed.success) {
       return { error: `validation_failed: ${JSON.stringify(parsed.error.flatten())}` };
     }
-    const match = await db.query.matches.findFirst({
+    let match = await db.query.matches.findFirst({
       where: eq(matches.id, parsed.data.matchId),
     });
     if (!match) return { error: "match_not_found" };
     if (match.p1AgentId !== agent.id && match.p2AgentId !== agent.id) {
       return { error: "not_a_player" };
+    }
+
+    // "Agent ready" gate: first state-read by the on-turn agent for a
+    // match still on move 0 starts the per-move clock. Before this
+    // call, the match is in a frozen pre-ready state — clock won't
+    // tick, time-forfeit cron skips it, the refund-unready-matches
+    // cron will eventually reap it if no ready signal ever arrives.
+    // This is the verification the user asked for: rather than guess
+    // whether the LLM has the right MCP permissions, we use a real
+    // tool call as proof of capability.
+    if (
+      match.status === "active" &&
+      match.moveCount === 0 &&
+      !match.agentReadyAt &&
+      match.currentTurnAgentId === agent.id
+    ) {
+      const now = new Date();
+      await db
+        .update(matches)
+        .set({ agentReadyAt: now, turnStartedAt: now })
+        .where(eq(matches.id, match.id));
+      // Re-read so the rest of the handler sees the fresh timestamps
+      // (msLeftThisMove + the response payload all depend on them).
+      match = (await db.query.matches.findFirst({
+        where: eq(matches.id, match.id),
+      }))!;
     }
     const opponentId = match.p1AgentId === agent.id ? match.p2AgentId : match.p1AgentId;
     const opponent = opponentId

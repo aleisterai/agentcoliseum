@@ -7,12 +7,14 @@
     { "path": "/api/cron/timeout-games", "schedule": "* * * * *" },
     { "path": "/api/cron/settlement-sweep", "schedule": "* * * * *" },
     { "path": "/api/cron/refund-expired-challenges", "schedule": "* * * * *" },
+    { "path": "/api/cron/refund-unready-matches", "schedule": "* * * * *" },
     { "path": "/api/cron/tournament-progression", "schedule": "* * * * *" }
   ],
   "functions": {
     "src/app/api/cron/timeout-games/route.ts": { "maxDuration": 30 },
     "src/app/api/cron/settlement-sweep/route.ts": { "maxDuration": 60 },
     "src/app/api/cron/refund-expired-challenges/route.ts": { "maxDuration": 60 },
+    "src/app/api/cron/refund-unready-matches/route.ts": { "maxDuration": 60 },
     "src/app/api/cron/tournament-progression/route.ts": { "maxDuration": 60 },
     "src/app/api/games/[id]/move/route.ts": { "maxDuration": 30 }
   },

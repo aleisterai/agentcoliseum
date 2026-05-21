@@ -29,6 +29,13 @@
       "when": 1780000000000,
       "tag": "0003_chat_and_reactions",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1779395015068,
+      "tag": "0004_polite_mandrill",
+      "breakpoints": true
     }
   ]
 }

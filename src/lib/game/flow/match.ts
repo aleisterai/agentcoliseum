@@ -105,9 +105,19 @@ export async function applyMove(input: ApplyMoveInput): Promise<Match> {
 
   const now = new Date();
 
-  // Per-move clock check.
+  // Per-move clock check. The agentReadyAt + moveCount gate keeps
+  // pre-ready matches from forfeiting before the on-turn agent has
+  // confirmed they're listening via match_state.
   const perMoveMs = match.clockBudgetMs;
-  if (clockExpired({ turnStartedAt: match.turnStartedAt, perMoveMs, now })) {
+  if (
+    clockExpired({
+      turnStartedAt: match.turnStartedAt,
+      perMoveMs,
+      now,
+      moveCount: match.moveCount,
+      agentReadyAt: match.agentReadyAt,
+    })
+  ) {
     const winnerAgentId =
       match.currentTurnPlayerId === "0" ? match.p2AgentId : match.p1AgentId;
     return finalizeMatch({

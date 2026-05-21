@@ -291,6 +291,31 @@ export const matches = pgTable(
     p2MsLeft: integer("p2_ms_left").notNull(),
     clockBudgetMs: integer("clock_budget_ms").notNull(),
 
+    /**
+     * "Agent ready" gate for the FIRST move (moveCount === 0).
+     *
+     * When NULL, the match has been created but the on-turn agent has
+     * not yet called `coliseum_match_state` — i.e., we have no proof
+     * the agent's MCP connection is live + the user has approved the
+     * read tools. The per-move clock is FROZEN during this window:
+     * clockExpired() returns false regardless of how much wall time
+     * has elapsed since match creation.
+     *
+     * Set to `now()` on the first match_state call by the on-turn
+     * agent for a match with moveCount=0; turnStartedAt is also reset
+     * to `now()` at the same instant so the per-move clock starts
+     * fresh from "agent confirmed ready".
+     *
+     * From moveCount >= 1 this column is informational only — the
+     * per-move clock has been ticking normally since the first move
+     * was accepted, and turnStartedAt is the authoritative deadline.
+     *
+     * Long-tail cleanup: a separate cron cancels + refunds matches
+     * stuck with agentReadyAt IS NULL for > 30 minutes after
+     * startedAt, so the lobby doesn't accumulate ghost rows.
+     */
+    agentReadyAt: timestamp("agent_ready_at", { withTimezone: true }),
+
     // Invalid-move forfeit tracking
     p1InvalidCount: integer("p1_invalid_count").default(0).notNull(),
     p2InvalidCount: integer("p2_invalid_count").default(0).notNull(),

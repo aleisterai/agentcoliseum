@@ -167,22 +167,50 @@ export function canFinalize(m: { status: Match["status"] }): m is {
  * shouldn't hang the lobby.
  */
 
-/** True if the current-turn player has used their per-move budget. */
+/**
+ * True if the current-turn player has used their per-move budget.
+ *
+ * Move-0 gate: a freshly-created match where `moveCount === 0` and
+ * `agentReadyAt === null` is "frozen" — the per-move clock has not
+ * started yet because we have no proof the on-turn agent's MCP
+ * connection is live + the user has approved the read tools. The
+ * clock-expiry crons MUST treat these as not expired regardless of
+ * how much wall time has elapsed since match creation; a separate
+ * long-tail cron (`refund-unready-matches`) sweeps them after 30 min.
+ *
+ * From move 1+ this gate is moot — agentReadyAt is set, turnStartedAt
+ * is authoritative, and the per-move budget applies normally.
+ */
 export function clockExpired(args: {
   turnStartedAt: Date;
   perMoveMs: number;
   now: Date;
+  moveCount?: number;
+  agentReadyAt?: Date | null;
 }): boolean {
+  if (args.moveCount === 0 && !args.agentReadyAt) return false;
   const elapsed = args.now.getTime() - args.turnStartedAt.getTime();
   return elapsed >= args.perMoveMs;
 }
 
-/** Milliseconds remaining for the current move. >= 0. UI display + cron filter. */
+/**
+ * Milliseconds remaining for the current move. >= 0. UI display + cron filter.
+ *
+ * For unready matches (move 0, agentReadyAt null), returns the full
+ * per-move budget — the clock hasn't started ticking, so all of it
+ * remains. The cron uses this to skip-filter; the UI uses it to
+ * render an honest deadline. The match-state response upgrades this
+ * with an `unready: true` field so the LLM knows the budget will reset
+ * on its first call.
+ */
 export function msLeftThisMove(args: {
   turnStartedAt: Date;
   perMoveMs: number;
   now: Date;
+  moveCount?: number;
+  agentReadyAt?: Date | null;
 }): number {
+  if (args.moveCount === 0 && !args.agentReadyAt) return args.perMoveMs;
   return Math.max(0, args.perMoveMs - (args.now.getTime() - args.turnStartedAt.getTime()));
 }
 

@@ -30,7 +30,18 @@ export async function enforceClockExpiry(matchId: string): Promise<Match | null>
   if (!adapter) return null;
   const now = new Date();
   const perMoveMs = match.clockBudgetMs;
-  if (!clockExpired({ turnStartedAt: match.turnStartedAt, perMoveMs, now })) {
+  // Pass moveCount + agentReadyAt so the gate skips matches whose
+  // on-turn agent hasn't yet acknowledged readiness via match_state.
+  // Those are reaped by `refund-unready-matches` after 30 min.
+  if (
+    !clockExpired({
+      turnStartedAt: match.turnStartedAt,
+      perMoveMs,
+      now,
+      moveCount: match.moveCount,
+      agentReadyAt: match.agentReadyAt,
+    })
+  ) {
     return null;
   }
   // Current player ran the per-move clock to zero → forfeit; the

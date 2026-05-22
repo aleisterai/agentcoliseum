@@ -38,6 +38,34 @@ describe("mediumBot", () => {
   });
 });
 
+describe("mediumBot — open-three trap defense (regression)", () => {
+  // The bug that motivated the medium-bot upgrade: at the position
+  // below, yellow has just played col 2 creating an open three on the
+  // bottom row (cells 2/3/4 filled). Bot is red, playing as p2.
+  // BOTH col 1 and col 5 are winning threats for yellow next turn —
+  // bot can only block one. Old medium bot (depth 3, no heuristic)
+  // missed this entirely and stacked col 3 because all paths scored
+  // 0 at leaves. New medium bot (depth 4 + heuristic) must choose
+  // col 1 or col 5, not col 3.
+  //
+  // (Yes, both blocks lose to the OTHER end — yellow has a forced
+  // mate. But picking col 1/5 stalls one tempo, picking col 3
+  // hands yellow the win immediately and looks idiotic to anyone
+  // watching the move-by-move.)
+  it("blocks the open-three even when both ends are winning for opponent", () => {
+    let b = emptyBoard();
+    // The recorded production sequence up to bot's move 5:
+    b = applyMove(b, 3, 1); // y col 3
+    b = applyMove(b, 3, 2); // r col 3 (stack)
+    b = applyMove(b, 4, 1); // y col 4
+    b = applyMove(b, 3, 2); // r col 3 (stack again)
+    b = applyMove(b, 2, 1); // y col 2 — OPEN THREE
+    // Bot now plays p2. Must NOT pick col 3 (the worst move).
+    const col = mediumBot.pickMove(stateOf(b), "1");
+    expect([1, 5]).toContain(col);
+  });
+});
+
 describe("hardBot vs easyBot — deterministic outcome", () => {
   it("hard reliably does not lose to easy in a self-play game", () => {
     // Hard plays X (player 0 = 1), Easy plays O (player 1 = 2).

@@ -68,43 +68,16 @@ export function WinnerBanner({
     const showRefundNote = mode === "paid" && (stakeUsdc ?? 0) > 0;
     const stakeStr = showRefundNote ? formatUsdcMicro(stakeUsdc as number) : "";
     return (
-      <div
-        className="col"
-        style={{
-          padding: "10px 14px",
-          // No horizontal margin here — the parent .match-end-banner
-          // (full-width section above the match grid) handles spacing.
-          // Inside-panel callers from the old layout would have wanted
-          // the 12px inset; nobody uses that pattern anymore.
-          marginTop: 0,
-          borderTop: "1px solid var(--border)",
-          borderBottom: "1px solid var(--border)",
-          background: "color-mix(in oklab, var(--text-mute) 8%, transparent)",
-          gap: 4,
-          alignItems: "center",
-          fontSize: 12,
-        }}
-      >
-        <div className="row" style={{ gap: 10 }}>
-          <span
-            className="mono"
-            style={{ color: "var(--text-mute)", letterSpacing: 1 }}
-          >
-            — DRAW —
-          </span>
-          <span className="dim mono">·</span>
-          <span className="mono" style={{ color: "var(--text-mute)" }}>
-            {detail}
-          </span>
+      <div className="winner-banner winner-banner--draw" role="status">
+        <div className="winner-banner-head">
+          <span className="winner-banner-label">— DRAW —</span>
+          <span className="winner-banner-detail">{detail}</span>
         </div>
         {showRefundNote ? (
-          <div
-            className="row"
-            style={{ gap: 6, fontSize: 11, color: "var(--text-mute)" }}
-          >
+          <div className="winner-banner-refund">
             <span className="mono">stakes refunded · </span>
             <span className="money">{stakeStr} USDC</span>
-            <span className="mono">to each side · no platform fee</span>
+            <span className="mono"> to each side · no platform fee</span>
           </div>
         ) : null}
       </div>
@@ -117,40 +90,19 @@ export function WinnerBanner({
   // side.
   if (outcome.kind === "bot-won") {
     return (
-      <div
-        className="row"
-        style={{
-          padding: "12px 16px",
-          // No horizontal margin here — the parent .match-end-banner
-          // (full-width section above the match grid) handles spacing.
-          // Inside-panel callers from the old layout would have wanted
-          // the 12px inset; nobody uses that pattern anymore.
-          marginTop: 0,
-          borderRadius: 6,
-          background:
-            "linear-gradient(90deg, color-mix(in oklab, var(--gold) 14%, transparent), transparent)",
-          borderLeft: "3px solid var(--gold)",
-          gap: 10,
-          alignItems: "center",
-          fontSize: 13,
-        }}
-      >
-        <span aria-hidden style={{ fontSize: 18, lineHeight: 1 }}>
+      <div className="winner-banner winner-banner--win" role="status">
+        <span className="winner-banner-emoji" aria-hidden>
           🤖
         </span>
-        <span
-          className="mono"
-          style={{ color: "var(--gold)", fontWeight: 600 }}
-        >
-          System bot
-        </span>
-        <span className="mono" style={{ color: "var(--text)" }}>
-          won
-        </span>
-        <span className="dim mono">·</span>
-        <span className="mono" style={{ color: "var(--text-mute)" }}>
-          {detail}
-        </span>
+        <div className="winner-banner-body">
+          <div className="winner-banner-headline">
+            <span className="winner-banner-handle winner-banner-handle--gold">
+              System bot
+            </span>
+            <span className="winner-banner-verb">won</span>
+          </div>
+          <span className="winner-banner-detail">{detail}</span>
+        </div>
       </div>
     );
   }
@@ -164,43 +116,27 @@ export function WinnerBanner({
       return <NeutralBanner detail={detail} />;
     }
     return (
-      <div
-        className="row"
-        style={{
-          padding: "12px 16px",
-          // No horizontal margin here — the parent .match-end-banner
-          // (full-width section above the match grid) handles spacing.
-          // Inside-panel callers from the old layout would have wanted
-          // the 12px inset; nobody uses that pattern anymore.
-          marginTop: 0,
-          borderRadius: 6,
-          background:
-            "linear-gradient(90deg, color-mix(in oklab, var(--gold) 14%, transparent), transparent)",
-          borderLeft: "3px solid var(--gold)",
-          gap: 10,
-          alignItems: "center",
-          fontSize: 13,
-        }}
-      >
-        <span aria-hidden style={{ fontSize: 18, lineHeight: 1 }}>
+      <div className="winner-banner winner-banner--win" role="status">
+        <span className="winner-banner-emoji" aria-hidden>
           🏆
         </span>
-        <span
-          className="mono"
-          style={{
-            color: winnerSide === "red" ? "var(--red, #ef4444)" : "var(--gold)",
-            fontWeight: 600,
-          }}
-        >
-          @{winner.handle}
-        </span>
-        <span className="mono" style={{ color: "var(--text)" }}>
-          won
-        </span>
-        <span className="dim mono">·</span>
-        <span className="mono" style={{ color: "var(--text-mute)" }}>
-          {detail}
-        </span>
+        <div className="winner-banner-body">
+          <div className="winner-banner-headline">
+            <span
+              className={
+                "winner-banner-handle " +
+                (winnerSide === "red"
+                  ? "winner-banner-handle--red"
+                  : "winner-banner-handle--gold")
+              }
+              title={`@${winner.handle}`}
+            >
+              @{winner.handle}
+            </span>
+            <span className="winner-banner-verb">won</span>
+          </div>
+          <span className="winner-banner-detail">{detail}</span>
+        </div>
       </div>
     );
   }
@@ -211,22 +147,8 @@ export function WinnerBanner({
 
 function NeutralBanner({ detail }: { detail: string }) {
   return (
-    <div
-      className="row"
-      style={{
-        padding: "10px 14px",
-        // Parent .match-end-banner section handles spacing — no
-        // inner margin so this branch lines up with the win/draw
-        // branches that drop their margins for the same reason.
-        marginTop: 0,
-        borderTop: "1px solid var(--border)",
-        borderBottom: "1px solid var(--border)",
-        gap: 10,
-        justifyContent: "center",
-        fontSize: 12,
-      }}
-    >
-      <span className="mono" style={{ color: "var(--text-mute)" }}>
+    <div className="winner-banner winner-banner--neutral" role="status">
+      <span className="winner-banner-detail">
         match concluded · {detail}
       </span>
     </div>

@@ -4,7 +4,6 @@ import "./globals.css";
 import { Providers } from "@/components/providers";
 import { SiteHeader } from "@/components/layout/site-header";
 import { SiteFooter } from "@/components/layout/site-footer";
-import { TickerTapeServer } from "@/components/coliseum/ticker-tape-server";
 import { ThemeInit } from "@/components/coliseum/theme-init";
 
 // next/font fetches these at build time. If a network blip prevents fetch,
@@ -70,8 +69,8 @@ export default function RootLayout({
       <body className="flex min-h-full flex-col font-sans">
         <Providers>
           <SiteHeader />
-          {/* Coliseum Terminal tape — every page gets the live tape under the header. */}
-          <TickerTapeServer />
+          {/* The ticker tape lives on the home page only — it would
+              compete with content on /match, /arena, /agents etc. */}
           <div className="flex flex-1 flex-col">{children}</div>
           <SiteFooter />
         </Providers>

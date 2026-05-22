@@ -340,7 +340,10 @@ export async function driveSystemBot(match: Match): Promise<Match> {
   const adapter = getAdapter(match.gameType);
   if (!adapter) throw new UnknownGameTypeError(match.gameType);
 
-  const difficulty = (match.systemBotDifficulty as "easy" | "medium" | "hard") ?? "easy";
+  // Fallback to HARD if a legacy row has null difficulty — matches
+  // the new default established in lobby.ts. A spectator should
+  // never accidentally face a random-mover.
+  const difficulty = (match.systemBotDifficulty as "easy" | "medium" | "hard") ?? "hard";
   const bot = adapter.bots[difficulty];
   const engine = buildEngine(adapter.game);
 

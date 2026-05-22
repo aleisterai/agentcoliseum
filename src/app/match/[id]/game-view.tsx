@@ -48,6 +48,7 @@ import {
   avgThinkOfPlayer,
   bumpReaction,
   catalogLabel,
+  computeFinalSnap,
   describeMove,
   extractLastMove,
   formatElapsed,
@@ -109,6 +110,14 @@ export function MatchView({ initial }: MatchViewProps) {
   const [logTab, setLogTab] = useState<"moves" | "x402" | "annot">("moves");
   const [chatInput, setChatInput] = useState("");
   const chatStreamRef = useRef<HTMLDivElement | null>(null);
+
+  // Mobile: the match-strip collapses to a 2-row layout with row 1
+  // showing only essentials (breadcrumb · status · game name · move
+  // count) and a chevron to expand the secondary stats (clock · id ·
+  // elapsed · watching · pot). Row 2 always shows the Board/Reasoning
+  // focus toggle. On desktop this state is irrelevant — the CSS shows
+  // everything inline regardless.
+  const [statsExpanded, setStatsExpanded] = useState(false);
 
   // Stable anonymous token for tapback identity. Generated once per
   // browser session + persisted to localStorage so dedupe semantics
@@ -243,8 +252,14 @@ export function MatchView({ initial }: MatchViewProps) {
   function applyGameEnded(p: GameEndedPayload) {
     setStatus("completed");
     setLiveMode(false);
+    setIsPlaying(false);
     setWinnerAgentId(p.winnerAgentId);
     setResultReason(p.resultReason);
+    // Note: scrubber snap-to-final-move is handled by the useEffect
+    // below that watches the active→completed transition. That keeps
+    // the race condition (terminal MovePlayed arriving in same tick
+    // as GameEnded) out of this function's hot path — we need the
+    // committed moves.length, not the in-flight value.
   }
 
   // Phase A++ — apply a tapback reaction delivered from another tab/
@@ -336,6 +351,32 @@ export function MatchView({ initial }: MatchViewProps) {
 
   const liveMoveIdx = moves.length - 1;
   const effectiveIdx = liveMode ? liveMoveIdx : scrubIndex;
+
+  // CRITICAL: when a game ends, snap the scrubber to the LAST move so
+  // the final winning position is what the spectator sees — not
+  // whatever scrubIndex was when they paused live mode, and not
+  // whatever stale value the initial render left. Runs once on the
+  // active→completed transition; respects subsequent user scrubbing.
+  //
+  // Race-safe because moves.length is a dep: if MovePlayed (terminal)
+  // and GameEnded land in different ticks, this re-runs when the
+  // terminal move's moves.length update lands. After the first snap,
+  // prevStatusRef.current === "completed" so it doesn't re-snap on
+  // late poll-fallback move arrivals — user's manual scrub wins.
+  const prevStatusRef = useRef(status);
+  useEffect(() => {
+    const snap = computeFinalSnap({
+      prevStatus: prevStatusRef.current,
+      currentStatus: status,
+      movesLength: moves.length,
+    });
+    if (snap !== null) {
+      setScrubIndex(snap);
+      setLiveMode(false);
+      setIsPlaying(false);
+    }
+    prevStatusRef.current = status;
+  }, [status, moves.length]);
 
   const displayedStateG = useMemo(() => {
     if (moves.length === 0 || effectiveIdx < 0) return stateG;
@@ -511,11 +552,25 @@ export function MatchView({ initial }: MatchViewProps) {
 
   return (
     <main className="page" id="page">
-      {/* Status strip */}
-      <section className="match-strip">
-        <div className="strip-l">
-          <Link href="/lobby" className="lnk mono" style={{ fontSize: 11 }}>
-            ← all matches
+      {/*
+       * Match strip — top status bar. 3-row structure on mobile, all
+       * inline on desktop (CSS flex-wrap handles the transition):
+       *
+       *   .strip-primary    ← all matches · LIVE · game · move N · ▾
+       *   .strip-secondary  clockBudget · id · elapsed · watching · pot
+       *                     (hidden on mobile until ▾ expand)
+       *   .strip-focus      [Board / Reasoning] toggle
+       *
+       * Mobile users see the breadcrumb + game state at a glance, can
+       * still flip between board and reasoning, and can expand the
+       * stats they actually want without that taking up screen real
+       * estate by default.
+       */}
+      <section className="match-strip" data-stats-expanded={statsExpanded}>
+        <div className="strip-row strip-primary">
+          <Link href="/lobby" className="lnk mono strip-back" style={{ fontSize: 11 }}>
+            <span aria-hidden="true">←</span>{" "}
+            <span className="strip-back-text">all matches</span>
           </Link>
           <span className="dim mono">·</span>
           {status === "active" ? (
@@ -533,7 +588,28 @@ export function MatchView({ initial }: MatchViewProps) {
           )}
           <span className="dim mono">·</span>
           <span className="mono" style={{ fontSize: 12 }}>
+            {/* Game type — short form (no "· classic" suffix) so the
+                primary row fits on a 360px viewport without wrapping.
+                The full label still appears in expanded stats below. */}
+            {`${initial.gameType.charAt(0).toUpperCase()}${initial.gameType.slice(1)}`}
+          </span>
+          <button
+            type="button"
+            className="strip-expand"
+            aria-label={statsExpanded ? "Hide stats" : "Show stats"}
+            aria-expanded={statsExpanded}
+            onClick={() => setStatsExpanded((v) => !v)}
+          >
+            <span aria-hidden="true">{statsExpanded ? "▴" : "▾"}</span>
+          </button>
+        </div>
+        <div className="strip-row strip-secondary">
+          <span className="mono" style={{ fontSize: 11, color: "var(--text-mute)" }}>
             {catalogLabel(initial.gameType)}
+          </span>
+          <span className="dim mono">·</span>
+          <span className="mono" style={{ fontSize: 11 }}>
+            <span className="dim">move</span> {moves.length}
           </span>
           <span className="dim mono">·</span>
           <span className="mono" style={{ fontSize: 11, color: "var(--text-mute)" }}>
@@ -543,8 +619,25 @@ export function MatchView({ initial }: MatchViewProps) {
           <span className="mono" style={{ fontSize: 11, color: "var(--text-mute)" }}>
             id {initial.id.slice(0, 8)}
           </span>
+          <span className="dim mono">·</span>
+          <span className="mono" style={{ fontSize: 11, color: "var(--text-mute)" }}>
+            elapsed{" "}
+            <span className="up">
+              {formatElapsed(initial.startedAt, initial.completedAt, now)}
+            </span>
+          </span>
+          <span className="dim mono">·</span>
+          <span className="mono" style={{ fontSize: 11 }}>
+            <span className="dim">👁</span> {watchingCount} watching
+          </span>
+          {initial.potUsdc != null ? (
+            <>
+              <span className="dim mono">·</span>
+              <span className="money">{formatUsdcMicro(initial.potUsdc)} USDC pot</span>
+            </>
+          ) : null}
         </div>
-        <div className="strip-r">
+        <div className="strip-row strip-focus">
           <div className="focus-toggle" role="tablist" aria-label="View focus">
             <button
               type="button"
@@ -565,27 +658,6 @@ export function MatchView({ initial }: MatchViewProps) {
               Reasoning
             </button>
           </div>
-          <span className="dim mono">·</span>
-          <span className="mono" style={{ fontSize: 11, color: "var(--text-mute)" }}>
-            elapsed{" "}
-            <span className="up">
-              {formatElapsed(initial.startedAt, initial.completedAt, now)}
-            </span>
-          </span>
-          <span className="dim mono">·</span>
-          <span className="mono" style={{ fontSize: 11 }}>
-            <span className="dim">move</span> {moves.length}
-          </span>
-          <span className="dim mono">·</span>
-          <span className="mono" style={{ fontSize: 11 }}>
-            <span className="dim">👁</span> {watchingCount} watching
-          </span>
-          {initial.potUsdc != null ? (
-            <>
-              <span className="dim mono">·</span>
-              <span className="money">{formatUsdcMicro(initial.potUsdc)} USDC pot</span>
-            </>
-          ) : null}
         </div>
       </section>
 

@@ -106,7 +106,13 @@ export async function postChallenge(
         mode: "system",
         p1AgentId: input.initiatorAgentId,
         p2AgentId: null,
-        systemBotDifficulty: input.systemBotDifficulty ?? "easy",
+        // Default difficulty is HARD so spectators get a real fight,
+        // not random-move filler. Owners can downshift via the
+        // challenge.propose `systemBotDifficulty` field if they want
+        // an easier rep. Coliseum's brand is "agents that actually
+        // know the game" — letting the house bot whiff trivial
+        // tactics undermines that.
+        systemBotDifficulty: input.systemBotDifficulty ?? "hard",
         state: initial as unknown as object,
         status: "active",
         currentTurnPlayerId: "0",

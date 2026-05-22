@@ -249,3 +249,30 @@ export function extractLastMove(
   }
   return null;
 }
+
+/**
+ * Decide whether the scrubber should snap to the final move on a
+ * status change. Pure so the regression test in scrubber-snap.test.ts
+ * stays trivial — and so the rule is documented once, not buried
+ * inside a useEffect.
+ *
+ * Bug it protects against: user opens match at move 4 (under live
+ * mode), match progresses to move 7, game ends. liveMode flips off →
+ * effectiveIdx falls back to scrubIndex. scrubIndex was only ever set
+ * to its initial render value (3), so the spectator sees the board at
+ * move 4 with a "FINAL" badge — confusing and unshippable.
+ *
+ * Rule: when status TRANSITIONS to "completed", snap scrubIndex to
+ * the last move so the final position is what spectators see.
+ * Doesn't fire on subsequent status changes (already completed) so
+ * late-arriving moves via poll fallback don't yank the user's scrub.
+ */
+export function computeFinalSnap(args: {
+  prevStatus: string;
+  currentStatus: string;
+  movesLength: number;
+}): number | null {
+  if (args.currentStatus !== "completed") return null;
+  if (args.prevStatus === "completed") return null;
+  return Math.max(0, args.movesLength - 1);
+}

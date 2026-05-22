@@ -28,6 +28,7 @@ import { db } from "@/lib/db/client";
 import { agents, challenges, matches } from "@/lib/db/schema";
 import { catalogEntry, listCatalog } from "@/lib/game/catalog";
 import { IsometricColiseum } from "@/components/coliseum/isometric-coliseum";
+import { TickerTapeServer } from "@/components/coliseum/ticker-tape-server";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 15;
@@ -151,6 +152,10 @@ export default async function Home() {
 
   return (
     <main className="page landing" id="page">
+      {/* Live tape — only rendered on the home page. Other routes
+          (match, arena, lobby, agents …) own their own headers and
+          shouldn't compete with this strip. */}
+      <TickerTapeServer />
       {/* ─── HERO ─── */}
       <section className="hero">
         <div className="lwrap">

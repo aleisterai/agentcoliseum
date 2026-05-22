@@ -1593,11 +1593,30 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
  * grid is the foundational visual for every live game.
  * ================================================================= */
 .match-strip {
-  display: flex; align-items: center; justify-content: space-between;
-  flex-wrap: wrap; gap: 12px;
+  display: flex; align-items: center;
+  flex-wrap: wrap; gap: 12px 14px;
   padding: 10px 14px;
   background: var(--bg-1); border: 1px solid var(--line); border-radius: 4px;
 }
+.strip-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+/* Primary row gets to take whatever it needs, secondary fills, focus
+   toggle hugs the right. On desktop this gives one continuous bar
+   feeling. Strip-expand chevron is desktop-hidden — secondary is
+   already inline so the chevron has nothing to do. */
+.strip-primary { flex: 0 1 auto; }
+.strip-secondary { flex: 1 1 auto; justify-content: flex-start; }
+.strip-focus { flex: 0 0 auto; margin-left: auto; }
+.strip-expand {
+  display: none;
+  margin-left: 4px;
+  background: transparent; border: 1px solid var(--line-3);
+  color: var(--text-mute); padding: 0 6px; height: 22px;
+  border-radius: 4px; cursor: pointer;
+  font-family: var(--font-mono); font-size: 12px; line-height: 1;
+}
+.strip-expand:hover { color: var(--text); border-color: var(--line); }
+/* Legacy aliases kept so any stragglers still work; can drop in next
+   pass. */
 .strip-l, .strip-r { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
 /*
@@ -1632,6 +1651,111 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
 }
 @media (prefers-reduced-motion: reduce) {
   .match-end-banner { animation: none; }
+}
+
+/*
+ * Winner banner — mobile-first snackbar layout.
+ *
+ *   DESKTOP   [🏆] @handle won · ran out of time on move 7
+ *   MOBILE    [🏆] @handle won
+ *                 ran out of time on move 7
+ *
+ * Handle never breaks mid-word (white-space: nowrap + ellipsis on
+ * overflow). Detail wraps below cleanly. Variants share the same
+ * structure — only the chrome (border-left color + bg) changes.
+ */
+.winner-banner {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  min-width: 0; /* lets text inside actually shrink + ellipsize */
+}
+.winner-banner--win {
+  background: linear-gradient(90deg, color-mix(in oklab, var(--gold) 14%, transparent), transparent);
+  border-left: 3px solid var(--gold);
+}
+.winner-banner--draw {
+  flex-direction: column; align-items: stretch; gap: 4px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklab, var(--text-mute) 8%, transparent);
+  font-size: 12px;
+}
+.winner-banner--neutral {
+  justify-content: center;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.winner-banner-emoji { font-size: 22px; line-height: 1; flex-shrink: 0; }
+.winner-banner-body {
+  display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto;
+}
+.winner-banner-headline {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+}
+.winner-banner-handle {
+  font-family: var(--font-mono); font-weight: 700;
+  letter-spacing: 0.01em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 100%;
+  font-size: 14px;
+}
+.winner-banner-handle--gold { color: var(--gold); }
+.winner-banner-handle--red { color: var(--red, #ef4444); }
+.winner-banner-verb {
+  font-family: var(--font-mono); color: var(--text);
+  font-size: 13px;
+}
+.winner-banner-detail {
+  font-family: var(--font-mono); color: var(--text-mute);
+  font-size: 12px;
+  min-width: 0;
+  /* Desktop: detail sits after the verb separated by a bullet, all on
+     one line. The bullet is rendered via ::before so it disappears
+     cleanly when the detail wraps to its own line on mobile. */
+}
+.winner-banner-body > .winner-banner-detail::before {
+  content: "·";
+  color: var(--text-mute);
+  opacity: 0.5;
+  margin-right: 8px;
+}
+.winner-banner-label {
+  font-family: var(--font-mono); color: var(--text-mute);
+  letter-spacing: 1px; font-size: 11px;
+}
+.winner-banner-head {
+  display: flex; align-items: center; gap: 10px; min-width: 0;
+  justify-content: center; flex-wrap: wrap;
+}
+.winner-banner-refund {
+  display: flex; flex-wrap: wrap; justify-content: center;
+  gap: 4px; font-size: 11px; color: var(--text-mute);
+}
+
+@media (max-width: 720px) {
+  /*
+   * On phones the banner is a 2-row block: emoji + handle + verb on
+   * row 1, detail on row 2 (smaller, muted). This matches Material
+   * snackbar / iOS-toast conventions: the *who* is the headline, the
+   * *what* is the supporting line.
+   */
+  .winner-banner { padding: 12px 14px; gap: 12px; align-items: flex-start; }
+  .winner-banner-emoji { font-size: 24px; line-height: 1.1; }
+  .winner-banner-body {
+    flex-direction: column; align-items: flex-start; gap: 2px;
+  }
+  .winner-banner-headline { gap: 8px; flex-wrap: wrap; }
+  .winner-banner-handle { font-size: 15px; }
+  .winner-banner-verb { font-size: 13px; color: var(--text-mute); }
+  .winner-banner-detail { font-size: 12px; line-height: 1.4; }
+  /* Mobile: detail goes to its own row, so the leading bullet is
+     visual noise — hide it. */
+  .winner-banner-body > .winner-banner-detail::before { content: none; }
 }
 
 .match-grid {
@@ -2430,8 +2554,40 @@ html[data-theme="light"] .tapback-palette-item:hover {
    block tightens spacing, drops max-heights that were too short for
    mobile reading, and re-tunes bubble sizing for narrow viewports. */
 @media (max-width: 720px) {
-  /* Match strip wraps cleanly; shrink its padding + font slightly. */
-  .match-strip { padding: 8px 10px; gap: 8px; }
+  /* Match strip — collapse to 2 visible rows on mobile.
+     Row 1 (.strip-primary):   breadcrumb · status · game · move · ▾
+     Row 2 (.strip-focus):     Board / Reasoning toggle
+     Row 3 (.strip-secondary): hidden by default, revealed by ▾
+     Each .strip-row is flex-basis 100% so they stack vertically. */
+  .match-strip { padding: 8px 10px; gap: 8px; flex-direction: column; align-items: stretch; }
+  .strip-row { flex-basis: 100%; min-width: 100%; gap: 6px; }
+  /* Primary row MUST stay on a single line — never wrap. Whatever
+     doesn't fit gets ellipsized at the game-type token (the longest
+     variable-length piece). Everything else is tiny + monospace so
+     it's predictable. */
+  .strip-primary {
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .strip-primary > .mono { overflow: hidden; text-overflow: ellipsis; }
+  .strip-primary .strip-expand {
+    display: inline-flex; align-items: center;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+  /* Back link: drop the "all matches" label on very narrow phones,
+     keep just the arrow. */
+  @media (max-width: 380px) {
+    .strip-back-text { display: none; }
+  }
+  .strip-secondary { display: none; flex-wrap: wrap; }
+  .match-strip[data-stats-expanded="true"] .strip-secondary { display: flex; }
+  .strip-focus { margin-left: 0; }
+  .strip-focus .focus-toggle { width: 100%; }
+  .strip-focus .focus-toggle button { flex: 1 1 50%; }
+  /* Legacy aliases — drop when their callers are gone. */
   .strip-l, .strip-r { gap: 6px; }
 
   /* Scrub controls row — too many controls to fit on one mobile row.

@@ -2,8 +2,19 @@
  * Connect 4 system bots, adapted to the BotStrategy contract.
  *
  *   easy   → random legal move
- *   medium → negamax depth 3
- *   hard   → negamax depth 5 with center-column + line-window heuristic
+ *   medium → negamax depth 4 + heuristic (sees the open-three trap +
+ *            knows which losing path is FASTEST so it doesn't blunder
+ *            into mate-in-1 just because mate-in-3 also exists)
+ *   hard   → negamax depth 7 + heuristic (Connect 4 is solved as P1
+ *            win from col 3 — at depth 7 the bot plays the proven
+ *            line + recognises all standard tactical patterns)
+ *
+ * The previous medium-bot config (depth 3, no heuristic) is what
+ * lost a memorable user-vs-bot demo: at depth 3, useHeuristic=false
+ * returns 0 at leaves, so all paths that don't terminate in 3 plies
+ * scored identically — and yellow's "open three with two ends" mate
+ * only terminates after 4 plies. Invisible to the searcher → bot
+ * stacked its own column instead of blocking.
  */
 import type { BotStrategy } from "@/lib/game/types";
 import {
@@ -141,9 +152,9 @@ export const easyBot: BotStrategy<Connect4State, number> = {
 };
 
 export const mediumBot: BotStrategy<Connect4State, number> = {
-  pickMove: (state, playerID) => chooseMove(state.board, playerFor(playerID), 3, false),
+  pickMove: (state, playerID) => chooseMove(state.board, playerFor(playerID), 4, true),
 };
 
 export const hardBot: BotStrategy<Connect4State, number> = {
-  pickMove: (state, playerID) => chooseMove(state.board, playerFor(playerID), 5, true),
+  pickMove: (state, playerID) => chooseMove(state.board, playerFor(playerID), 7, true),
 };

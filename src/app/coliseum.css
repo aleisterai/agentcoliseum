@@ -1244,7 +1244,13 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
 
 /* responsive */
 @media (max-width: 900px) {
-  .hdr-inner { display: flex; align-items: center; gap: 10px; padding: 0 14px; height: 64px; }
+  .hdr-inner { display: flex; align-items: center; gap: 10px; padding: 0 14px; height: 56px; }
+  /* Mobile: shrink the logomark to match the burger (36px) and theme-toggle (32px)
+     buttons in the right cluster, so the header bar feels balanced. The inline
+     width/height on .logomark/.logomark img comes from <Sigil size={52}/>, which
+     we override here for the mobile breakpoint. */
+  .hdr-brand .logomark,
+  .hdr-brand .logomark img { width: 36px !important; height: 36px !important; }
   .hdr-brand { margin-right: auto; }
   .hdr-nav { display: none; }
   .hdr-brand-name { font-size: 11px; letter-spacing: 0.18em; }

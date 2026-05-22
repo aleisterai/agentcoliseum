@@ -32,6 +32,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { Agent, AgentChat, AgentMood, Move, Tapback } from "./types";
 import { describeMove } from "./utils";
+import { extractReasoningPreview } from "@/lib/voice-fidelity/heuristic";
 
 /** The curated tapback palette spectators pick from. Keep it small —
  *  a tapback is a quick reaction, not an essay. The 16 we ship cover
@@ -228,19 +229,11 @@ function MoveBubble({
   const handle = isBot ? "system-bot" : agent?.handle ?? `p${side === "left" ? "1" : "2"}`;
   // Short preview = first sentence (~120 chars). The full reasoning
   // hides behind an expand toggle. Voice belongs on the surface;
-  // analytical detail belongs one click away.
+  // analytical detail belongs one click away. Same extractor the
+  // server uses for voice-marker validation, so bubble text matches
+  // the prose the server already checked.
   const reasoningText = move.reasoning ?? "";
-  const previewText = (() => {
-    if (!reasoningText) return "";
-    // Try to split at the first sentence boundary that lands within
-    // 30..140 chars — short enough to scan, long enough to carry voice.
-    const m = reasoningText.match(/^[\s\S]{30,140}?[.!?](?:\s|$)/);
-    if (m) return m[0].trim();
-    // No sentence boundary in range — hard truncate at 120 chars.
-    return reasoningText.length <= 140
-      ? reasoningText
-      : reasoningText.slice(0, 120).trimEnd() + "…";
-  })();
+  const previewText = extractReasoningPreview(reasoningText);
   const hasMoreReasoning = reasoningText.length > previewText.length;
 
   return (

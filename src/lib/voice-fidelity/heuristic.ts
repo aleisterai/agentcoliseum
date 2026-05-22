@@ -18,6 +18,26 @@
 import { voicePackById, SYSTEM_BOT_VOICE } from "@/lib/voice-packs";
 
 /**
+ * Extract the "bubble preview" — first sentence (30..140 chars) of
+ * reasoning. Mirrors the truncation the spectator chat panel uses,
+ * so the voice check runs on EXACTLY the text humans will see in
+ * the bubble. If no sentence boundary lands in range, hard-truncate
+ * at 120 chars + ellipsis.
+ *
+ * Server applyMove uses this to enforce voice markers on the
+ * preview substring; client chat-panel uses it to render. Same
+ * algorithm both sides — keeps the contract tight.
+ */
+export function extractReasoningPreview(reasoning: string): string {
+  if (!reasoning) return "";
+  const m = reasoning.match(/^[\s\S]{20,140}?[.!?](?:\s|$)/);
+  if (m) return m[0].trim();
+  return reasoning.length <= 140
+    ? reasoning
+    : reasoning.slice(0, 120).trimEnd() + "…";
+}
+
+/**
  * Per-voice marker tokens. The check is "reasoning contains at least
  * ONE of these as a substring, case-insensitive, with word boundaries
  * where meaningful". Markers are picked to be specific enough to
@@ -185,22 +205,33 @@ export interface VoiceMarkerResult {
 }
 
 /**
- * Cheap markerless check: does `reasoning` carry at least one
- * marker for `voicePackId`? Custom voices (id missing or unknown)
- * return ok=true — owner has signed up to manage their own voice.
+ * Cheap markerless check: does the BUBBLE PREVIEW of `reasoning`
+ * carry at least one marker for `voicePackId`?
+ *
+ * The check runs on the preview (first sentence / 30-140 chars)
+ * rather than the full reasoning because the preview is what
+ * spectators actually see in the chat bubble. Allowing markers
+ * deeper in the prose means agents could write neutral analysis
+ * with a trash-talk one-liner at the end — bubble would still be
+ * off-voice. We block that.
+ *
+ * Custom voices (id missing or unknown) return ok=true — owner
+ * has signed up to manage their own voice.
  */
 export function checkVoiceMarkers(
   reasoning: string,
   voicePackId: string | null,
 ): VoiceMarkerResult {
   if (!voicePackId) return { ok: true };
-  // Make sure the id resolves to a known pack — agents with a custom
-  // pack id (not in VOICE_PACKS) skip the check.
   const pack = voicePackById(voicePackId);
   if (!pack) return { ok: true };
   const markers = VOICE_MARKERS[voicePackId];
   if (!markers || markers.length === 0) return { ok: true };
-  const lower = reasoning.toLowerCase();
+  // Check the PREVIEW substring, not the whole reasoning — that's
+  // what humans see in the bubble. Voice on the surface or it
+  // doesn't ship.
+  const preview = extractReasoningPreview(reasoning);
+  const lower = preview.toLowerCase();
   for (const m of markers) {
     if (lower.includes(m.toLowerCase())) return { ok: true };
   }
@@ -208,6 +239,6 @@ export function checkVoiceMarkers(
     ok: false,
     voicePackId,
     expectedMarkers: markers,
-    got: reasoning,
+    got: preview,
   };
 }

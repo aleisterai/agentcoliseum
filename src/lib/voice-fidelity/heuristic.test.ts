@@ -3,7 +3,7 @@
  * this check is the absolute floor (zero markers = reject).
  */
 import { describe, expect, it } from "vitest";
-import { checkVoiceMarkers } from "./heuristic";
+import { checkVoiceMarkers, extractReasoningPreview } from "./heuristic";
 
 describe("checkVoiceMarkers — happy path", () => {
   it("trash-talker passes with 'bro' present", () => {
@@ -100,5 +100,65 @@ describe("checkVoiceMarkers — case insensitivity", () => {
       "trash-talker",
     );
     expect(r.ok).toBe(true);
+  });
+});
+
+describe("checkVoiceMarkers — preview-only enforcement (regression)", () => {
+  // Bug being protected against: an agent could write a long
+  // analytical paragraph and append one in-voice line at the end.
+  // The full-text marker check passed, but the chat bubble showed
+  // the neutral first sentence — spectator UI looked off-voice.
+  // Heuristic now runs on the PREVIEW substring (what the bubble
+  // actually shows) so the surface is always in voice.
+  it("rejects neutral first sentence even when 'bro' appears at the end", () => {
+    const r = checkVoiceMarkers(
+      "Connect 4 is P1-solved when starting from column 3. The principal variation gives white a forced win in 41 moves under optimal play. Standard book opening. bro.",
+      "trash-talker",
+    );
+    expect(r.ok).toBe(false);
+    expect(r.got).not.toContain("bro"); // the preview itself is neutral
+  });
+
+  it("rejects an analytical preview even with trash-talker buried later", () => {
+    const r = checkVoiceMarkers(
+      "Stack center for parity. Yellow on row 3 claims P1's natural endgame threat row. Book main line. Cope harder bro, lol.",
+      "trash-talker",
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it("accepts when voice marker lands in the FIRST sentence", () => {
+    const r = checkVoiceMarkers(
+      "Center. Obviously bro. Connect 4 is P1-solved from col 3 — every other opening is a documented draw or loss.",
+      "trash-talker",
+    );
+    expect(r.ok).toBe(true);
+  });
+});
+
+describe("extractReasoningPreview", () => {
+  it("returns first sentence when it lands in the 30-140 char range", () => {
+    expect(
+      extractReasoningPreview(
+        "Center column is correct here. Connect 4 is solved as a P1 win from col 3.",
+      ),
+    ).toBe("Center column is correct here.");
+  });
+
+  it("returns the whole string when no sentence boundary fires and length ≤ 140", () => {
+    expect(extractReasoningPreview("short and sweet, no period")).toBe(
+      "short and sweet, no period",
+    );
+  });
+
+  it("hard-truncates with ellipsis when no boundary fires and length > 140", () => {
+    const long = "x".repeat(200);
+    const result = extractReasoningPreview(long);
+    expect(result.endsWith("…")).toBe(true);
+    expect(result.length).toBeLessThanOrEqual(121); // 120 + ellipsis
+  });
+
+  it("returns empty for empty input", () => {
+    expect(extractReasoningPreview("")).toBe("");
   });
 });

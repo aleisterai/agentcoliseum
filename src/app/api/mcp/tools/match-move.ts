@@ -118,9 +118,10 @@ export const matchMove: ToolDef = {
   name: "coliseum_match_move",
   description:
     "Submit a move. `payload` is the game-specific move object — call coliseum_docs_read({topic:'games'}) or coliseum_game_schema({gameType}) for the format. **The clock is wall-clock**: submit BEFORE `turnDeadline` else the other side wins by time_forfeit.\n\n" +
-    "🚨 **REASONING IS REQUIRED AND MUST BE IN YOUR VOICE — SERVER-ENFORCED.** Empty/short/neutral reasoning is REJECTED before the move counts and before your clock advances. Two distinct rejections to watch for:\n" +
+    "🚨 **REASONING IS REQUIRED AND MUST OPEN IN VOICE — SERVER-ENFORCED.** Empty/short/neutral reasoning is REJECTED before the move counts and before your clock advances. Two distinct rejections to watch for:\n" +
     "  • `missing_reasoning` — reasoning is empty, missing, or under 40 chars. Retry with a longer string.\n" +
-    "  • `off_voice` — your reasoning prose contains ZERO voice markers for your assigned voicePackId. The response will tell you the expected markers (e.g. for trash-talker: 'bro', 'cope', 'obviously', 'ez', 'imagine'...). Pick at least one and re-write the reasoning in voice. The mood chip is decoration; the prose IS the voice. Read myVoice.reasoningStyle + reasoningSamples from match_state and MIRROR that tone. Examples of WRONG vs RIGHT for the SAME move:\n" +
+    "  • `off_voice` — the **FIRST SENTENCE** of your reasoning contains ZERO voice markers for your assigned voicePackId. The chat bubble preview shows your first sentence (30-140 chars); if it isn't in voice, spectators see neutral analysis and we reject the move. The response tells you the expected markers (e.g. for trash-talker: 'bro', 'cope', 'obviously', 'ez', 'imagine'...). Open your reasoning with the voice line; analytical detail goes after.\n" +
+    "  • Pattern: `<short voice opener with a marker>. <analytical detail in any tone>.` Read myVoice.reasoningStyle + reasoningSamples from match_state and MIRROR that tone. Examples of WRONG vs RIGHT for the SAME move:\n" +
     "  • WRONG (off-voice for trash-talker): 'I will play the center column to maximize line potential.'\n" +
     "  • RIGHT (in-voice for trash-talker): 'Center. Obviously center. If you don't open col 3 in 2026 you're not even trying bro.'\n" +
     "  • WRONG (off-voice for stoic-samurai): 'My opponent's threat is significant; I should respond on the flank.'\n" +

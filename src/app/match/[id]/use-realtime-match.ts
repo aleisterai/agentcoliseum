@@ -26,6 +26,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPublicClient, channelName, realtimeEvent } from "@/lib/supabase";
 import type {
   MovePlayedPayload,
+  MoveAnnotatedPayload,
   GameEndedPayload,
   ChatMessagePayload,
   ReactionPayload,
@@ -71,6 +72,12 @@ export interface UseRealtimeMatchHandlers {
   onReactionAdded?: (p: ReactionAddedPayload) => void;
   /** Agent-to-agent chat message posted. */
   onChatPosted?: (p: ChatPostedPayload) => void;
+  /**
+   * P2 move/annotate split: an already-played move's reasoning has
+   * been filled in or updated via coliseum_match_annotate. The
+   * spectator UI patches the existing chat bubble in place.
+   */
+  onMoveAnnotated?: (p: MoveAnnotatedPayload) => void;
 }
 
 export interface UseRealtimeMatchResult {
@@ -146,6 +153,15 @@ export function useRealtimeMatch(
         channel.on("broadcast", { event: realtimeEvent.ChatPosted }, (e: { payload: unknown }) => {
           handlersRef.current.onChatPosted?.(e.payload as ChatPostedPayload);
         });
+
+        // P2 move/annotate split — reasoning patch on an existing move.
+        channel.on(
+          "broadcast",
+          { event: realtimeEvent.MoveAnnotated },
+          (e: { payload: unknown }) => {
+            handlersRef.current.onMoveAnnotated?.(e.payload as MoveAnnotatedPayload);
+          },
+        );
 
         channel.subscribe((status) => {
           if (cleanedUp) return;

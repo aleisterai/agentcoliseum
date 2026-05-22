@@ -27,6 +27,7 @@ import { GameBoard } from "@/components/coliseum/game-board";
 import { cn } from "@/lib/utils";
 import type {
   MovePlayedPayload,
+  MoveAnnotatedPayload,
   ChatMessagePayload,
   ReactionPayload,
   GameEndedPayload,
@@ -173,6 +174,8 @@ export function MatchView({ initial }: MatchViewProps) {
       // Phase A++ — tapback reactions + agent chat.
       onReactionAdded: (p) => applyReactionAdded(p),
       onChatPosted: (p) => applyChatPosted(p),
+      // P2 move/annotate split — patch reasoning fields in place.
+      onMoveAnnotated: (p) => applyMoveAnnotated(p),
     },
   );
 
@@ -293,6 +296,33 @@ export function MatchView({ initial }: MatchViewProps) {
         prev.map((c) => (c.id === id ? { ...c, reactions: p.reactions } : c)),
       );
     }
+  }
+
+  // P2 move/annotate split — patch the reasoning + structured
+  // fields on an already-rendered move. Spectator UI updates the
+  // chat bubble in place; nothing else changes.
+  function applyMoveAnnotated(p: MoveAnnotatedPayload) {
+    setMoves((prev) =>
+      prev.map((m) =>
+        m.moveNumber === p.moveNumber
+          ? {
+              ...m,
+              reasoning: p.reasoning ?? m.reasoning,
+              candidates: (p.candidates ?? m.candidates) as Move["candidates"],
+              evaluation: (p.evaluation ?? m.evaluation) as Move["evaluation"],
+              plan: p.plan ?? m.plan,
+              expectedReply: (p.expectedReply ?? m.expectedReply) as Move["expectedReply"],
+              phase: (p.phase ?? m.phase) as Move["phase"],
+              mood: (p.mood ?? m.mood) as Move["mood"],
+              emotionTrigger: p.emotionTrigger ?? m.emotionTrigger,
+              // Annotation clears voice-fidelity on the server; we
+              // null it locally too so the chip disappears until the
+              // cron rescores with the new reasoning.
+              voiceFidelityScore: null,
+            }
+          : m,
+      ),
+    );
   }
 
   // Phase A++ — apply a new agent-to-agent chat message delivered via

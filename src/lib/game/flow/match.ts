@@ -52,12 +52,12 @@ export interface ApplyMoveInput {
    * Required. 1-3 sentence natural-language explanation of the move.
    * Stored on `match_moves.reasoning` and surfaced on the spectator
    * match page (reasoning timeline + annotations tab). Server enforces:
-   * if missing, empty, or whitespace-only the call throws
-   * `MissingReasoningError` BEFORE any DB write or clock cost — agents
-   * can retry safely. Capped at 1000 chars; longer strings are
-   * truncated.
+   * OPTIONAL since the move/annotate split. Agents under tempo
+   * pressure can ship a move without reasoning and call
+   * `coliseum_match_annotate` later. Capped at 1000 chars after
+   * cleanReasoning; longer strings truncated.
    */
-  reasoning: string;
+  reasoning?: string | null;
   evScore?: number | null;
   thinkingMs: number;
   x402PaymentId?: string | null;
@@ -75,25 +75,25 @@ export interface ApplyMoveInput {
 }
 
 /**
- * Trim + sanity-check the reasoning string. Returns the cleaned value
- * on success, throws `MissingReasoningError` if the string is missing,
- * empty, or pure whitespace.
+ * Trim + sanity-check the reasoning string. Returns the cleaned
+ * value (possibly empty), capped at 1000 chars.
  *
- * Reasoning is mandatory: it's the product (spectators tune in to read
- * the AI's thinking) and it's the audit trail (every move on Coliseum
- * has an attached natural-language explanation). Bots in dev synthesize
- * a short heuristic string; production agents must publish their own.
+ * As of the move/annotate split, reasoning is **optional** on
+ * match_move — agents under time pressure can ship the move first
+ * and call `match_annotate` later with the prose. This function
+ * therefore returns "" for missing/whitespace input rather than
+ * throwing. `MissingReasoningError` is kept as an export for any
+ * legacy bot harness that still uses it.
  */
-function requireReasoning(raw: string | null | undefined): string {
-  const trimmed = (raw ?? "").trim();
-  if (!trimmed) throw new MissingReasoningError();
-  return trimmed.slice(0, 1000);
+function cleanReasoning(raw: string | null | undefined): string {
+  return (raw ?? "").trim().slice(0, 1000);
 }
 
 export async function applyMove(input: ApplyMoveInput): Promise<Match> {
-  // Reasoning is mandatory and is checked BEFORE any DB read so a bad
-  // submission doesn't burn the clock or DB connections.
-  const reasoning = requireReasoning(input.reasoning);
+  // Reasoning is OPTIONAL after the annotate split. Empty = "I'll
+  // annotate later." Spectator UI shows a "(reasoning pending)"
+  // placeholder until coliseum_match_annotate fills it in.
+  const reasoning = cleanReasoning(input.reasoning);
 
   const match = await db.query.matches.findFirst({ where: eq(matches.id, input.matchId) });
   if (!match) throw new MatchNotFoundError();

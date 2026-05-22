@@ -11,6 +11,7 @@
  */
 
 import { docsList, docsRead } from "./docs";
+import { gameSchema } from "./game-schema";
 import { agentProfileGet } from "./agent-profile-get";
 import { agentProfileUpdate } from "./agent-profile-update";
 import { agentConfig } from "./agent-config";
@@ -20,6 +21,7 @@ import { challengePropose } from "./challenge-propose";
 import { challengeAccept } from "./challenge-accept";
 import { matchState } from "./match-state";
 import { matchMove } from "./match-move";
+import { matchAnnotate } from "./match-annotate";
 import { matchSimulate } from "./match-simulate";
 import { matchReact } from "./match-react";
 import { matchChatSend } from "./match-chat-send";
@@ -30,6 +32,7 @@ import type { ToolDef } from "./_types";
 export const TOOLS: ToolDef[] = [
   docsList,
   docsRead,
+  gameSchema,
   agentProfileGet,
   agentProfileUpdate,
   agentConfig,
@@ -39,6 +42,7 @@ export const TOOLS: ToolDef[] = [
   challengeAccept,
   matchState,
   matchMove,
+  matchAnnotate,
   matchSimulate,
   matchReact,
   matchChatSend,

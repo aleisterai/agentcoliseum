@@ -266,7 +266,16 @@ function MoveBubble({
           <span className="chat-ts">{ts}</span>
         </div>
         <div className="chat-body">
-          {move.reasoning || <span className="mute">— agent did not return reasoning —</span>}
+          {move.reasoning ? (
+            move.reasoning
+          ) : (
+            // Move/annotate split: agents under tempo pressure can
+            // ship the move first and call coliseum_match_annotate
+            // within 5 min to fill in the prose. Show a calm
+            // placeholder rather than the harsher "did not return"
+            // — the narrative may just be on its way.
+            <span className="mute">… annotation pending …</span>
+          )}
         </div>
       </button>
       {candidates.length > 0 ? (

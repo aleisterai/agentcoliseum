@@ -70,6 +70,7 @@ vi.mock("@/lib/realtime", () => ({
     Reaction: "reaction",
     ReactionAdded: "reaction.added",
     ChatPosted: "chat.posted",
+    MoveAnnotated: "move.annotated",
   },
 }));
 
@@ -86,6 +87,13 @@ const {
   MatchNotFoundError,
   MissingReasoningError,
 } = await import("./errors");
+const {
+  annotateMove,
+  ANNOTATE_WINDOW_MS,
+  AnnotateWindowExpiredError,
+  MoveNotFoundError,
+  NotMoveAuthorError,
+} = await import("./annotate");
 
 // Shared test reasoning — applyMove now requires non-empty reasoning so
 // every test that submits a move must include one. Kept generic + short
@@ -454,7 +462,13 @@ describe("applyMove", () => {
     });
   });
 
-  it("rejects a move with missing / empty / whitespace-only reasoning", async () => {
+  it("accepts a move with missing reasoning (move/annotate split)", async () => {
+    // The earlier contract REQUIRED reasoning on every match_move
+    // call. Move/annotate split: reasoning is now optional — agents
+    // can ship payload-only to stop the clock, then annotate later.
+    // Empty / whitespace-only resolves the same way (null reasoning
+    // on the row). MissingReasoningError no longer fires from
+    // applyMove; it's kept as an export for legacy harnesses only.
     await withTestDb(async ({ db }) => {
       currentDb = db;
       const { agent: p1 } = await seedOwnerAgent(db, { handle: "p1" });
@@ -470,46 +484,30 @@ describe("applyMove", () => {
         acceptorAgentId: p2.id,
       });
 
-      // Empty string.
-      await expect(
-        applyMove({
-          matchId: match.id,
-          agentId: p1.id,
-          payload: { index: 4 },
-          reasoning: "",
-          thinkingMs: 50,
-        }),
-      ).rejects.toBeInstanceOf(MissingReasoningError);
+      // Empty string — accepted, persisted with null reasoning.
+      const ok1 = await applyMove({
+        matchId: match.id,
+        agentId: p1.id,
+        payload: { index: 4 },
+        reasoning: "",
+        thinkingMs: 50,
+      });
+      expect(ok1.moveCount).toBe(1);
 
-      // Whitespace-only.
-      await expect(
-        applyMove({
-          matchId: match.id,
-          agentId: p1.id,
-          payload: { index: 4 },
-          reasoning: "   \n\t  ",
-          thinkingMs: 50,
-        }),
-      ).rejects.toBeInstanceOf(MissingReasoningError);
-
-      // No move row was written despite multiple rejected calls.
       const rows = await db
         .select()
         .from(matchMoves)
         .where(eq(matchMoves.matchId, match.id));
-      expect(rows).toHaveLength(0);
-
-      // The same move with valid reasoning still works — proves the
-      // reject path didn't otherwise corrupt the match state.
-      const ok = await applyMove({
-        matchId: match.id,
-        agentId: p1.id,
-        payload: { index: 4 },
-        reasoning: "claim the center",
-        thinkingMs: 50,
-      });
-      expect(ok.moveCount).toBe(1);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].reasoning ?? "").toBe("");
     });
+  });
+
+  it("MissingReasoningError stays exported for legacy harnesses", () => {
+    // Pin the symbol — some older bot harnesses still import this.
+    // The class is intentionally unreachable from applyMove now.
+    expect(typeof MissingReasoningError).toBe("function");
+    expect(new MissingReasoningError()).toBeInstanceOf(Error);
   });
 
   it("two illegal moves in a row forfeit the match (invalid_move_forfeit)", async () => {
@@ -2106,6 +2104,181 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
       // The line should be one of the REACTIVE_BOT_LINES.fork entries
       // (all mention "Fork" or "fork" or "depth").
       expect(botMove!.reasoning?.toLowerCase()).toMatch(/fork|depth/);
+    });
+  });
+});
+
+// =============================================================================
+// Move/annotate split — coliseum_match_annotate flow tests
+// =============================================================================
+describe("annotateMove", () => {
+  it("patches reasoning + clears voice-fidelity", async () => {
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent: p1 } = await seedOwnerAgent(db, { handle: "p1" });
+      const { agent: p2 } = await seedOwnerAgent(db, { handle: "p2" });
+      const c = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: p1.id,
+        mode: "free",
+      });
+      if (c.kind !== "challenge") throw new Error("challenge expected");
+      const m = await acceptChallenge({
+        challengeId: c.challenge.id,
+        acceptorAgentId: p2.id,
+      });
+      await applyMove({
+        matchId: m.id,
+        agentId: p1.id,
+        payload: { index: 4 },
+        reasoning: "",
+        thinkingMs: 50,
+      });
+      const updated = await annotateMove({
+        matchId: m.id,
+        moveNumber: 0,
+        agentId: p1.id,
+        reasoning: "claim the center",
+        plan: "force a fork by move 4",
+        mood: "focused",
+      });
+      expect(updated.reasoning).toBe("claim the center");
+      expect(updated.plan).toBe("force a fork by move 4");
+      expect(updated.mood).toBe("focused");
+      expect(updated.voiceFidelityScore).toBeNull();
+    });
+  });
+
+  it("rejects a non-author trying to annotate", async () => {
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent: p1 } = await seedOwnerAgent(db, { handle: "p1" });
+      const { agent: p2 } = await seedOwnerAgent(db, { handle: "p2" });
+      const c = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: p1.id,
+        mode: "free",
+      });
+      if (c.kind !== "challenge") throw new Error("challenge expected");
+      const m = await acceptChallenge({
+        challengeId: c.challenge.id,
+        acceptorAgentId: p2.id,
+      });
+      await applyMove({
+        matchId: m.id,
+        agentId: p1.id,
+        payload: { index: 4 },
+        reasoning: "",
+        thinkingMs: 50,
+      });
+      await expect(
+        annotateMove({
+          matchId: m.id,
+          moveNumber: 0,
+          agentId: p2.id,
+          reasoning: "I am rewriting your move's reasoning",
+        }),
+      ).rejects.toBeInstanceOf(NotMoveAuthorError);
+    });
+  });
+
+  it("rejects an unknown moveNumber", async () => {
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent: p1 } = await seedOwnerAgent(db, { handle: "p1" });
+      const { agent: p2 } = await seedOwnerAgent(db, { handle: "p2" });
+      const c = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: p1.id,
+        mode: "free",
+      });
+      if (c.kind !== "challenge") throw new Error("challenge expected");
+      const m = await acceptChallenge({
+        challengeId: c.challenge.id,
+        acceptorAgentId: p2.id,
+      });
+      await expect(
+        annotateMove({
+          matchId: m.id,
+          moveNumber: 99,
+          agentId: p1.id,
+          reasoning: "annotating a move that does not exist",
+        }),
+      ).rejects.toBeInstanceOf(MoveNotFoundError);
+    });
+  });
+
+  it("rejects after the 5-minute annotate window", async () => {
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent: p1 } = await seedOwnerAgent(db, { handle: "p1" });
+      const { agent: p2 } = await seedOwnerAgent(db, { handle: "p2" });
+      const c = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: p1.id,
+        mode: "free",
+      });
+      if (c.kind !== "challenge") throw new Error("challenge expected");
+      const m = await acceptChallenge({
+        challengeId: c.challenge.id,
+        acceptorAgentId: p2.id,
+      });
+      await applyMove({
+        matchId: m.id,
+        agentId: p1.id,
+        payload: { index: 4 },
+        reasoning: "",
+        thinkingMs: 50,
+      });
+      const ancient = new Date(Date.now() - ANNOTATE_WINDOW_MS - 1000);
+      await db
+        .update(matchMoves)
+        .set({ createdAt: ancient })
+        .where(eq(matchMoves.matchId, m.id));
+      await expect(
+        annotateMove({
+          matchId: m.id,
+          moveNumber: 0,
+          agentId: p1.id,
+          reasoning: "too late",
+        }),
+      ).rejects.toBeInstanceOf(AnnotateWindowExpiredError);
+    });
+  });
+
+  it("PATCH semantics: undefined fields skip, value replaces", async () => {
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent: p1 } = await seedOwnerAgent(db, { handle: "p1" });
+      const { agent: p2 } = await seedOwnerAgent(db, { handle: "p2" });
+      const c = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: p1.id,
+        mode: "free",
+      });
+      if (c.kind !== "challenge") throw new Error("challenge expected");
+      const m = await acceptChallenge({
+        challengeId: c.challenge.id,
+        acceptorAgentId: p2.id,
+      });
+      // Bundle reasoning + mood up front so the row has values.
+      await applyMove({
+        matchId: m.id,
+        agentId: p1.id,
+        payload: { index: 4 },
+        reasoning: "original prose",
+        mood: "confident",
+        thinkingMs: 50,
+      });
+      // Annotate ONLY reasoning — mood should be preserved (undefined skipped).
+      const updated = await annotateMove({
+        matchId: m.id,
+        moveNumber: 0,
+        agentId: p1.id,
+        reasoning: "updated prose",
+      });
+      expect(updated.reasoning).toBe("updated prose");
+      expect(updated.mood).toBe("confident");
     });
   });
 });

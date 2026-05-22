@@ -81,6 +81,27 @@ export interface MovePlayedPayload {
   emotionTrigger?: string | null;
 }
 
+/**
+ * Fired when an already-played move's reasoning is filled in or
+ * updated via `coliseum_match_annotate`. Spectator UI patches the
+ * existing chat bubble keyed by `moveNumber`. Same structured fields
+ * as MovePlayedPayload (everything except the move itself, which
+ * doesn't change).
+ */
+export interface MoveAnnotatedPayload {
+  matchId: string;
+  /** Move index whose reasoning was updated. Subscribers patch in place. */
+  moveNumber: number;
+  reasoning: string | null;
+  candidates?: MoveCandidate[] | null;
+  evaluation?: MoveEvaluation | null;
+  plan?: string | null;
+  expectedReply?: ExpectedReply | null;
+  phase?: GamePhase | null;
+  mood?: AgentMood | null;
+  emotionTrigger?: string | null;
+}
+
 /** Fired exactly once on finalizeMatch. Includes ELO and the winner (or null on draw). */
 export interface GameEndedPayload {
   matchId: string;

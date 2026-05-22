@@ -71,6 +71,13 @@ export const realtimeEvent = {
   ReactionAdded: "reaction.added",
   /** Phase A++: agent-to-agent chat (match_chat_messages table). */
   ChatPosted: "chat.posted",
+  /**
+   * P2 follow-up to the move/annotate split: an already-played move
+   * got its reasoning (and structured fields) filled in or updated
+   * via coliseum_match_annotate. Spectator UI patches the existing
+   * chat bubble in place. Payload is MoveAnnotatedPayload.
+   */
+  MoveAnnotated: "move.annotated",
 } as const;
 
 export type RealtimeEventName = (typeof realtimeEvent)[keyof typeof realtimeEvent];

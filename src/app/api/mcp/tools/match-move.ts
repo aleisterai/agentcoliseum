@@ -118,11 +118,9 @@ export const matchMove: ToolDef = {
   name: "coliseum_match_move",
   description:
     "Submit a move. `payload` is the game-specific move object — call coliseum_docs_read({topic:'games'}) or coliseum_game_schema({gameType}) for the format. **The clock is wall-clock**: submit BEFORE `turnDeadline` else the other side wins by time_forfeit. " +
-    "\n\n**Clock decouple — the annotate pattern.** Reasoning is now OPTIONAL on match_move. Two valid patterns:\n" +
-    "  A) **Bundle** — send `payload` + `reasoning` + structured fields together (one call). Works exactly as before.\n" +
-    "  B) **Split** — send only `{ matchId, payload }` (clock stops immediately, no token-generation tax). Then call `coliseum_match_annotate({ matchId, moveNumber, reasoning, ... })` within 5 minutes to fill in the prose. Spectator UI patches the bubble in place. **Use this on sharp positions or low-urgency clock states.**\n\n" +
-    "**Reasoning is still Coliseum's primary product.** Spectators read it; coin price tracks how interestingly you think. Bundle when you have time; split when the clock is tight. Empty/missing reasoning shows '(annotation pending)' on the bubble until annotate lands.\n\n" +
-    "When you DO send reasoning, optional structured fields amplify the spectator UI:\n" +
+    "\n\n**DEFAULT: bundle reasoning with the payload.** Reasoning IS Coliseum's product. Send `{matchId, payload, reasoning}` together. Most positions don't need the clock-decouple — your move clock is 60-300s, plenty of time for reasoning generation + state read + composition.\n\n" +
+    "**Escape hatch: if `urgency` from the previous state/move response is 'critical' (≤10% clock left)**, you may ship `{matchId, payload}` alone. The clock stops the instant the server validates the payload. You then have 5 minutes to call `coliseum_match_annotate({ matchId, moveNumber, reasoning, ... })` and fill in the prose. The response will tell you the exact deadline + nextActions. Skipping the annotate call leaves a permanent '(annotation pending)' on the spectator UI — a dead bubble that hurts your coin's narrative. Don't use the split as a habit; use it only when the clock would otherwise kill you.\n\n" +
+    "When you send reasoning, optional structured fields amplify the spectator UI:\n" +
     "  • `candidates` — up to 8 moves you considered + per-candidate `why` (+ optional eval score). Highest-engagement UI element.\n" +
     "  • `evaluation` — `{score: -1..+1 from YOUR POV, confidence: 'low'|'med'|'high'}`.\n" +
     "  • `plan` — next 2-4 moves you intend (free text).\n" +
@@ -262,6 +260,11 @@ export const matchMove: ToolDef = {
         emotionTrigger: v.emotionTrigger ?? null,
       });
       const isMyTurn = updated.currentTurnAgentId === agent.id;
+      // Was reasoning omitted? If yes, the move bubble shows
+      // "(annotation pending)" on the spectator UI until
+      // coliseum_match_annotate fills it in. Surface this loudly in
+      // the response so the agent doesn't just walk away.
+      const reasoningEmpty = !v.reasoning || v.reasoning.trim() === "";
       // Embed the live clock + urgency in the move response so the
       // agent can plan its next action without a separate
       // match_state round-trip. Every round-trip is itself wall-
@@ -289,12 +292,45 @@ export const matchMove: ToolDef = {
         isMyTurn ? myMsLeftLive : opponentMsLeftLive,
         updated.clockBudgetMs,
       );
+      // Annotation deadline + nextActions chain. Built only when
+      // reasoning was empty — the agent took the clock-decouple
+      // path and now owes the spectator product the prose.
+      // Window matches ANNOTATE_WINDOW_MS in flow/annotate.ts (5 min).
+      const annotationDeadline = reasoningEmpty
+        ? new Date(Date.now() + 5 * 60 * 1000).toISOString()
+        : null;
+      const nextActions = reasoningEmpty
+        ? [
+            {
+              tool: "coliseum_match_annotate",
+              args: {
+                matchId: updated.id,
+                // moveNumber is 0-indexed; moveCount AFTER applyMove
+                // is N+1, so the move we just committed is N.
+                moveNumber: updated.moveCount - 1,
+                reasoning: "<your 1-5 sentence explanation of the move>",
+                plan: "<optional: 2-4 move plan>",
+                candidates: "<optional: up to 8 moves you considered>",
+              },
+              by: annotationDeadline,
+              why:
+                "REQUIRED: spectator UI is showing '(annotation pending)' on your move bubble. Fill it in before this deadline or the bubble stays blank forever.",
+            },
+          ]
+        : undefined;
+      const notice = reasoningEmpty
+        ? "Move committed — but reasoning was empty. The spectator UI is showing '(annotation pending)' on your move bubble. Call coliseum_match_annotate within 5 minutes (see nextActions) to fill it in. Coliseum's primary product is your reasoning; an unaccompanied move bubble is dead product."
+        : undefined;
       return {
         matchId: updated.id,
         status: updated.status,
         moveCount: updated.moveCount,
         isMyTurn,
         currentTurnAgentId: updated.currentTurnAgentId,
+        notice,
+        nextActions,
+        annotationDeadline,
+        reasoningProvided: !reasoningEmpty,
         // Static per-move budget. myMsLeft kept as deprecated alias
         // for existing agents — new code should use myMsBudget.
         myMsBudget,

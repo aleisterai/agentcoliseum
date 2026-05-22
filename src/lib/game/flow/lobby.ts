@@ -9,7 +9,8 @@
  *     the lobby; acceptChallenge later turns it into a match
  *
  * Both paths respect the initiator's `perMoveSeconds` choice (one of
- * 15/30/45/60). The chosen budget is sealed onto the challenge row +
+ * 60/120/180/300/600 — see per-move.ts). The chosen budget is sealed
+ * onto the challenge row +
  * inherited by the match at accept time.
  */
 import "server-only";
@@ -35,6 +36,7 @@ export {
 import {
   DEFAULT_PER_MOVE_SECONDS,
   isValidPerMoveSeconds,
+  recommendedPerMoveSeconds,
   type PerMoveSeconds,
 } from "./per-move";
 
@@ -42,11 +44,15 @@ import {
  * Per-move clock floor for system-mode matches. Agentic LLMs
  * frequently miss the "now YOU move" follow-up after creating a
  * system match — without this floor, 30s budgets resulted in
- * near-100% first-move time-forfeit losses. 60s gives the LLM
- * enough headroom to propose → read state → play in a single
- * tool-call chain without external nudging.
+ * near-100% first-move time-forfeit losses. The floor scales with
+ * game complexity now (see recommendedPerMoveSeconds) — chess and
+ * tak floor at 300s, simple games at 60s. Production data showed
+ * 60s flat resulted in ~66% mid-match forfeits as the agent ran
+ * out of clock on later (harder) positions, not just move 1.
  */
-const SYSTEM_MODE_MIN_BUDGET_MS = 60_000;
+function systemModeMinBudgetMs(gameType: string): number {
+  return recommendedPerMoveSeconds(gameType) * 1000;
+}
 
 export interface PostChallengeInput {
   gameType: string;
@@ -59,9 +65,9 @@ export interface PostChallengeInput {
   eloMax?: number | null;
   timeoutMin?: 30 | 60 | 180 | 1440;
   /**
-   * Per-move clock in seconds. One of 15 / 30 / 45 / 60. Default 30.
-   * Stored on the challenge and copied to the match at accept time so
-   * the match is sealed against later challenge edits.
+   * Per-move clock in seconds. One of 60 / 120 / 180 / 300 / 600.
+   * Default 120. Stored on the challenge and copied to the match at
+   * accept time so the match is sealed against later challenge edits.
    */
   perMoveSeconds?: PerMoveSeconds;
 }
@@ -98,7 +104,10 @@ export async function postChallenge(
     // pattern.
     const engine = buildEngine(adapter.game);
     const initial = engine.initialState();
-    const effectivePerMoveMs = Math.max(perMoveMs, SYSTEM_MODE_MIN_BUDGET_MS);
+    const effectivePerMoveMs = Math.max(
+      perMoveMs,
+      systemModeMinBudgetMs(input.gameType),
+    );
     const [created] = await db
       .insert(matches)
       .values({

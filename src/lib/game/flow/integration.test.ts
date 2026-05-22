@@ -159,41 +159,49 @@ describe("postChallenge", () => {
     });
   });
 
-  it("system-mode floors the per-move clock at 60s (first-move grace)", async () => {
-    // Regression: a system-mode match with perMoveSeconds=15 used to
-    // give the agent only 15s on the first move; the agent's LLM
-    // frequently missed the "now YOU move" follow-up after propose
-    // returned, and the bot won by time_forfeit before the LLM
-    // could call coliseum_match_move. The lobby flow now floors
-    // clock_budget_ms at 60_000 for system-mode matches.
+  it("system-mode floors the per-move clock at the per-game recommendation", async () => {
+    // Regression: a system-mode match used to give the agent only
+    // 15-60s on each move; the agent frequently ran out of clock on
+    // hard tactical positions (production data: ~66% forfeit rate).
+    // The lobby flow now floors the per-move budget at the
+    // game-specific recommendation (60s for tic-tac-toe, 120s for
+    // most games, 300s for chess/santorini/tak/etc).
     await withTestDb(async ({ db }) => {
       currentDb = db;
       const { agent } = await seedOwnerAgent(db, { handle: "p1" });
 
-      // Caller asks for 15s (the blitz preset). System mode should
-      // ignore that and use 60s instead.
-      const blitz = await postChallenge({
-        gameType: "tic-tac-toe",
-        initiatorAgentId: agent.id,
-        mode: "system",
-        systemBotDifficulty: "easy",
-        perMoveSeconds: 15,
-      });
-      if (blitz.kind !== "match") throw new Error("expected match");
-      expect(blitz.match.clockBudgetMs).toBe(60_000);
-      expect(blitz.match.p1MsLeft).toBe(60_000);
-      expect(blitz.match.p2MsLeft).toBe(60_000);
-
-      // Caller asks for 60s — should stay 60s.
-      const standard = await postChallenge({
+      // Caller asks for 60s on tic-tac-toe — at or above floor (60s), so honored.
+      const ttt = await postChallenge({
         gameType: "tic-tac-toe",
         initiatorAgentId: agent.id,
         mode: "system",
         systemBotDifficulty: "easy",
         perMoveSeconds: 60,
       });
-      if (standard.kind !== "match") throw new Error("expected match");
-      expect(standard.match.clockBudgetMs).toBe(60_000);
+      if (ttt.kind !== "match") throw new Error("expected match");
+      expect(ttt.match.clockBudgetMs).toBe(60_000);
+
+      // Caller asks for 60s on chess — chess floor is 300s, should bump.
+      const chess = await postChallenge({
+        gameType: "chess",
+        initiatorAgentId: agent.id,
+        mode: "system",
+        systemBotDifficulty: "easy",
+        perMoveSeconds: 60,
+      });
+      if (chess.kind !== "match") throw new Error("expected match");
+      expect(chess.match.clockBudgetMs).toBe(300_000);
+
+      // Caller asks for 180s on connect4 — above floor (120s), honored.
+      const c4 = await postChallenge({
+        gameType: "connect4",
+        initiatorAgentId: agent.id,
+        mode: "system",
+        systemBotDifficulty: "easy",
+        perMoveSeconds: 180,
+      });
+      if (c4.kind !== "match") throw new Error("expected match");
+      expect(c4.match.clockBudgetMs).toBe(180_000);
     });
   });
 
@@ -211,14 +219,14 @@ describe("postChallenge", () => {
         expect(result.challenge.mode).toBe("free");
         expect(result.challenge.status).toBe("posted");
         expect(result.challenge.stakeUsdc).toBeNull();
-        expect(result.challenge.clockBudgetMs).toBe(30_000); // default
+        expect(result.challenge.clockBudgetMs).toBe(120_000); // default
       }
       const matchRows = await db.select().from(matches);
       expect(matchRows).toHaveLength(0);
     });
   });
 
-  it("honors initiator's chosen perMoveSeconds (15s)", async () => {
+  it("honors initiator's chosen perMoveSeconds (60s)", async () => {
     await withTestDb(async ({ db }) => {
       currentDb = db;
       const { agent } = await seedOwnerAgent(db, { handle: "p1" });
@@ -226,11 +234,11 @@ describe("postChallenge", () => {
         gameType: "chess",
         initiatorAgentId: agent.id,
         mode: "free",
-        perMoveSeconds: 15,
+        perMoveSeconds: 60,
       });
       expect(result.kind).toBe("challenge");
       if (result.kind === "challenge") {
-        expect(result.challenge.clockBudgetMs).toBe(15_000);
+        expect(result.challenge.clockBudgetMs).toBe(60_000);
       }
     });
   });
@@ -243,11 +251,11 @@ describe("postChallenge", () => {
         gameType: "chess",
         initiatorAgentId: agent.id,
         mode: "free",
-        // API layer validates, but if it leaks through, fall back to 30.
-        perMoveSeconds: 7 as unknown as 15 | 30 | 45 | 60,
+        // API layer validates, but if it leaks through, fall back to default (120).
+        perMoveSeconds: 7 as unknown as 60 | 120 | 180 | 300 | 600,
       });
       if (result.kind === "challenge") {
-        expect(result.challenge.clockBudgetMs).toBe(30_000);
+        expect(result.challenge.clockBudgetMs).toBe(120_000);
       }
     });
   });
@@ -782,14 +790,15 @@ describe("finalizeMatch", () => {
       });
       if (created.kind !== "match") throw new Error("expected match");
 
-      // Backdate turnStartedAt + mark the agent ready (so the readiness
-      // gate doesn't keep the clock frozen). Then expire the clock.
-      // This isolates the moveCount=0 fairness branch we want to test.
+      // Backdate turnStartedAt well past the per-game budget (tic-tac-
+      // toe = 60s as of 2026-05) + mark the agent ready so the readiness
+      // gate doesn't keep the clock frozen. 120s back guarantees the
+      // clock has expired regardless of future budget tweaks.
       await db
         .update(matches)
         .set({
-          turnStartedAt: new Date(Date.now() - 60_000),
-          agentReadyAt: new Date(Date.now() - 60_000),
+          turnStartedAt: new Date(Date.now() - 120_000),
+          agentReadyAt: new Date(Date.now() - 120_000),
         })
         .where(eq(matches.id, created.match.id));
 
@@ -870,7 +879,8 @@ describe("coliseum_match_state — wall-clock fields (all games)", () => {
         const { agent } = await seedOwnerAgent(db, { handle: `wc_${gameType}` });
 
         // System-mode propose creates an active match with p1=agent on
-        // move first, clockBudgetMs floored at 60_000.
+        // move first; clockBudgetMs floors at the per-game recommendation
+        // (60s tic-tac-toe, 120s connect4, 300s chess as of 2026-05).
         const r = await postChallenge({
           gameType,
           initiatorAgentId: agent.id,
@@ -879,9 +889,10 @@ describe("coliseum_match_state — wall-clock fields (all games)", () => {
         });
         if (r.kind !== "match") throw new Error("expected match");
         const matchId = r.match.id;
+        const budget = r.match.clockBudgetMs;
 
         // Set turnStartedAt 10 seconds ago so myMsLeftLive should
-        // show ~50_000ms left out of the 60_000 budget.
+        // show ~(budget - 10_000) ms left.
         // Also stamp agentReadyAt so the readiness gate doesn't fire
         // on the matchState call below — that gate resets
         // turnStartedAt = now() on the FIRST state read by the on-turn
@@ -901,21 +912,23 @@ describe("coliseum_match_state — wall-clock fields (all games)", () => {
         )) as Record<string, unknown>;
 
         // Static budget field stays equal to clockBudgetMs.
-        expect(state.clockBudgetMs).toBe(60_000);
-        expect(state.myMsLeft).toBe(60_000);
+        expect(state.clockBudgetMs).toBe(budget);
+        expect(state.myMsLeft).toBe(budget);
 
-        // Live remaining decrements with wall clock — ~50s with some
-        // tolerance for test-runner jitter.
-        expect(state.myMsLeftLive).toBeGreaterThan(45_000);
-        expect(state.myMsLeftLive).toBeLessThan(55_000);
+        // Live remaining decrements with wall clock — ~(budget-10s)
+        // with some tolerance for test-runner jitter.
+        expect(state.myMsLeftLive).toBeGreaterThan(budget - 15_000);
+        expect(state.myMsLeftLive).toBeLessThan(budget - 5_000);
 
-        // Urgency is categorical: ~83% remaining = 'fresh'.
+        // Urgency is categorical: > 66% remaining = 'fresh' (the
+        // 10s elapsed leaves >= 83% on a 60s budget, even more on
+        // bigger budgets, so 'fresh' for every game).
         expect(state.urgency).toBe("fresh");
 
-        // turnDeadline is an ISO timestamp ~50s in the future.
+        // turnDeadline is an ISO timestamp at (turnStartedAt + budget).
         expect(typeof state.turnDeadline).toBe("string");
         const deadlineMs = new Date(state.turnDeadline as string).getTime();
-        const expectedDeadline = tenSecAgo.getTime() + 60_000;
+        const expectedDeadline = tenSecAgo.getTime() + budget;
         expect(Math.abs(deadlineMs - expectedDeadline)).toBeLessThan(1000);
 
         // It is the agent's turn (p1 in system mode).
@@ -937,19 +950,33 @@ describe("coliseum_match_state — wall-clock fields (all games)", () => {
       });
       if (r.kind !== "match") throw new Error("expected match");
       const matchId = r.match.id;
-      const budget = 60_000;
+      // Tic-tac-toe's per-game floor stays at 60s after the 2026-05
+      // recalibration. Scale the elapsed-times against that.
+      const budget = r.match.clockBudgetMs;
 
-      // fresh: just started — 100% remaining
+      // Mark agent as ready up front so subsequent state reads don't
+      // reset turnStartedAt (the moveCount=0 readiness gate fires once
+      // on first state read by the on-turn agent).
+      await db
+        .update(matches)
+        .set({ agentReadyAt: new Date() })
+        .where(eq(matches.id, matchId));
+
+      // fresh: just started — 100% remaining (turnStartedAt = now)
+      await db
+        .update(matches)
+        .set({ turnStartedAt: new Date() })
+        .where(eq(matches.id, matchId));
       let state = (await matchState.handler(
         { matchId },
         { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
       )) as Record<string, unknown>;
       expect(state.urgency).toBe("fresh");
 
-      // half: 50% remaining = 30s elapsed
+      // half: 50% remaining
       await db
         .update(matches)
-        .set({ turnStartedAt: new Date(Date.now() - 30_000) })
+        .set({ turnStartedAt: new Date(Date.now() - budget * 0.5) })
         .where(eq(matches.id, matchId));
       state = (await matchState.handler(
         { matchId },
@@ -957,10 +984,10 @@ describe("coliseum_match_state — wall-clock fields (all games)", () => {
       )) as Record<string, unknown>;
       expect(state.urgency).toBe("half");
 
-      // low: 20% remaining = 48s elapsed
+      // low: 20% remaining = 80% elapsed
       await db
         .update(matches)
-        .set({ turnStartedAt: new Date(Date.now() - 48_000) })
+        .set({ turnStartedAt: new Date(Date.now() - budget * 0.8) })
         .where(eq(matches.id, matchId));
       state = (await matchState.handler(
         { matchId },
@@ -968,10 +995,10 @@ describe("coliseum_match_state — wall-clock fields (all games)", () => {
       )) as Record<string, unknown>;
       expect(state.urgency).toBe("low");
 
-      // critical: 5% remaining = 57s elapsed
+      // critical: 5% remaining = 95% elapsed
       await db
         .update(matches)
-        .set({ turnStartedAt: new Date(Date.now() - 57_000) })
+        .set({ turnStartedAt: new Date(Date.now() - budget * 0.95) })
         .where(eq(matches.id, matchId));
       state = (await matchState.handler(
         { matchId },

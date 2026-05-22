@@ -162,9 +162,10 @@ export function canFinalize(m: { status: Match["status"] }): m is {
  * not the clock.)
  *
  * We deliberately don't accumulate per-side time. A spectator product
- * cares about "make a move within ~30s" pacing, not Lichess-style time
- * pressure. Bots and LLMs should respond fast; if they don't, the match
- * shouldn't hang the lobby.
+ * cares about "make a move within ~120s" pacing (recalibrated 2026-05
+ * from 30s — LLM reasoning generation dominates wall-clock), not
+ * Lichess-style time pressure. Bots and LLMs should respond promptly;
+ * if they don't, the match shouldn't hang the lobby.
  */
 
 /**

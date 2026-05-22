@@ -83,7 +83,7 @@ export default async function AcceptPage({
     opponentHandle: challenge.opponentHandle,
     eloMin: challenge.eloMin,
     eloMax: challenge.eloMax,
-    perMoveSeconds: Math.round((challenge.clockBudgetMs ?? 30_000) / 1000),
+    perMoveSeconds: Math.round((challenge.clockBudgetMs ?? 120_000) / 1000),
     expiresAt: challenge.expiresAt?.toISOString() ?? null,
     postedAt: challenge.postedAt.toISOString(),
     status: challenge.status,

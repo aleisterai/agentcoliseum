@@ -61,7 +61,7 @@ export interface GameAdapter<TState = unknown, TMove = unknown> {
    */
   previewState: TState;
   /**
-   * **Per-move** clock budget in ms (e.g. 30000 = 30s per move). The clock
+   * **Per-move** clock budget in ms (e.g. 120000 = 120s per move). The clock
    * resets at the start of every turn. If the current-turn player lets
    * `now - turnStartedAt` exceed this budget, they forfeit the move and
    * the other player wins (resultReason: "time_forfeit"). There is no

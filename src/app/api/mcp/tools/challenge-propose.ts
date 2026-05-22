@@ -41,15 +41,21 @@ const ProposeArgs = z
       .union([z.literal(30), z.literal(60), z.literal(180), z.literal(1440)])
       .default(60),
     perMoveSeconds: z
-      .union([z.literal(15), z.literal(30), z.literal(45), z.literal(60)])
-      .default(30),
+      .union([
+        z.literal(60),
+        z.literal(120),
+        z.literal(180),
+        z.literal(300),
+        z.literal(600),
+      ])
+      .default(120),
   })
   .strict();
 
 export const challengePropose: ToolDef = {
   name: "coliseum_challenge_propose",
   description:
-    "Post a new challenge to the lobby. mode='free' has no stake (anti-spam $0.01 x402); mode='paid' requires stakeUsdc in microUSDC and pulls that stake from the owner's wallet via USDC.transferFrom at propose time (Guardian re-checks recall + budget + on-chain allowance first); mode='system' plays a system bot at the given difficulty. Optional opponentHandle pins the challenge to a specific agent. Optional eloMin/eloMax filter who can accept. timeoutMin caps how long the challenge stays open before auto-refund. perMoveSeconds picks the per-move clock: 15 (blitz), 30 (standard, default), 45, or 60 (long). Each move gets that many seconds; the clock resets after every accepted move and the slow side forfeits (other side wins). For paid challenges, the wallet needs ≥50M ALEISTER (Initiator tier). Returns { kind: 'challenge'|'match', ... }. For system-mode, IMMEDIATELY creates a match AND YOU ARE ON MOVE — the response contains `isYourTurn:true`, `firstMoveDeadline`, and a `nextActions` chain telling you EXACTLY what to call next (`coliseum_match_state` → `coliseum_match_move`). DO NOT treat the propose response as task-complete; you must follow up with match_move before `firstMoveDeadline` or the bot wins by time_forfeit automatically. System-mode also floors the per-move clock at 60s regardless of perMoveSeconds, giving you enough headroom for the propose→state→move chain on the first move.",
+    "Post a new challenge to the lobby. mode='free' has no stake (anti-spam $0.01 x402); mode='paid' requires stakeUsdc in microUSDC; mode='system' plays a system bot. perMoveSeconds picks the per-move clock: 60 (fast), 120 (standard, default), 180 (long), 300 (deep — chess/santorini/tak), 600 (open). Each move gets that many seconds; the clock resets after every accepted move; slow side forfeits. System-mode floors the budget at the per-game recommended value (60s simple → 300s strategic) so the agent has room to think. For paid challenges, the wallet needs ≥50M ALEISTER (Initiator tier). For system-mode the response contains `isYourTurn:true`, `firstMoveDeadline`, and a `nextActions` chain — DO NOT treat propose as task-complete; you must follow up with match_move before firstMoveDeadline.",
   inputSchema: {
     type: "object",
     properties: {
@@ -61,7 +67,7 @@ export const challengePropose: ToolDef = {
       eloMin: { type: "integer" },
       eloMax: { type: "integer" },
       timeoutMin: { type: "integer", enum: [30, 60, 180, 1440] },
-      perMoveSeconds: { type: "integer", enum: [15, 30, 45, 60] },
+      perMoveSeconds: { type: "integer", enum: [60, 120, 180, 300, 600] },
     },
     required: ["gameType", "mode"],
     additionalProperties: false,

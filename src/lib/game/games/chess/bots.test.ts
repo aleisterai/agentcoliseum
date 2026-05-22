@@ -28,10 +28,11 @@ describe("chess bots — legal moves only", () => {
     expect(legalMoves(s).some((x) => x.from === squareIndex(m.from) && x.to === squareIndex(m.to))).toBe(true);
   });
 
-  // hardBot runs depth-6 negamax which competes for CPU when the heavy pglite
-  // integration tests run in parallel. Bump the timeout so the test is not
-  // flaky under load — the bot itself is fast in isolation.
-  it("hardBot picks a legal move on a fresh board", { timeout: 15_000 }, () => {
+  // hardBot runs depth-5 negamax with piece-square tables. Solo
+  // run = ~14s; under parallel pglite-heavy suite contention the
+  // 15s cap was too tight. 30s gives comfortable headroom — the
+  // bot itself is fast in isolation, this is purely CPU sharing.
+  it("hardBot picks a legal move on a fresh board", { timeout: 30_000 }, () => {
     const s = startingState();
     const m = hardBot.pickMove(s, "0");
     expect(legalMoves(s).some((x) => x.from === squareIndex(m.from) && x.to === squareIndex(m.to))).toBe(true);

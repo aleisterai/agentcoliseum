@@ -44,6 +44,7 @@ import {
   UnknownGameTypeError,
 } from "@/lib/game/server-flow";
 import type { ToolDef } from "./_types";
+import { computeUrgency } from "./_shared";
 
 /**
  * The full mood vocabulary the LLM may submit. Kept here (not imported
@@ -257,12 +258,55 @@ export const matchMove: ToolDef = {
         emotionTrigger: v.emotionTrigger ?? null,
       });
       const isMyTurn = updated.currentTurnAgentId === agent.id;
+      // Embed the live clock + urgency in the move response so the
+      // agent can plan its next action without a separate
+      // match_state round-trip. Every round-trip is itself wall-
+      // clock time, so this matters most when urgency is low/critical.
+      const isP1 = updated.p1AgentId === agent.id;
+      const myMsBudget = isP1 ? updated.p1MsLeft : updated.p2MsLeft;
+      const opponentMsBudget = isP1 ? updated.p2MsLeft : updated.p1MsLeft;
+      const clockTicking = updated.status === "active";
+      const elapsedThisTurn = clockTicking
+        ? Math.max(0, Date.now() - updated.turnStartedAt.getTime())
+        : 0;
+      const liveRemaining = clockTicking
+        ? Math.max(0, updated.clockBudgetMs - elapsedThisTurn)
+        : updated.clockBudgetMs;
+      const myMsLeftLive = isMyTurn ? liveRemaining : updated.clockBudgetMs;
+      const opponentMsLeftLive = !isMyTurn && clockTicking
+        ? liveRemaining
+        : updated.clockBudgetMs;
+      const turnDeadline = clockTicking
+        ? new Date(
+            updated.turnStartedAt.getTime() + updated.clockBudgetMs,
+          ).toISOString()
+        : null;
+      const urgency = computeUrgency(
+        isMyTurn ? myMsLeftLive : opponentMsLeftLive,
+        updated.clockBudgetMs,
+      );
       return {
         matchId: updated.id,
         status: updated.status,
         moveCount: updated.moveCount,
         isMyTurn,
         currentTurnAgentId: updated.currentTurnAgentId,
+        // Static per-move budget. myMsLeft kept as deprecated alias
+        // for existing agents — new code should use myMsBudget.
+        myMsBudget,
+        myMsLeft: myMsBudget,
+        opponentMsBudget,
+        opponentMsLeft: opponentMsBudget,
+        // Live remaining + urgency so a follow-up state read isn't
+        // strictly required before the next move.
+        myMsLeftLive,
+        opponentMsLeftLive,
+        turnDeadline,
+        urgency,
+        clockBudgetMs: updated.clockBudgetMs,
+        clockRule: "per-move wall-clock; resets on every move",
+        // Legacy field names retained for backward compat with the
+        // small number of agents reading these directly.
         p1MsLeft: updated.p1MsLeft,
         p2MsLeft: updated.p2MsLeft,
         winnerAgentId: updated.winnerAgentId,
@@ -282,7 +326,19 @@ export const matchMove: ToolDef = {
         };
       }
       if (err instanceof IllegalMoveError) {
-        return { error: `illegal_move: ${err.message}` };
+        // Structured error so the LLM can pattern-match. Kept `error`
+        // as a free-text string for backward compat with agents that
+        // grep for "illegal_move", but added `reason` (machine-readable
+        // category), `detail` (engine's specific complaint), `got`
+        // (the rejected payload), and a hint pointing at the docs.
+        return {
+          error: `illegal_move: ${err.message}`,
+          reason: "illegal_move",
+          detail: err.message,
+          got: v.payload,
+          hint:
+            "Compare your payload against coliseum_docs_read({topic:'games'}). Field names are exact (Connect 4 uses `column`, not `col`; checkers uses `path`, not `to`; quoridor uses `kind`+`to`/`wall`, not nested `pawn`/`wall`).",
+        };
       }
       if (err instanceof UnknownGameTypeError) {
         return { error: `unknown_game_type: ${err.message}` };

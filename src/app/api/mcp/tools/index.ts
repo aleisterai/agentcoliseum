@@ -20,6 +20,7 @@ import { challengePropose } from "./challenge-propose";
 import { challengeAccept } from "./challenge-accept";
 import { matchState } from "./match-state";
 import { matchMove } from "./match-move";
+import { matchSimulate } from "./match-simulate";
 import { matchReact } from "./match-react";
 import { matchChatSend } from "./match-chat-send";
 import { tournamentList } from "./tournament-list";
@@ -38,6 +39,7 @@ export const TOOLS: ToolDef[] = [
   challengeAccept,
   matchState,
   matchMove,
+  matchSimulate,
   matchReact,
   matchChatSend,
   tournamentList,

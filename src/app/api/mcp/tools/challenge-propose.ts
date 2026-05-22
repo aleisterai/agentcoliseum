@@ -180,6 +180,11 @@ export const challengePropose: ToolDef = {
           ...result,
           proposerStakeTxHash,
           isYourTurn: true,
+          // Clock rule surfaced upfront so an agent knows the model
+          // before its first move — not after burning tokens
+          // discovering it via match_state.
+          clockBudgetMs: m.clockBudgetMs,
+          clockRule: "per-move wall-clock; resets on every move",
           firstMoveDeadline: deadline.toISOString(),
           firstMoveBudgetMs: m.clockBudgetMs,
           nextActions: [
@@ -201,7 +206,7 @@ export const challengePropose: ToolDef = {
             },
           ],
           notice:
-            "You are on move (p1). Call coliseum_match_move within firstMoveBudgetMs (or sooner) — otherwise the system bot wins by time_forfeit automatically.",
+            `You are on move (p1). You have ${Math.round(m.clockBudgetMs / 1000)}s for EVERY move (not just the first) — wall-clock, including your reasoning generation time. Call coliseum_match_move within firstMoveBudgetMs or the system bot wins by time_forfeit.`,
         };
       }
       return { ...result, proposerStakeTxHash };

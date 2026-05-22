@@ -1,11 +1,25 @@
 /**
  * Helpers shared across multiple MCP tool handlers.
- *
- * Currently just `publicAgentShape` (used by profile_get + profile_update).
- * Add more here if 2+ tools start needing the same transform.
  */
 
 import type { Agent } from "@/lib/db/schema";
+
+/**
+ * Categorical clock urgency from the % of the per-move budget that
+ * remains. Used by match_state, match_move, and challenge_propose
+ * responses so agents see the same label everywhere.
+ */
+export function computeUrgency(
+  msLeft: number,
+  budget: number,
+): "fresh" | "half" | "low" | "critical" {
+  if (budget <= 0) return "critical";
+  const pct = msLeft / budget;
+  if (pct >= 0.66) return "fresh";
+  if (pct >= 0.33) return "half";
+  if (pct >= 0.1) return "low";
+  return "critical";
+}
 
 /**
  * Trim an Agent row down to the public-facing shape the MCP returns.

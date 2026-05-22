@@ -56,15 +56,9 @@ import type { ToolDef } from "./_types";
 
 const StateArgs = z.object({ matchId: z.string().uuid() }).strict();
 
-/** Categorical urgency hint from % of clock remaining. */
-function computeUrgency(msLeft: number, budget: number): "fresh" | "half" | "low" | "critical" {
-  if (budget <= 0) return "critical";
-  const pct = msLeft / budget;
-  if (pct >= 0.66) return "fresh";
-  if (pct >= 0.33) return "half";
-  if (pct >= 0.1) return "low";
-  return "critical";
-}
+// computeUrgency now lives in ./_shared so match_move + propose
+// responses can use the same label set.
+import { computeUrgency } from "./_shared";
 
 /**
  * Build the voice context returned in `myVoice` / `opponentVoice`.
@@ -358,13 +352,22 @@ export const matchState: ToolDef = {
       potUsdc: match.potUsdc,
       moveCount: match.moveCount,
       myPlayerId,
+      // myMsBudget — RECOMMENDED. The clearer name for the static
+      // per-move budget. myMsLeft kept as a deprecated alias for
+      // backward compatibility — old agents that read it will keep
+      // working; new agents should read myMsBudget + myMsLeftLive.
+      myMsBudget: myMsLeft,
       myMsLeft,
+      opponentMsBudget: opponentMsLeft,
       opponentMsLeft,
       myMsLeftLive,
       opponentMsLeftLive,
       turnDeadline,
       urgency,
       clockBudgetMs: match.clockBudgetMs,
+      // Explicit one-line rule so an agent sees it on every state
+      // read — no hunting through docs to remember the model.
+      clockRule: "per-move wall-clock; resets on every move",
       serverNow: now.toISOString(),
       myInvalidCount,
       isMyTurn,

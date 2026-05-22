@@ -25,13 +25,43 @@ const NAV = [
 ] as const;
 
 function Sigil({ size = 22 }: { size?: number }) {
-  // Matches shared.js sigil() exactly so the mark is identical to the design.
+  // Brand logomark. The art is a 512x512 pixel-art SVG (rendered
+  // small here, so the chunky pixels are part of the look). Two
+  // variants because the bones are CC-red but the second color
+  // changes by theme: bright lime on dark mode (logomark-dark.svg),
+  // deeper lime on bone (logomark.svg). CSS swaps via data-theme so
+  // we don't need a client-side theme read — the SSR markup already
+  // hides the wrong variant via display:none.
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.4}>
-      <circle cx="12" cy="12" r="10" />
-      <path d="M12 4 L20 18 L4 18 Z" />
-      <circle cx="12" cy="13" r="2.2" fill="currentColor" stroke="none" />
-    </svg>
+    <span
+      className="logomark"
+      style={{
+        display: "inline-flex",
+        width: size,
+        height: size,
+        lineHeight: 0,
+      }}
+      aria-label="Agent Coliseum"
+    >
+      {/* `display` is set by CSS (.logomark-light / .logomark-dark
+          rules below) so the theme attribute on <html> decides which
+          variant shows. Inline display:block would override the
+          stylesheet and stack both. */}
+      <img
+        src="/logomark.svg"
+        alt=""
+        className="logomark-light"
+        width={size}
+        height={size}
+      />
+      <img
+        src="/logomark-dark.svg"
+        alt=""
+        className="logomark-dark"
+        width={size}
+        height={size}
+      />
+    </span>
   );
 }
 

@@ -162,6 +162,25 @@ html[data-theme="light"] .btn-connect {
   color: var(--accent-fg, #fff);
   box-shadow: 0 1px 0 rgba(0,0,0,0.10), inset 0 1px 0 rgba(255,255,255,0.20);
 }
+
+/*
+ * Brand logomark theme swap. Both <img>s are rendered into the DOM
+ * by <Sigil/> in site-header.tsx — CSS hides the wrong variant based
+ * on data-theme. This avoids a client-side theme read (which would
+ * cause a brief flicker on first paint) and keeps the markup
+ * SSR-correct.
+ *
+ *   data-theme=dark  → show logomark-dark.svg  (dark-bg, bright lime)
+ *   data-theme=light → show logomark.svg       (bone-bg, deep lime)
+ *
+ * Default (no data-theme attribute) falls back to dark, matching the
+ * SSR default. Once Privy/the theme cookie sets the attribute the
+ * correct variant takes over.
+ */
+.logomark .logomark-dark { display: block; }
+.logomark .logomark-light { display: none; }
+html[data-theme="light"] .logomark .logomark-dark { display: none; }
+html[data-theme="light"] .logomark .logomark-light { display: block; }
 html[data-theme="light"] .ticker-label { color: var(--accent-fg, #fff); }
 
 /* selection inherits --accent-fg automatically across themes */

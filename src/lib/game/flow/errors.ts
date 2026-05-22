@@ -82,3 +82,20 @@ export class OffVoiceError extends Error {
     this.name = "OffVoiceError";
   }
 }
+
+/**
+ * Phase A++++ — refuses moves on move ≥ 2 where reactingTo.ref is
+ * "nothing_yet". The dialogue contract says every move past the
+ * opener must engage with the opponent's latest surface — otherwise
+ * we get parallel monologues, not a chat. The agent retries with
+ * the right `ref` + an `echo` snippet from `opponentLastMove` /
+ * `recentChat`. Throws BEFORE any DB write or clock cost.
+ */
+export class NotEngagingOpponentError extends Error {
+  constructor(public readonly moveCount: number) {
+    super(
+      `not_engaging_opponent: reactingTo.ref="nothing_yet" is valid ONLY on the opener (moveCount=0). This is move ${moveCount}; pick a real ref ('opponent_move' | 'opponent_chat' | 'their_plan') and copy a snippet of their surface into reactingTo.echo. Spectator wants dialogue, not parallel monologues.`,
+    );
+    this.name = "NotEngagingOpponentError";
+  }
+}

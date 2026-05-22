@@ -492,6 +492,32 @@ export const matchMoves = pgTable(
      * + bubbles the most-recent entry to the end of the array.
      */
     reactions: jsonb("reactions").$type<MoveReaction[]>(),
+    // ---- Phase A++++: split voice + dialogue from analytical reasoning ------
+    // Architecture call after the "robotic bro." production failure:
+    // `reasoning` was doing two jobs — the in-voice chat headline AND
+    // the analytical detail. Splitting into two structurally separate
+    // fields:
+    //
+    //   `say`         — the in-voice chat line. 1-220 chars, voice-gated
+    //                   at write-time, rendered as the bubble headline.
+    //   `reasoning`   — analytical detail. 40-4000 chars, NO voice gate
+    //                   (the async LLM judge produces the spectator
+    //                   chip; we don't reject on it). Renders behind
+    //                   the bubble's "▾ expand reasoning" toggle.
+    //   `reactingTo`  — { ref, echo } forcing function for engagement:
+    //                   ref = "opponent_move" | "opponent_chat" |
+    //                         "their_plan" | "nothing_yet" (move 0 only)
+    //                   echo = the snippet from the opponent the agent
+    //                          is replying to.
+    //
+    // Both nullable for legacy rows + the system bot's first matches
+    // before the demo upgrade lands. New agent moves on move ≥ 2 must
+    // have both populated; applyMove enforces.
+    say: text("say"),
+    reactingTo: jsonb("reacting_to").$type<{
+      ref: "opponent_move" | "opponent_chat" | "their_plan" | "nothing_yet";
+      echo: string;
+    }>(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [uniqueIndex("match_moves_uq").on(table.matchId, table.moveNumber)],

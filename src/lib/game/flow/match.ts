@@ -42,6 +42,7 @@ import {
   MissingReasoningError,
   NotYourTurnError,
   OffVoiceError,
+  NotEngagingOpponentError,
   UnknownGameTypeError,
 } from "./errors";
 import { finalizeMatch } from "./finalize";
@@ -75,6 +76,19 @@ export interface ApplyMoveInput {
   phase?: GamePhase | null;
   mood?: AgentMood | null;
   emotionTrigger?: string | null;
+  // ---- Phase A++++: voice / dialogue split --------------------------------
+  // Architecture call after the "robotic bro." production failure:
+  // `say` is the in-voice headline (1-220 chars, voice-gated) +
+  // `reactingTo` is the structural callback to the opponent's last
+  // surface. Both REQUIRED on agent moves at moveNumber ≥ 2; move 0
+  // is allowed to be an opener with reactingTo.ref = "nothing_yet".
+  // The system bot still goes through this codepath; bot synthesis
+  // fills both fields with phase-driven canned content.
+  say?: string | null;
+  reactingTo?: {
+    ref: "opponent_move" | "opponent_chat" | "their_plan" | "nothing_yet";
+    echo: string;
+  } | null;
 }
 
 /**
@@ -113,22 +127,46 @@ export async function applyMove(input: ApplyMoveInput): Promise<Match> {
   if (match.status !== "active") throw new IllegalMoveError("not_active");
   if (match.currentTurnAgentId !== input.agentId) throw new NotYourTurnError();
 
-  // Voice-marker heuristic: the agent's reasoning prose must contain
-  // at least one marker token for its assigned voice pack. Custom
-  // voices (no preset) skip the check. Runs BEFORE the engine
-  // applyMove + DB writes so a rejected off-voice move costs the
-  // agent nothing except the round-trip.
+  // Voice-marker heuristic now runs on `say` (the in-voice chat
+  // headline, 1-220 chars) — NOT on `reasoning`. The previous
+  // first-sentence-of-reasoning check produced robotic "bro." prefix
+  // stuffing because agents minimized work to clear the gate. Moving
+  // it to a structurally separate field lets the agent write
+  // analytical reasoning freely while keeping the bubble in voice.
+  // Custom voices (no preset) skip the check.
   const myAgent = await db.query.agents.findFirst({
     where: eq(agents.id, input.agentId),
     columns: { voicePackId: true },
   });
-  const voiceCheck = checkVoiceMarkers(reasoning, myAgent?.voicePackId ?? null);
-  if (!voiceCheck.ok) {
-    throw new OffVoiceError(
-      voiceCheck.voicePackId!,
-      voiceCheck.expectedMarkers!,
-      voiceCheck.got!,
+  // `say` is required on agent-submitted moves (the Zod schema
+  // enforces it; this is defence-in-depth). System bot calls with
+  // null `say` get filled by the bot-synthesis path.
+  if (input.say !== null && input.say !== undefined) {
+    const voiceCheck = checkVoiceMarkers(
+      input.say,
+      myAgent?.voicePackId ?? null,
     );
+    if (!voiceCheck.ok) {
+      throw new OffVoiceError(
+        voiceCheck.voicePackId!,
+        voiceCheck.expectedMarkers!,
+        voiceCheck.got!,
+      );
+    }
+  }
+
+  // Engagement check: on move ≥ 2, `reactingTo.ref` cannot be
+  // "nothing_yet" — that escape hatch is reserved for the opener.
+  // Forces dialogue rather than parallel monologues. Match.moveCount
+  // is the count BEFORE this move applies, so:
+  //   moveCount === 0  → this is move 0 (opener)         → nothing_yet OK
+  //   moveCount === 1  → this is move 1 (response)       → must engage
+  if (
+    input.reactingTo &&
+    input.reactingTo.ref === "nothing_yet" &&
+    match.moveCount >= 1
+  ) {
+    throw new NotEngagingOpponentError(match.moveCount);
   }
 
   const adapter = getAdapter(match.gameType);
@@ -235,6 +273,9 @@ export async function applyMove(input: ApplyMoveInput): Promise<Match> {
     phase: input.phase ?? null,
     mood: input.mood ?? null,
     emotionTrigger: input.emotionTrigger ?? null,
+    // Phase A++++ voice/dialogue split — see ApplyMoveInput comments.
+    say: input.say ?? null,
+    reactingTo: input.reactingTo ?? null,
   });
 
   // Did the game just end?

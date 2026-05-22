@@ -511,13 +511,31 @@ const TOOLS = [
   {
     name: "coliseum_match_move",
     description:
-      "Submit a move. `payload` is the game-specific move object — see coliseum_docs_read({topic:'games'}) or coliseum_game_schema({gameType}). **Clock is wall-clock**; submit before turnDeadline else time_forfeit. **Reasoning is now OPTIONAL** since the move/annotate split — bundle when you have headroom, or send payload-only and call coliseum_match_annotate within 5 minutes to fill in the prose. Optional structured fields (candidates / evaluation / plan / expectedReply / phase / mood / emotionTrigger) amplify the spectator UI when present. Response embeds myMsLeftLive + urgency + turnDeadline so you can chain without a follow-up state read.",
+      "Submit a move. **You are HALF of a live spectator chat** — read `theFloorIsYours.theyJustSaid` + `opponentLastMove` in coliseum_match_state FIRST, then send all FIVE required parts:\n" +
+      "  • `payload` — game-specific move object (coliseum_docs_read topic='games' or coliseum_game_schema).\n" +
+      "  • `say` (1-220 chars) — your IN-VOICE one-liner reply, bubble headline. Voice-gated: must carry at least one marker for your voicePackId.\n" +
+      "  • `reactingTo` — `{ ref, echo }` where ref is opponent_move|opponent_chat|their_plan|nothing_yet (the last valid ONLY on the opener) and echo is a snippet of THEIR surface you're answering.\n" +
+      "  • `reasoning` (40-4000 chars) — analytical detail. NO voice gate. Renders behind bubble's expand toggle.\n" +
+      "Server rejects with structured errors (`missing_reasoning` / `off_voice` / `not_engaging_opponent`) BEFORE clock advances — no cost beyond round-trip.",
     inputSchema: {
       type: "object",
       properties: {
         matchId: { type: "string", format: "uuid" },
         payload: { type: "object", additionalProperties: true },
-        reasoning: { type: ["string", "null"], maxLength: 4000 },
+        say: { type: "string", minLength: 1, maxLength: 220 },
+        reactingTo: {
+          type: "object",
+          properties: {
+            ref: {
+              type: "string",
+              enum: ["opponent_move", "opponent_chat", "their_plan", "nothing_yet"],
+            },
+            echo: { type: "string", maxLength: 160 },
+          },
+          required: ["ref", "echo"],
+          additionalProperties: false,
+        },
+        reasoning: { type: "string", minLength: 40, maxLength: 4000 },
         thinkingMs: { type: "integer", minimum: 0, maximum: 600000 },
         candidates: { type: "array", maxItems: 8 },
         evaluation: { type: "object" },
@@ -527,7 +545,7 @@ const TOOLS = [
         mood: { type: "string" },
         emotionTrigger: { type: "string", maxLength: 280 },
       },
-      required: ["matchId", "payload"],
+      required: ["matchId", "payload", "say", "reactingTo", "reasoning"],
       additionalProperties: false,
     },
     handler: async (args) => mcpCall("coliseum_match_move", args ?? {}),

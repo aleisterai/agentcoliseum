@@ -1109,8 +1109,9 @@ describe("coliseum_match_move — server-fills thinkingMs when omitted", () => {
 
       // Notice: NO thinkingMs in the payload. tic-tac-toe payload is
       // { index: 0..8 }.
-      const out = (await matchMove.handler(
-        {
+      const out = (await matchMove.handler({
+          say: "Test say line meets voice and length requirements",
+          reactingTo: { ref: "opponent_move", echo: "their move" },
           matchId,
           payload: { index: 0 },
           reasoning: R,
@@ -1178,8 +1179,9 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
       if (r.kind !== "match") throw new Error("expected match");
       const matchId = r.match.id;
 
-      const out = (await matchMove.handler(
-        {
+      const out = (await matchMove.handler({
+          say: "Test say line meets voice and length requirements",
+          reactingTo: { ref: "opponent_move", echo: "their move" },
           matchId,
           payload: { index: 4 },
           reasoning:
@@ -1248,8 +1250,9 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
       if (r.kind !== "match") throw new Error("expected match");
 
       // No structured fields, no thinkingMs — the v1 contract.
-      const out = (await matchMove.handler(
-        {
+      const out = (await matchMove.handler({
+          say: "Test say line meets voice and length requirements",
+          reactingTo: { ref: "opponent_move", echo: "their move" },
           matchId: r.match.id,
           payload: { index: 0 },
           reasoning: "Corner play — sets up two-line fork potential later in the match.",
@@ -1286,8 +1289,9 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
       if (r.kind !== "match") throw new Error("expected match");
 
       // Bogus mood label
-      const badMood = (await matchMove.handler(
-        {
+      const badMood = (await matchMove.handler({
+          say: "Test say line meets voice and length requirements",
+          reactingTo: { ref: "opponent_move", echo: "their move" },
           matchId: r.match.id,
           payload: { index: 0 },
           reasoning: "x",
@@ -1298,8 +1302,9 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
       expect(badMood.error).toMatch(/validation_failed/);
 
       // Evaluation score out of [-1, 1]
-      const badScore = (await matchMove.handler(
-        {
+      const badScore = (await matchMove.handler({
+          say: "Test say line meets voice and length requirements",
+          reactingTo: { ref: "opponent_move", echo: "their move" },
           matchId: r.match.id,
           payload: { index: 0 },
           reasoning: "x",
@@ -1310,8 +1315,9 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
       expect(badScore.error).toMatch(/validation_failed/);
 
       // candidates exceeding max of 8
-      const tooManyCandidates = (await matchMove.handler(
-        {
+      const tooManyCandidates = (await matchMove.handler({
+          say: "Test say line meets voice and length requirements",
+          reactingTo: { ref: "opponent_move", echo: "their move" },
           matchId: r.match.id,
           payload: { index: 0 },
           reasoning: "x",
@@ -1422,8 +1428,9 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
       const matchId = r.match.id;
 
       // Submit a move with structured payload.
-      const move = (await matchMove.handler(
-        {
+      const move = (await matchMove.handler({
+          say: "Test say line meets voice and length requirements",
+          reactingTo: { ref: "opponent_move", echo: "their move" },
           matchId,
           payload: { index: 4 },
           reasoning: "Center first move — strongest opening cell in tic-tac-toe.",
@@ -1510,8 +1517,9 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
       ];
 
       for (const m0 of movesScript) {
-        const res = (await matchMove.handler(
-          {
+        const res = (await matchMove.handler({
+            say: "Test say line meets voice and length requirements",
+            reactingTo: { ref: "opponent_move", echo: "their move" },
             matchId: m.id,
             payload: m0.payload,
             reasoning: `${m0.mood} move — playing index ${m0.payload.index} as part of the planned line.`,
@@ -1594,8 +1602,9 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
       });
       if (r.kind !== "match") throw new Error("expected match");
 
-      await matchMove.handler(
-        {
+      await matchMove.handler({
+          say: "Test say line meets voice and length requirements",
+          reactingTo: { ref: "opponent_move", echo: "their move" },
           matchId: r.match.id,
           payload: { index: 4 },
           reasoning: "Trying broadcast — testing realtime delivery to subscribed channels.",
@@ -1662,8 +1671,10 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
       });
 
       // p1 plays, then p2 reacts to p1's move.
-      const move = await matchMove.handler(
-        { matchId: m.id, payload: { index: 4 }, reasoning: R },
+      const move = await matchMove.handler({
+    say: "Test say line meets voice and length requirements",
+    reactingTo: { ref: "opponent_move", echo: "their move" },
+ matchId: m.id, payload: { index: 4 }, reasoning: R },
         { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
       );
       if ((move as { error?: string }).error) throw new Error(`p1 move failed`);
@@ -1705,8 +1716,10 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
         acceptorAgentId: p2.id,
       });
 
-      await matchMove.handler(
-        { matchId: m.id, payload: { index: 4 }, reasoning: R },
+      await matchMove.handler({
+    say: "Test say line meets voice and length requirements",
+    reactingTo: { ref: "opponent_move", echo: "their move" },
+ matchId: m.id, payload: { index: 4 }, reasoning: R },
         { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
       );
 
@@ -1750,8 +1763,10 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
         challengeId: ch.challenge.id,
         acceptorAgentId: p2.id,
       });
-      await matchMove.handler(
-        { matchId: m.id, payload: { index: 4 }, reasoning: R },
+      await matchMove.handler({
+    say: "Test say line meets voice and length requirements",
+    reactingTo: { ref: "opponent_move", echo: "their move" },
+ matchId: m.id, payload: { index: 4 }, reasoning: R },
         { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
       );
       await matchReact.handler(
@@ -1786,8 +1801,10 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
         challengeId: ch.challenge.id,
         acceptorAgentId: p2.id,
       });
-      await matchMove.handler(
-        { matchId: m.id, payload: { index: 4 }, reasoning: R },
+      await matchMove.handler({
+    say: "Test say line meets voice and length requirements",
+    reactingTo: { ref: "opponent_move", echo: "their move" },
+ matchId: m.id, payload: { index: 4 }, reasoning: R },
         { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
       );
       const out = (await matchReact.handler(
@@ -1901,8 +1918,9 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
       });
 
       // p1 plays move 0 with rich reasoning.
-      await matchMove.handler(
-        {
+      await matchMove.handler({
+          say: "Test say line meets voice and length requirements",
+          reactingTo: { ref: "opponent_move", echo: "their move" },
           matchId: m.id,
           payload: { index: 4 },
           reasoning: "Center is principled here — I expect a mirror response.",
@@ -2014,8 +2032,10 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
       });
 
       // p1 plays a move.
-      const moveOut = (await matchMove.handler(
-        { matchId: m.id, payload: { index: 4 }, reasoning: R },
+      const moveOut = (await matchMove.handler({
+    say: "Test say line meets voice and length requirements",
+    reactingTo: { ref: "opponent_move", echo: "their move" },
+ matchId: m.id, payload: { index: 4 }, reasoning: R },
         { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
       )) as { error?: string };
       expect(moveOut.error).toBeUndefined();

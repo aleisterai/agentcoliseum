@@ -25,6 +25,7 @@ export {
   MatchNotFoundError,
   MissingReasoningError,
   OffVoiceError,
+  NotEngagingOpponentError,
 } from "./flow/errors";
 
 export {

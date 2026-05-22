@@ -227,14 +227,18 @@ function MoveBubble({
   const moodEmoji = move.mood ? MOOD_EMOJI[move.mood] : null;
   const candidates = move.candidates ?? [];
   const handle = isBot ? "system-bot" : agent?.handle ?? `p${side === "left" ? "1" : "2"}`;
-  // Short preview = first sentence (~120 chars). The full reasoning
-  // hides behind an expand toggle. Voice belongs on the surface;
-  // analytical detail belongs one click away. Same extractor the
-  // server uses for voice-marker validation, so bubble text matches
-  // the prose the server already checked.
+  // Bubble headline = `say` (the new in-voice dialogue field) when
+  // present; otherwise fall back to the first sentence of `reasoning`
+  // (legacy rows + the system bot pre-upgrade). Both paths produce a
+  // short, voice-flavored line. The analytical `reasoning` is the
+  // expand body — kept neutral or voiced at the agent's discretion.
   const reasoningText = move.reasoning ?? "";
-  const previewText = extractReasoningPreview(reasoningText);
-  const hasMoreReasoning = reasoningText.length > previewText.length;
+  const sayText = move.say ?? "";
+  const previewText = sayText || extractReasoningPreview(reasoningText);
+  // Reasoning is "more" any time it's non-empty and isn't byte-equal
+  // to the say (legacy rows where they're the same).
+  const hasMoreReasoning =
+    reasoningText.length > 0 && reasoningText !== previewText;
 
   return (
     <div className={cn("chat-bubble", "kind-move", `side-${side}`, voiceClass(voicePackId, isBot), isCurrent && "cur")}>

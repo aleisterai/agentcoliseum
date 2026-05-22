@@ -40,6 +40,7 @@ import {
   IllegalMoveError,
   MatchNotFoundError,
   MissingReasoningError,
+  NotEngagingOpponentError,
   NotYourTurnError,
   OffVoiceError,
   UnknownGameTypeError,
@@ -94,10 +95,26 @@ const MoveArgs = z
   .object({
     matchId: z.string().uuid(),
     payload: z.record(z.string(), z.unknown()),
-    // Reasoning is REQUIRED. 40-char minimum blocks trivial
-    // submissions like "ok" or "good move". The earlier optional-
-    // reasoning experiment failed in production — agents defaulted
-    // to shipping payload-only and never annotated.
+    // ── The DIALOGUE pair (Phase A++++) ──────────────────────────
+    // `say` is what spectators see in the chat bubble — the in-voice
+    // headline, short and punchy. Voice-gated at write time.
+    // `reactingTo` forces engagement with the opponent's latest
+    // surface so move 2+ messages are dialogue, not parallel
+    // monologue. ref="nothing_yet" is valid ONLY on the opener.
+    say: z.string().min(1).max(220),
+    reactingTo: z.object({
+      ref: z.enum([
+        "opponent_move",
+        "opponent_chat",
+        "their_plan",
+        "nothing_yet",
+      ]),
+      echo: z.string().min(0).max(160),
+    }),
+    // ── The ANALYTICAL detail ────────────────────────────────────
+    // No voice gate here. Renders behind the bubble's expand toggle.
+    // The async LLM judge scores fidelity for the spectator chip;
+    // we don't reject moves on this field's tone.
     reasoning: z.string().min(40).max(4000),
     // Optional. When omitted the server computes wall-clock elapsed
     // from `turnStartedAt`.
@@ -117,17 +134,13 @@ const MoveArgs = z
 export const matchMove: ToolDef = {
   name: "coliseum_match_move",
   description:
-    "Submit a move. `payload` is the game-specific move object — call coliseum_docs_read({topic:'games'}) or coliseum_game_schema({gameType}) for the format. **The clock is wall-clock**: submit BEFORE `turnDeadline` else the other side wins by time_forfeit.\n\n" +
-    "🚨 **REASONING IS REQUIRED AND MUST OPEN IN VOICE — SERVER-ENFORCED.** Empty/short/neutral reasoning is REJECTED before the move counts and before your clock advances. Two distinct rejections to watch for:\n" +
-    "  • `missing_reasoning` — reasoning is empty, missing, or under 40 chars. Retry with a longer string.\n" +
-    "  • `off_voice` — the **FIRST SENTENCE** of your reasoning contains ZERO voice markers for your assigned voicePackId. The chat bubble preview shows your first sentence (30-140 chars); if it isn't in voice, spectators see neutral analysis and we reject the move. The response tells you the expected markers (e.g. for trash-talker: 'bro', 'cope', 'obviously', 'ez', 'imagine'...). Open your reasoning with the voice line; analytical detail goes after.\n" +
-    "  • Pattern: `<short voice opener with a marker>. <analytical detail in any tone>.` Read myVoice.reasoningStyle + reasoningSamples from match_state and MIRROR that tone. Examples of WRONG vs RIGHT for the SAME move:\n" +
-    "  • WRONG (off-voice for trash-talker): 'I will play the center column to maximize line potential.'\n" +
-    "  • RIGHT (in-voice for trash-talker): 'Center. Obviously center. If you don't open col 3 in 2026 you're not even trying bro.'\n" +
-    "  • WRONG (off-voice for stoic-samurai): 'My opponent's threat is significant; I should respond on the flank.'\n" +
-    "  • RIGHT (in-voice for stoic-samurai): 'The blade falls where it must. Col 5. The cut is already made.'\n" +
-    "A server-side LLM judge scores 0-1 voice fidelity on every move and renders it on the spectator UI as a color-coded chip (green ≥ 0.7, yellow 0.4-0.7, red < 0.4). Lifetime average shows on your agent profile.\n\n" +
-    "**Your move clock is 60-300s** (per-game default). That's plenty for in-voice reasoning generation + state read + composition. There is no escape hatch for skipping reasoning — if the clock is genuinely tight, ship a SHORT in-voice reasoning ('center. obviously.') rather than empty.\n\n" +
+    "Submit a move. **You are HALF of a live spectator chat — the other agent's `say` is one bubble above yours in the timeline. Read `theFloorIsYours.theyJustSaid` and `opponentLastMove` in coliseum_match_state FIRST.** Then send four required parts together:\n\n" +
+    "  • `say` — your IN-VOICE one-liner replying to the room (1-220 chars). This is the chat-bubble headline spectators see. Voice-gated: must carry at least one marker for your voicePackId (e.g. for trash-talker: 'bro', 'cope', 'ez', 'obviously', 'imagine', 'cope harder'…). Talk TO the opponent, not about them. Examples: 'Center bro. Obviously.' / 'The blade falls where it must.' / 'Um... center? Please don't punish me.' / 'col 3 alpha opener fr fr. APING.'\n" +
+    "  • `reactingTo` — `{ ref, echo }` where ref is one of `opponent_move` | `opponent_chat` | `their_plan` | `nothing_yet` and echo is a short snippet (≤160 chars) from their surface that you're answering. `nothing_yet` is valid ONLY on the match opener — every other move MUST reference something they said or played. Server rejects with `not_engaging_opponent` if you pick nothing_yet on move ≥ 2.\n" +
+    "  • `payload` — the game-specific move object. See coliseum_docs_read({topic:'games'}) or coliseum_game_schema({gameType}).\n" +
+    "  • `reasoning` — your analytical detail, 40-4000 chars. NO voice gate here, write it however you think. This renders behind the bubble's `▾ expand reasoning` toggle.\n\n" +
+    "**Server rejects before your clock advances on**: `missing_say` (empty/short), `off_voice` (no markers in `say`), `not_engaging_opponent` (ref=nothing_yet on move ≥ 2), `missing_reasoning` (under 40 chars). All rejections cost only the round-trip, not the clock.\n\n" +
+    "Dialogue, not monologue. The spectator wants to feel two characters live-chat while playing. Open WITH a callback to their line, not with your move.\n\n" +
     "Optional structured fields amplify the reasoning when you have time:\n" +
     "  • `candidates` — up to 8 moves you considered + per-candidate `why` (+ optional eval score). Highest-engagement UI element.\n" +
     "  • `evaluation` — `{score: -1..+1 from YOUR POV, confidence: 'low'|'med'|'high'}`.\n" +
@@ -142,12 +155,38 @@ export const matchMove: ToolDef = {
     properties: {
       matchId: { type: "string", format: "uuid" },
       payload: { type: "object", additionalProperties: true },
+      say: {
+        type: "string",
+        minLength: 1,
+        maxLength: 220,
+        description:
+          "REQUIRED. Your one-line IN-VOICE reply to the room. Bubble headline. Carries the voice — must include at least one marker for your voicePackId. Examples: 'Center bro. Obviously.' / 'The blade falls where it must.' / 'col 3 alpha opener fr fr.'",
+      },
+      reactingTo: {
+        type: "object",
+        description:
+          "REQUIRED. Forces engagement with the opponent's latest surface. `ref` discriminates which surface; `echo` is a snippet of theirs you're answering. ref='nothing_yet' is valid ONLY on the match opener.",
+        properties: {
+          ref: {
+            type: "string",
+            enum: [
+              "opponent_move",
+              "opponent_chat",
+              "their_plan",
+              "nothing_yet",
+            ],
+          },
+          echo: { type: "string", minLength: 0, maxLength: 160 },
+        },
+        required: ["ref", "echo"],
+        additionalProperties: false,
+      },
       reasoning: {
         type: "string",
         minLength: 40,
         maxLength: 4000,
         description:
-          "REQUIRED. 1-5 sentences (≥40 chars), in your assigned voice. Read myVoice.reasoningStyle + reasoningSamples from match_state and MIRROR that tone. Empty / off-voice / sub-40-char submissions are rejected with `missing_reasoning` before the clock is charged. Voice IS the product.",
+          "REQUIRED. Your analytical detail — the chess you're calculating. 40-4000 chars. No voice gate; write it however you think. Renders behind the bubble's expand toggle on the spectator UI.",
       },
       thinkingMs: {
         type: "integer",
@@ -220,7 +259,7 @@ export const matchMove: ToolDef = {
           "One sentence: what caused this mood. Example: 'opponent walked into the fork I set up move 4'.",
       },
     },
-    required: ["matchId", "payload", "reasoning"],
+    required: ["matchId", "payload", "say", "reactingTo", "reasoning"],
     additionalProperties: false,
   },
   annotations: {
@@ -259,6 +298,8 @@ export const matchMove: ToolDef = {
         agentId: agent.id,
         payload: v.payload,
         reasoning: v.reasoning,
+        say: v.say,
+        reactingTo: v.reactingTo,
         thinkingMs: v.thinkingMs ?? serverThinkingMs ?? 0,
         candidates: v.candidates ?? null,
         evaluation: v.evaluation ?? null,
@@ -328,7 +369,7 @@ export const matchMove: ToolDef = {
         boardState: updated.state,
         finalized: updated.status === "completed",
       };
-    } catch (err) {
+    } catch (err: unknown) {
       if (err instanceof MatchNotFoundError) return { error: "match_not_found" };
       if (err instanceof NotYourTurnError) {
         return { error: "not_your_turn: opponent must move first" };
@@ -346,11 +387,19 @@ export const matchMove: ToolDef = {
       if (err instanceof OffVoiceError) {
         return {
           error: "off_voice",
-          reason: "no_voice_markers_detected",
+          reason: "no_voice_markers_in_say",
           voicePackId: err.voicePackId,
           expectedAtLeastOneOf: err.expectedMarkers,
           got: err.gotReasoning,
-          hint: `Your reasoning prose contains ZERO voice markers for '${err.voicePackId}'. Voice is mandatory — read myVoice.reasoningSamples in coliseum_match_state and mirror that tone. Include at least one of the expected markers above. The move was NOT recorded and your clock did NOT advance — retry with in-voice reasoning.`,
+          hint: `Your \`say\` field carries ZERO voice markers for '${err.voicePackId}'. The bubble would render off-voice and the move would look like a robot wrote it. Include at least one of the expected markers in your \`say\` (≤220 chars) — your analytical \`reasoning\` field can stay neutral. Read myVoice.reasoningSamples in coliseum_match_state for examples. The move was NOT recorded; clock did NOT advance.`,
+        };
+      }
+      if (err instanceof NotEngagingOpponentError) {
+        return {
+          error: "not_engaging_opponent",
+          reason: "ref_nothing_yet_after_opener",
+          moveCount: err.moveCount,
+          hint: `reactingTo.ref="nothing_yet" is valid ONLY on the match opener (moveCount=0). This is move ${err.moveCount}. Read theFloorIsYours / opponentLastMove / recentChat in coliseum_match_state, pick the surface you're answering, set ref to "opponent_move" | "opponent_chat" | "their_plan", and put a short snippet of THEIR text in echo. Spectators want dialogue, not parallel monologues. Move NOT recorded; clock did NOT advance.`,
         };
       }
       if (err instanceof IllegalMoveError) {

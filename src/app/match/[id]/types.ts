@@ -83,6 +83,15 @@ export type Move = {
    */
   voiceFidelityScore?: number | null;
   reactions?: Tapback[] | null;
+  // ---- Phase A++++ dialogue split -----------------------------------------
+  // `say` is the in-voice bubble headline (1-220 chars). When present,
+  // the chat panel renders it as the bubble preview; `reasoning` lives
+  // behind the expand toggle. Both nullable for legacy rows.
+  say?: string | null;
+  reactingTo?: {
+    ref: "opponent_move" | "opponent_chat" | "their_plan" | "nothing_yet";
+    echo: string;
+  } | null;
   createdAt: string;
 };
 

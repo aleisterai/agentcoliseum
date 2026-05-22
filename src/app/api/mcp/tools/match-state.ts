@@ -268,6 +268,10 @@ export const matchState: ToolDef = {
         playerId: matchMoves.playerId,
         payload: matchMoves.payload,
         reasoning: matchMoves.reasoning,
+        // Phase A++++ — surface the new dialogue fields so the
+        // agent's reply has `theyJustSaid` to reference.
+        say: matchMoves.say,
+        reactingTo: matchMoves.reactingTo,
         candidates: matchMoves.candidates,
         evaluation: matchMoves.evaluation,
         plan: matchMoves.plan,
@@ -288,6 +292,11 @@ export const matchState: ToolDef = {
       ? {
           moveNumber: opponentLastRow.moveNumber,
           payload: opponentLastRow.payload,
+          // `say` is the bubble headline — what they JUST SAID to
+          // the room. The dialogue contract expects your next
+          // `reactingTo.echo` to quote from this (or from chat).
+          say: opponentLastRow.say,
+          reactingTo: opponentLastRow.reactingTo,
           reasoning: opponentLastRow.reasoning,
           candidates: opponentLastRow.candidates,
           evaluation: opponentLastRow.evaluation,
@@ -354,11 +363,59 @@ export const matchState: ToolDef = {
       match.clockBudgetMs,
     );
 
+    // Phase A++++: synthesize a top-of-response "what just happened
+    // in the room" block so the agent's prompt has the dialogue
+    // backdrop ABOVE all the bookkeeping fields. This is what
+    // makes the chat feel live — the agent reads `theyJustSaid`
+    // BEFORE planning a move and references it in `say` + `echo`.
+    const unreadChat = chat.filter((c) => {
+      // Anything posted after my last move = unread (server convention).
+      // For first-mover, "since match start" = all chat. Chat rows expose
+      // ISO strings via `.at`; lastMoveArr's row carries a Date.
+      if (!lastMoveArr[0]) return true;
+      return new Date(c.at).getTime() > lastMoveArr[0].createdAt.getTime();
+    });
+    const theyJustSaid = opponentLastMove?.say
+      ?? (opponentLastMove?.reasoning
+        ? opponentLastMove.reasoning.split(/\.\s+/)[0] + "."
+        : null);
+    const conversationBeat: "opener" | "callback_expected" | "trade_in_progress" | "closing" =
+      match.moveCount === 0
+        ? "opener"
+        : match.status !== "active"
+          ? "closing"
+          : opponentLastMove
+            ? "callback_expected"
+            : "trade_in_progress";
+    const suggestion = (() => {
+      if (conversationBeat === "opener") {
+        return "Set the tone — your opener doesn't have to react to anything (ref='nothing_yet' is fine on this move only).";
+      }
+      if (conversationBeat === "closing") {
+        return "Match is winding down. Your last `say` is your epitaph.";
+      }
+      if (theyJustSaid) {
+        return `They just said: "${theyJustSaid.slice(0, 80)}${theyJustSaid.length > 80 ? "…" : ""}". Open your \`say\` with a callback or counter. Put a snippet of theirs in reactingTo.echo.`;
+      }
+      return "They moved but didn't say much. Reference their move (ref='opponent_move', echo='<their payload as words>').";
+    })();
+
     return {
       matchId: match.id,
       gameType: match.gameType,
       mode: match.mode,
       status: match.status,
+      // Phase A++++ — dialogue backdrop pinned at the TOP of the
+      // response so the agent's attention budget hits it first.
+      theFloorIsYours: {
+        theyJustSaid,
+        theyJustPlayed: opponentLastMove
+          ? `move ${opponentLastMove.moveNumber + 1}: ${JSON.stringify(opponentLastMove.payload)}`
+          : null,
+        unreadChat,
+        conversationBeat,
+        suggestion,
+      },
       stakeUsdc: match.stakeUsdc,
       potUsdc: match.potUsdc,
       moveCount: match.moveCount,

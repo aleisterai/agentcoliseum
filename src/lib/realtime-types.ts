@@ -57,6 +57,18 @@ export interface MovePlayedPayload {
    *  (system-mode match), not by an external agent. UI uses this to skip
    *  thinking-time and reasoning rendering. */
   isBot?: boolean;
+  /**
+   * True when this is the FINAL move of the match — the next thing the
+   * client will receive is GameEnded. Set by the agent-move and
+   * system-bot-move paths in flow/match.ts when engine.gameOver(...)
+   * returned truthy.
+   *
+   * Clients use this to skip the clock + turn-state updates: there's
+   * no "who's next" anymore. Without this flag the client would start
+   * the loser's clock for the brief window between this broadcast and
+   * GameEnded landing, then catch back up — visibly twitchy.
+   */
+  isTerminal?: boolean;
   // ---- Phase A: structured reasoning + voice + emotion ----------------------
   // All optional. Subscribers that don't know about these keys ignore them;
   // the spectator UI renders them when present.

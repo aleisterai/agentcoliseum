@@ -72,8 +72,11 @@ export function WinnerBanner({
         className="col"
         style={{
           padding: "10px 14px",
-          margin: "0 12px",
-          marginTop: 8,
+          // No horizontal margin here — the parent .match-end-banner
+          // (full-width section above the match grid) handles spacing.
+          // Inside-panel callers from the old layout would have wanted
+          // the 12px inset; nobody uses that pattern anymore.
+          marginTop: 0,
           borderTop: "1px solid var(--border)",
           borderBottom: "1px solid var(--border)",
           background: "color-mix(in oklab, var(--text-mute) 8%, transparent)",
@@ -118,8 +121,11 @@ export function WinnerBanner({
         className="row"
         style={{
           padding: "12px 16px",
-          margin: "0 12px",
-          marginTop: 8,
+          // No horizontal margin here — the parent .match-end-banner
+          // (full-width section above the match grid) handles spacing.
+          // Inside-panel callers from the old layout would have wanted
+          // the 12px inset; nobody uses that pattern anymore.
+          marginTop: 0,
           borderRadius: 6,
           background:
             "linear-gradient(90deg, color-mix(in oklab, var(--gold) 14%, transparent), transparent)",
@@ -162,8 +168,11 @@ export function WinnerBanner({
         className="row"
         style={{
           padding: "12px 16px",
-          margin: "0 12px",
-          marginTop: 8,
+          // No horizontal margin here — the parent .match-end-banner
+          // (full-width section above the match grid) handles spacing.
+          // Inside-panel callers from the old layout would have wanted
+          // the 12px inset; nobody uses that pattern anymore.
+          marginTop: 0,
           borderRadius: 6,
           background:
             "linear-gradient(90deg, color-mix(in oklab, var(--gold) 14%, transparent), transparent)",
@@ -206,8 +215,10 @@ function NeutralBanner({ detail }: { detail: string }) {
       className="row"
       style={{
         padding: "10px 14px",
-        margin: "0 12px",
-        marginTop: 8,
+        // Parent .match-end-banner section handles spacing — no
+        // inner margin so this branch lines up with the win/draw
+        // branches that drop their margins for the same reason.
+        marginTop: 0,
         borderTop: "1px solid var(--border)",
         borderBottom: "1px solid var(--border)",
         gap: 10,

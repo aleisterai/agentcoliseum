@@ -214,6 +214,63 @@ export async function applyMove(input: ApplyMoveInput): Promise<Match> {
         ? match.p1AgentId
         : match.p2AgentId
       : null;
+
+    // Emit MovePlayed FIRST so spectators see the winning move's
+    // final board state. Without this, the move that triggered the
+    // win was inserted into match_moves but never broadcast — the
+    // client's last MovePlayed was move N-1, the board stayed in the
+    // pre-win position, and only GameEnded arrived (which carries
+    // winner/ELO/reason but no stateAfterG). The visual symptom: a
+    // human watching the game saw the bot make a move, then nothing
+    // happened — until a page refresh fetched the fresh state. Now
+    // the winning move arrives + the FINAL banner arrives in order:
+    // board updates, then result banner appears.
+    //
+    // currentTurnAgentId=null + currentTurnPlayerId=myPid signals
+    // "this is the LAST move; nobody is on the clock anymore". The
+    // applyWireMove client handler doesn't update currentTurn fields
+    // when either is null — same behavior as for completed matches.
+    const winningMoveView = adapter.serializeForSpectator(
+      nextState.G as never,
+      "spectator",
+      true, // gameOver = true so adapters that hide info during play can reveal
+    );
+    // currentTurnPlayerId by wire convention is WHO IS UP NEXT. The
+    // client's applyWireMove handler derives justMovedPid as the OPPOSITE
+    // of currentTurnPlayerId. So even on the terminal broadcast we set
+    // it to the inverse of the mover — otherwise the client would
+    // attribute this winning move to the loser in the move list (the
+    // bug the previous draft of this fix introduced). isTerminal:true
+    // tells the client to skip clock + turn updates for this broadcast
+    // (no one is on the clock anymore; GameEnded is moments behind).
+    const winningMovePayload: MovePlayedPayload = {
+      matchId: match.id,
+      moveNumber,
+      payload: input.payload,
+      reasoning,
+      evScore: input.evScore ?? null,
+      thinkingMs: Math.max(0, Math.min(adapter.clockBudgetMs, input.thinkingMs)),
+      x402PaymentId: null,
+      stateAfterG: winningMoveView.publicState,
+      // currentTurnAgentId stays null (game is over). currentTurnPlayerId
+      // is the OPPOSITE of myPid by convention so the client's derived
+      // justMovedPid lands on the actual mover.
+      currentTurnAgentId: null,
+      currentTurnPlayerId: myPid === "0" ? "1" : "0",
+      turnStartedAt: now.toISOString(),
+      p1MsLeft,
+      p2MsLeft,
+      isTerminal: true,
+      candidates: input.candidates ?? null,
+      evaluation: input.evaluation ?? null,
+      plan: input.plan ?? null,
+      expectedReply: input.expectedReply ?? null,
+      phase: input.phase ?? null,
+      mood: input.mood ?? null,
+      emotionTrigger: input.emotionTrigger ?? null,
+    };
+    await broadcastGame(match.id, realtimeEvent.MovePlayed, winningMovePayload);
+
     return finalizeMatch({
       matchId: match.id,
       winnerAgentId,
@@ -408,6 +465,49 @@ export async function driveSystemBot(match: Match): Promise<Match> {
   const over = engine.gameOver(nextState);
   if (over) {
     const winnerAgentId = over.winnerPlayerID === "0" ? match.p1AgentId : null;
+
+    // Same pattern as the agent-move path: emit MovePlayed with the
+    // bot's final-board state BEFORE finalizeMatch so spectators
+    // actually see the bot's winning move land. Without this, the
+    // bot's clinching move was inserted into match_moves but never
+    // broadcast — the human watching saw their own last move, then
+    // nothing, until they refreshed. Now: bot move arrives, board
+    // updates, then the FINAL banner appears.
+    // Same convention as the agent-move terminal broadcast: invert
+    // botPid for the wire's "who is next" field so the client correctly
+    // attributes the move to the bot. isTerminal:true gates clock/turn
+    // updates client-side.
+    const botFinalMovePayload: MovePlayedPayload = {
+      matchId: match.id,
+      moveNumber,
+      payload: { auto: true },
+      reasoning: botReasoning,
+      evScore: null,
+      thinkingMs,
+      x402PaymentId: null,
+      stateAfterG: adapter.serializeForSpectator(
+        nextState.G as never,
+        "spectator",
+        true, // gameOver
+      ).publicState,
+      currentTurnAgentId: null,
+      // botPid is statically "1" (system bot is always p2). The client's
+      // applyWireMove derives justMovedPid as the OPPOSITE of
+      // currentTurnPlayerId, so we send "0" here — that lands the
+      // winning move on p2 (bot) in the move list. Matches the
+      // agent-move terminal payload's `myPid === "0" ? "1" : "0"`
+      // pattern.
+      currentTurnPlayerId: "0",
+      turnStartedAt: now.toISOString(),
+      p1MsLeft: match.p1MsLeft,
+      p2MsLeft: match.p2MsLeft,
+      isBot: true,
+      isTerminal: true,
+      phase: botPhase,
+      mood: botMood,
+    };
+    await broadcastGame(match.id, realtimeEvent.MovePlayed, botFinalMovePayload);
+
     return finalizeMatch({
       matchId: match.id,
       winnerAgentId,

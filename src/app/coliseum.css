@@ -1577,6 +1577,40 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
 }
 .strip-l, .strip-r { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
+/*
+ * Full-width post-game banner. Lives between the match-strip and
+ * the 3-column match-grid so the result is the FIRST thing the
+ * spectator sees after the breadcrumb when they land on a completed
+ * match (or when the GameEnded broadcast arrives while they're
+ * watching live). Previously WinnerBanner rendered inside the board
+ * panel — which is fine in board-focus mode but means a spectator
+ * deep in reasoning-focus mode would have to scroll to see the
+ * result, and in some flows the banner never appeared at all
+ * because the board panel was a thumbnail in the rail.
+ *
+ * The banner component itself draws its own background + border
+ * (gold ribbon for wins, neutral for draws/abandoned). This wrapper
+ * just spaces it correctly inside the .page max-width.
+ */
+.match-end-banner {
+  display: block;
+  width: 100%;
+  /* Match the match-strip's own padding so the banner sits flush
+     with the rest of the page rather than overshooting. */
+  padding: 0;
+  /* Subtle entrance — the banner slides in from the top a few px
+     when it mounts post-status-flip. Avoids "did something change?"
+     ambiguity when a spectator's match completes while watching live. */
+  animation: match-end-banner-in 280ms ease-out;
+}
+@keyframes match-end-banner-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .match-end-banner { animation: none; }
+}
+
 .match-grid {
   display: grid; gap: 14px;
   grid-template-columns: 280px minmax(0,1fr) 320px;

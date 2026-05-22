@@ -217,10 +217,19 @@ export function MatchView({ initial }: MatchViewProps) {
       return [...prev, next];
     });
     setStateG(p.stateAfterG);
-    if (p.currentTurnPlayerId) setCurrentTurnPlayerId(p.currentTurnPlayerId);
-    if (p.turnStartedAt) setTurnStartedAt(p.turnStartedAt);
-    if (p.p1MsLeft != null) setP1MsLeft(p.p1MsLeft);
-    if (p.p2MsLeft != null) setP2MsLeft(p.p2MsLeft);
+    // Skip clock + turn-state updates on terminal broadcasts. The
+    // game is over (or about to be when GameEnded lands in a moment);
+    // there's no "next turn" to display. Without this gate, the
+    // winning move would start the loser's clock for the brief
+    // interval between MovePlayed and GameEnded — visible flicker.
+    // The terminal MovePlayed still updates the board (setStateG
+    // above) so the final position renders.
+    if (!p.isTerminal) {
+      if (p.currentTurnPlayerId) setCurrentTurnPlayerId(p.currentTurnPlayerId);
+      if (p.turnStartedAt) setTurnStartedAt(p.turnStartedAt);
+      if (p.p1MsLeft != null) setP1MsLeft(p.p1MsLeft);
+      if (p.p2MsLeft != null) setP2MsLeft(p.p2MsLeft);
+    }
   }
 
   function applyChat(p: ChatMessagePayload) {
@@ -580,6 +589,34 @@ export function MatchView({ initial }: MatchViewProps) {
         </div>
       </section>
 
+      {/*
+       * Full-width post-game banner. Placed BETWEEN the match-strip
+       * (← all matches · LIVE/FINAL · gameType …) and the 3-column
+       * match grid, so it's always visible regardless of focus mode
+       * (board vs. reasoning) or scroll position. Previously this
+       * lived inside the board panel header where it could be hidden
+       * behind chat scroll, or simply not render when the user was in
+       * a focus mode that pushed the board panel below the fold.
+       *
+       * Conditional on status === "completed". Once mounted it
+       * doesn't unmount — even if React state ticked through any
+       * weird intermediate (it doesn't today), the banner stays
+       * visible until the user navigates away.
+       */}
+      {status === "completed" ? (
+        <section className="match-end-banner">
+          <WinnerBanner
+            winnerAgentId={winnerAgentId}
+            resultReason={resultReason}
+            p1={initial.p1}
+            p2={initial.p2}
+            mode={initial.mode}
+            stakeUsdc={initial.stakeUsdc}
+            moveCount={moves.length}
+          />
+        </section>
+      ) : null}
+
       {/* 3-column */}
       <section className="match-grid">
         {/* LEFT */}
@@ -672,17 +709,12 @@ export function MatchView({ initial }: MatchViewProps) {
                 ) : null}
               </div>
             </div>
-            {status === "completed" ? (
-              <WinnerBanner
-                winnerAgentId={winnerAgentId}
-                resultReason={resultReason}
-                p1={initial.p1}
-                p2={initial.p2}
-                mode={initial.mode}
-                stakeUsdc={initial.stakeUsdc}
-                moveCount={moves.length}
-              />
-            ) : null}
+            {/* WinnerBanner used to render here, inside the board panel.
+                It now lives as a full-width section ABOVE the match grid
+                (just under the breadcrumb) so it can't get lost no
+                matter which focus mode the spectator is in. See the
+                <section className="match-end-banner"> render above
+                .match-grid. */}
             {focusMode === "board" ? (
               <div className="board-stage">
                 <div className="board-wrap">

@@ -24,6 +24,7 @@ export {
   ChallengeRaceError,
   MatchNotFoundError,
   MissingReasoningError,
+  OffVoiceError,
 } from "./flow/errors";
 
 export {

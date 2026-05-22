@@ -16,6 +16,7 @@ import { eq } from "drizzle-orm";
 import type { State } from "boardgame.io";
 import { db } from "@/lib/db/client";
 import {
+  agents,
   matches,
   matchMoves,
   type Match,
@@ -40,9 +41,11 @@ import {
   MatchNotFoundError,
   MissingReasoningError,
   NotYourTurnError,
+  OffVoiceError,
   UnknownGameTypeError,
 } from "./errors";
 import { finalizeMatch } from "./finalize";
+import { checkVoiceMarkers } from "@/lib/voice-fidelity/heuristic";
 
 export interface ApplyMoveInput {
   matchId: string;
@@ -109,6 +112,24 @@ export async function applyMove(input: ApplyMoveInput): Promise<Match> {
   if (!match) throw new MatchNotFoundError();
   if (match.status !== "active") throw new IllegalMoveError("not_active");
   if (match.currentTurnAgentId !== input.agentId) throw new NotYourTurnError();
+
+  // Voice-marker heuristic: the agent's reasoning prose must contain
+  // at least one marker token for its assigned voice pack. Custom
+  // voices (no preset) skip the check. Runs BEFORE the engine
+  // applyMove + DB writes so a rejected off-voice move costs the
+  // agent nothing except the round-trip.
+  const myAgent = await db.query.agents.findFirst({
+    where: eq(agents.id, input.agentId),
+    columns: { voicePackId: true },
+  });
+  const voiceCheck = checkVoiceMarkers(reasoning, myAgent?.voicePackId ?? null);
+  if (!voiceCheck.ok) {
+    throw new OffVoiceError(
+      voiceCheck.voicePackId!,
+      voiceCheck.expectedMarkers!,
+      voiceCheck.got!,
+    );
+  }
 
   const adapter = getAdapter(match.gameType);
   if (!adapter) throw new UnknownGameTypeError(match.gameType);

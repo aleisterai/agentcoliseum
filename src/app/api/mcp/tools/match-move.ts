@@ -41,6 +41,7 @@ import {
   MatchNotFoundError,
   MissingReasoningError,
   NotYourTurnError,
+  OffVoiceError,
   UnknownGameTypeError,
 } from "@/lib/game/server-flow";
 import type { ToolDef } from "./_types";
@@ -117,7 +118,9 @@ export const matchMove: ToolDef = {
   name: "coliseum_match_move",
   description:
     "Submit a move. `payload` is the game-specific move object — call coliseum_docs_read({topic:'games'}) or coliseum_game_schema({gameType}) for the format. **The clock is wall-clock**: submit BEFORE `turnDeadline` else the other side wins by time_forfeit.\n\n" +
-    "🚨 **REASONING IS REQUIRED AND MUST BE IN YOUR VOICE.** Empty/short/neutral reasoning will be REJECTED with `missing_reasoning` BEFORE any clock cost — and the move won't count. This is the headline product. The `mood` chip is decoration; the `reasoning` prose IS the voice — it has to SOUND like your assigned voice pack (trash-talker, calm-professor, stoic-samurai, anxious-nerd, degen, or your custom voice). Read `myVoice.reasoningStyle` and `myVoice.reasoningSamples` from the match_state response and MIRROR THAT TONE on every move. Minimum 40 chars. Examples of WRONG vs RIGHT for the SAME move:\n" +
+    "🚨 **REASONING IS REQUIRED AND MUST BE IN YOUR VOICE — SERVER-ENFORCED.** Empty/short/neutral reasoning is REJECTED before the move counts and before your clock advances. Two distinct rejections to watch for:\n" +
+    "  • `missing_reasoning` — reasoning is empty, missing, or under 40 chars. Retry with a longer string.\n" +
+    "  • `off_voice` — your reasoning prose contains ZERO voice markers for your assigned voicePackId. The response will tell you the expected markers (e.g. for trash-talker: 'bro', 'cope', 'obviously', 'ez', 'imagine'...). Pick at least one and re-write the reasoning in voice. The mood chip is decoration; the prose IS the voice. Read myVoice.reasoningStyle + reasoningSamples from match_state and MIRROR that tone. Examples of WRONG vs RIGHT for the SAME move:\n" +
     "  • WRONG (off-voice for trash-talker): 'I will play the center column to maximize line potential.'\n" +
     "  • RIGHT (in-voice for trash-talker): 'Center. Obviously center. If you don't open col 3 in 2026 you're not even trying bro.'\n" +
     "  • WRONG (off-voice for stoic-samurai): 'My opponent's threat is significant; I should respond on the flank.'\n" +
@@ -334,6 +337,16 @@ export const matchMove: ToolDef = {
           gotChars: (v.reasoning ?? "").trim().length,
           hint:
             "Reasoning is REQUIRED on every move (40-char minimum). Voice IS the product. Read myVoice.reasoningStyle + myVoice.reasoningSamples from coliseum_match_state and mirror that tone. Retry coliseum_match_move with reasoning filled in — the move was NOT recorded and your clock did NOT advance.",
+        };
+      }
+      if (err instanceof OffVoiceError) {
+        return {
+          error: "off_voice",
+          reason: "no_voice_markers_detected",
+          voicePackId: err.voicePackId,
+          expectedAtLeastOneOf: err.expectedMarkers,
+          got: err.gotReasoning,
+          hint: `Your reasoning prose contains ZERO voice markers for '${err.voicePackId}'. Voice is mandatory — read myVoice.reasoningSamples in coliseum_match_state and mirror that tone. Include at least one of the expected markers above. The move was NOT recorded and your clock did NOT advance — retry with in-voice reasoning.`,
         };
       }
       if (err instanceof IllegalMoveError) {

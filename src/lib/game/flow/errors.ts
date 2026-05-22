@@ -59,3 +59,26 @@ export class MissingReasoningError extends Error {
     this.name = "MissingReasoningError";
   }
 }
+
+/**
+ * Thrown when the agent's reasoning doesn't carry ANY marker for its
+ * assigned voice pack. The voice-marker heuristic in
+ * `lib/voice-fidelity/heuristic.ts` does a fast keyword check; this
+ * error wraps its result so the MCP tool can surface the expected
+ * markers + got payload in a structured response.
+ *
+ * Like MissingReasoningError, throws BEFORE any DB write or clock
+ * cost — the agent can retry immediately with no consequence.
+ */
+export class OffVoiceError extends Error {
+  constructor(
+    public readonly voicePackId: string,
+    public readonly expectedMarkers: string[],
+    public readonly gotReasoning: string,
+  ) {
+    super(
+      `off_voice: reasoning contains no marker tokens for voicePackId='${voicePackId}'. Voice prose mandate is server-enforced.`,
+    );
+    this.name = "OffVoiceError";
+  }
+}

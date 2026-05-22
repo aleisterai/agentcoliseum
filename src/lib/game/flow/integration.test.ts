@@ -38,6 +38,7 @@ import {
   matches,
   matchMoves,
   matchChatMessages,
+  matchPayouts,
   treasuryFlows,
 } from "../../db/schema";
 
@@ -536,7 +537,8 @@ describe("applyMove", () => {
         matchId: match.id,
         agentId: p1.id,
         payload: { index: 4 },
-        reasoning: "Center. Obviously center. Strongest first move on the board.",
+        reasoning:
+          "Center. Obviously center. Strongest first move on the board.",
         thinkingMs: 50,
       });
       expect(ok.moveCount).toBe(1);
@@ -585,8 +587,14 @@ describe("applyMove", () => {
   it("a winning move triggers natural completion + ELO update", async () => {
     await withTestDb(async ({ db }) => {
       currentDb = db;
-      const { agent: p1 } = await seedOwnerAgent(db, { handle: "p1", elo: 1200 });
-      const { agent: p2 } = await seedOwnerAgent(db, { handle: "p2", elo: 1200 });
+      const { agent: p1 } = await seedOwnerAgent(db, {
+        handle: "p1",
+        elo: 1200,
+      });
+      const { agent: p2 } = await seedOwnerAgent(db, {
+        handle: "p2",
+        elo: 1200,
+      });
       const created = await postChallenge({
         gameType: "tic-tac-toe",
         initiatorAgentId: p1.id,
@@ -619,13 +627,160 @@ describe("applyMove", () => {
       expect(last!.resultReason).toBe("natural");
       expect(last!.winnerAgentId).toBe(p1.id);
 
-      const [p1After] = await db.select().from(agents).where(eq(agents.id, p1.id));
-      const [p2After] = await db.select().from(agents).where(eq(agents.id, p2.id));
+      const [p1After] = await db
+        .select()
+        .from(agents)
+        .where(eq(agents.id, p1.id));
+      const [p2After] = await db
+        .select()
+        .from(agents)
+        .where(eq(agents.id, p2.id));
       expect(p1After.wins).toBe(1);
       expect(p2After.losses).toBe(1);
       // Equal-rated → K=32 → +16 / -16.
       expect(p1After.elo).toBe(1216);
       expect(p2After.elo).toBe(1184);
+    });
+  });
+
+  // ---- Concurrency regression --------------------------------------------
+  //
+  // Before the transactional refactor, applyMove read the match row, did
+  // checks, then INSERTed + UPDATEd without holding a row lock. Two
+  // simultaneous calls from the same on-turn agent (retry storm,
+  // double-click, two MCP clients pointed at the same credential) could
+  // both pass the turn check, both INSERT, and corrupt the match state
+  // with two moves at the same moveNumber + last-write-wins on the
+  // matches row.
+  //
+  // The fix: wrap the body in `db.transaction(...)` with
+  // `SELECT ... FOR UPDATE` on the match row. The second call blocks
+  // until the first commits, then sees the post-commit state
+  // (currentTurnAgentId has flipped) and throws NotYourTurnError.
+  //
+  // Without the lock this test fails by accepting both moves or by
+  // failing on a duplicate-key constraint at INSERT time. With the
+  // lock, exactly one move lands and the second call gets a clean
+  // NotYourTurnError.
+  it("two concurrent same-turn submissions: one accepts, one rejects, one row inserted", async () => {
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent: p1 } = await seedOwnerAgent(db, { handle: "p1" });
+      const { agent: p2 } = await seedOwnerAgent(db, { handle: "p2" });
+      const created = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: p1.id,
+        mode: "free",
+      });
+      if (created.kind !== "challenge") throw new Error("expected challenge");
+      const match = await acceptChallenge({
+        challengeId: created.challenge.id,
+        acceptorAgentId: p2.id,
+      });
+
+      // Two parallel applyMove calls from the SAME on-turn agent with
+      // DIFFERENT payloads. Without the row lock both could land; with
+      // the lock exactly one wins.
+      const results = await Promise.allSettled([
+        applyMove({
+          matchId: match.id,
+          agentId: p1.id,
+          payload: { index: 0 },
+          reasoning: R,
+          thinkingMs: 100,
+        }),
+        applyMove({
+          matchId: match.id,
+          agentId: p1.id,
+          payload: { index: 4 },
+          reasoning: R,
+          thinkingMs: 100,
+        }),
+      ]);
+
+      const fulfilled = results.filter((r) => r.status === "fulfilled");
+      const rejected = results.filter((r) => r.status === "rejected");
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+
+      // The rejection must be NotYourTurn (the second caller acquires
+      // the lock, sees currentTurnAgentId now points at p2). A
+      // duplicate-key violation here would indicate the lock didn't
+      // hold and we depended on the matchMoves unique constraint as a
+      // backstop — that's a regression, not the intended behavior.
+      const rejectedReason = (rejected[0] as PromiseRejectedResult).reason;
+      expect(rejectedReason).toBeInstanceOf(NotYourTurnError);
+
+      // Exactly one move row landed.
+      const moves = await db
+        .select()
+        .from(matchMoves)
+        .where(eq(matchMoves.matchId, match.id));
+      expect(moves).toHaveLength(1);
+      expect(moves[0].moveNumber).toBe(0);
+      expect(moves[0].agentId).toBe(p1.id);
+
+      // Match row reflects exactly one applied move + turn flipped to p2.
+      const [matchAfter] = await db
+        .select()
+        .from(matches)
+        .where(eq(matches.id, match.id));
+      expect(matchAfter.moveCount).toBe(1);
+      expect(matchAfter.currentTurnAgentId).toBe(p2.id);
+      expect(matchAfter.status).toBe("active");
+    });
+  });
+
+  // Companion test for the invalid-bump path: the bump must persist
+  // across the rejection so two strikes ACTUALLY forfeit. Earlier
+  // versions of the transactional refactor would throw inside the tx,
+  // rolling back the counter increment — silently breaking the
+  // 2-strike rule. This proves the postCommitThrow path works.
+  it("invalid payload bump persists across the rejection (tx commits the strike)", async () => {
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent: p1 } = await seedOwnerAgent(db, { handle: "p1" });
+      const { agent: p2 } = await seedOwnerAgent(db, { handle: "p2" });
+      const created = await postChallenge({
+        gameType: "tic-tac-toe",
+        initiatorAgentId: p1.id,
+        mode: "free",
+      });
+      if (created.kind !== "challenge") throw new Error("expected challenge");
+      const match = await acceptChallenge({
+        challengeId: created.challenge.id,
+        acceptorAgentId: p2.id,
+      });
+
+      // First invalid attempt — should bump p1InvalidCount and reject.
+      await expect(
+        applyMove({
+          matchId: match.id,
+          agentId: p1.id,
+          payload: { index: 99 }, // out of bounds
+          reasoning: R,
+          thinkingMs: 50,
+        }),
+      ).rejects.toBeInstanceOf(IllegalMoveError);
+
+      const [afterFirst] = await db
+        .select()
+        .from(matches)
+        .where(eq(matches.id, match.id));
+      expect(afterFirst.p1InvalidCount).toBe(1);
+      expect(afterFirst.status).toBe("active"); // not forfeited yet
+
+      // Second invalid attempt — should now forfeit.
+      const finalResult = await applyMove({
+        matchId: match.id,
+        agentId: p1.id,
+        payload: { index: 99 },
+        reasoning: R,
+        thinkingMs: 50,
+      });
+      expect(finalResult.status).toBe("completed");
+      expect(finalResult.resultReason).toBe("invalid_move_forfeit");
+      expect(finalResult.winnerAgentId).toBe(p2.id);
     });
   });
 });
@@ -669,7 +824,10 @@ describe("finalizeMatch", () => {
         finalP1Ms: 30_000,
         finalP2Ms: 30_000,
       });
-      const [p1After] = await db.select().from(agents).where(eq(agents.id, p1.id));
+      const [p1After] = await db
+        .select()
+        .from(agents)
+        .where(eq(agents.id, p1.id));
       expect(p1After.wins).toBe(1); // not 2
       expect(p1After.elo).toBe(1216); // not 1232
     });
@@ -678,8 +836,14 @@ describe("finalizeMatch", () => {
   it("draws → both agents' draw counters +1, ELO unchanged on equal ratings", async () => {
     await withTestDb(async ({ db }) => {
       currentDb = db;
-      const { agent: p1 } = await seedOwnerAgent(db, { handle: "p1", elo: 1200 });
-      const { agent: p2 } = await seedOwnerAgent(db, { handle: "p2", elo: 1200 });
+      const { agent: p1 } = await seedOwnerAgent(db, {
+        handle: "p1",
+        elo: 1200,
+      });
+      const { agent: p2 } = await seedOwnerAgent(db, {
+        handle: "p2",
+        elo: 1200,
+      });
       const created = await postChallenge({
         gameType: "tic-tac-toe",
         initiatorAgentId: p1.id,
@@ -697,8 +861,14 @@ describe("finalizeMatch", () => {
         finalP1Ms: 30_000,
         finalP2Ms: 30_000,
       });
-      const [p1After] = await db.select().from(agents).where(eq(agents.id, p1.id));
-      const [p2After] = await db.select().from(agents).where(eq(agents.id, p2.id));
+      const [p1After] = await db
+        .select()
+        .from(agents)
+        .where(eq(agents.id, p1.id));
+      const [p2After] = await db
+        .select()
+        .from(agents)
+        .where(eq(agents.id, p2.id));
       expect(p1After.draws).toBe(1);
       expect(p2After.draws).toBe(1);
       expect(p1After.elo).toBe(1200); // equal-rated draw → no change
@@ -767,7 +937,10 @@ describe("finalizeMatch", () => {
   it("system-mode skips ELO + treasury (no real opponent agent)", async () => {
     await withTestDb(async ({ db }) => {
       currentDb = db;
-      const { agent: p1 } = await seedOwnerAgent(db, { handle: "p1", elo: 1500 });
+      const { agent: p1 } = await seedOwnerAgent(db, {
+        handle: "p1",
+        elo: 1500,
+      });
       const result = await postChallenge({
         gameType: "tic-tac-toe",
         initiatorAgentId: p1.id,
@@ -782,7 +955,10 @@ describe("finalizeMatch", () => {
         finalP1Ms: 30_000,
         finalP2Ms: 30_000,
       });
-      const [p1After] = await db.select().from(agents).where(eq(agents.id, p1.id));
+      const [p1After] = await db
+        .select()
+        .from(agents)
+        .where(eq(agents.id, p1.id));
       expect(p1After.elo).toBe(1500); // no ELO change
       expect(p1After.wins).toBe(0); // no win counter bump
       const flows = await db.select().from(treasuryFlows);
@@ -866,8 +1042,195 @@ describe("finalizeMatch", () => {
       });
       expect(updated.winnerAgentId).toBe(p2.id);
       expect(updated.resultReason).toBe("time_forfeit");
-      const [p2After] = await db.select().from(agents).where(eq(agents.id, p2.id));
+      const [p2After] = await db
+        .select()
+        .from(agents)
+        .where(eq(agents.id, p2.id));
       expect(p2After.wins).toBe(1);
+    });
+  });
+
+  // ── match_payouts idempotency regression ───────────────────────────
+  //
+  // Before the match_payouts table, payout-tracking lived on the
+  // matches row (`payoutAt`, `payoutTxHash`). A cron crash between
+  // recipient transfers in a draw refund would re-pay the first side
+  // on retry. These tests pin the table contract:
+  //   - paid winner → exactly one 'winner' row at split.winnerCut
+  //   - paid draw   → two 'draw_refund' rows at stake each
+  //   - paid abandon → two 'abandon_refund' rows at stake each
+  //   - idempotent re-finalize → no duplicate rows (unique constraint)
+
+  async function seedPaidMatch(db: TestDb) {
+    const { agent: p1 } = await seedOwnerAgent(db, {
+      handle: "payouts1",
+      wallet: "0xaaaa000000000000000000000000000000000001",
+    });
+    const { agent: p2 } = await seedOwnerAgent(db, {
+      handle: "payouts2",
+      wallet: "0xbbbb000000000000000000000000000000000002",
+    });
+    const created = await postChallenge({
+      gameType: "tic-tac-toe",
+      initiatorAgentId: p1.id,
+      mode: "paid",
+      stakeUsdc: 10_000_000, // 10 USDC (microUSDC)
+    });
+    if (created.kind !== "challenge") throw new Error("expected challenge");
+    const match = await acceptChallenge({
+      challengeId: created.challenge.id,
+      acceptorAgentId: p2.id,
+    });
+    return { p1, p2, match };
+  }
+
+  it("paid match natural win → exactly one 'winner' payout row at winnerCut", async () => {
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { p1, p2, match } = await seedPaidMatch(db);
+      await finalizeMatch({
+        matchId: match.id,
+        winnerAgentId: p1.id,
+        resultReason: "natural",
+        finalP1Ms: 30_000,
+        finalP2Ms: 30_000,
+      });
+
+      const payouts = await db
+        .select()
+        .from(matchPayouts)
+        .where(eq(matchPayouts.matchId, match.id));
+      const winnerRows = payouts.filter((p) => p.payoutReason === "winner");
+      expect(winnerRows).toHaveLength(1);
+      expect(winnerRows[0].recipientAgentId).toBe(p1.id);
+      // pot = 2 * stake = 20 USDC; winner cut = 95% = 19 USDC
+      expect(winnerRows[0].amountUsdc).toBe(19_000_000);
+      expect(winnerRows[0].status).toBe("pending");
+      expect(winnerRows[0].txHash).toBeNull();
+      // recipientAddress was captured at finalize time from owner wallet.
+      const [ownerP1] = await db
+        .select()
+        .from(owners)
+        .where(eq(owners.id, p1.ownerId));
+      expect(winnerRows[0].recipientAddress.toLowerCase()).toBe(
+        ownerP1.walletAddress.toLowerCase(),
+      );
+      // No draw_refund or abandon_refund rows.
+      expect(
+        payouts.filter((p) => p.payoutReason === "draw_refund"),
+      ).toHaveLength(0);
+      expect(
+        payouts.filter((p) => p.payoutReason === "abandon_refund"),
+      ).toHaveLength(0);
+      // p2 (loser) gets nothing.
+      expect(payouts.filter((p) => p.recipientAgentId === p2.id)).toHaveLength(
+        0,
+      );
+    });
+  });
+
+  it("paid draw → two 'draw_refund' rows at stake each", async () => {
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { p1, p2, match } = await seedPaidMatch(db);
+      await finalizeMatch({
+        matchId: match.id,
+        winnerAgentId: null,
+        resultReason: "draw",
+        finalP1Ms: 30_000,
+        finalP2Ms: 30_000,
+      });
+
+      const payouts = await db
+        .select()
+        .from(matchPayouts)
+        .where(eq(matchPayouts.matchId, match.id))
+        .orderBy(matchPayouts.recipientAgentId);
+      const drawRows = payouts.filter((p) => p.payoutReason === "draw_refund");
+      expect(drawRows).toHaveLength(2);
+      const recipients = new Set(drawRows.map((r) => r.recipientAgentId));
+      expect(recipients.has(p1.id)).toBe(true);
+      expect(recipients.has(p2.id)).toBe(true);
+      // Each side gets exactly the stake back (Option A — no fee on draws).
+      drawRows.forEach((r) => expect(r.amountUsdc).toBe(10_000_000));
+      // No winner / abandon rows.
+      expect(payouts.filter((p) => p.payoutReason === "winner")).toHaveLength(
+        0,
+      );
+      expect(
+        payouts.filter((p) => p.payoutReason === "abandon_refund"),
+      ).toHaveLength(0);
+    });
+  });
+
+  it("paid abandoned → two 'abandon_refund' rows + no treasury fee", async () => {
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { p1, p2, match } = await seedPaidMatch(db);
+      await finalizeMatch({
+        matchId: match.id,
+        winnerAgentId: null,
+        resultReason: "abandoned",
+        finalP1Ms: 30_000,
+        finalP2Ms: 30_000,
+      });
+
+      const payouts = await db
+        .select()
+        .from(matchPayouts)
+        .where(eq(matchPayouts.matchId, match.id));
+      const abandonRows = payouts.filter(
+        (p) => p.payoutReason === "abandon_refund",
+      );
+      expect(abandonRows).toHaveLength(2);
+      abandonRows.forEach((r) => expect(r.amountUsdc).toBe(10_000_000));
+      const recipientAgentIds = new Set(
+        abandonRows.map((r) => r.recipientAgentId),
+      );
+      expect(recipientAgentIds.has(p1.id)).toBe(true);
+      expect(recipientAgentIds.has(p2.id)).toBe(true);
+
+      // No treasury fee on abandoned matches — the game never started.
+      const treasury = await db
+        .select()
+        .from(treasuryFlows)
+        .where(eq(treasuryFlows.matchId, match.id));
+      expect(treasury).toHaveLength(0);
+    });
+  });
+
+  it("re-finalize is idempotent — duplicate payout rows are blocked by the unique constraint", async () => {
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { p1, match } = await seedPaidMatch(db);
+
+      // First finalize → 1 winner payout row.
+      await finalizeMatch({
+        matchId: match.id,
+        winnerAgentId: p1.id,
+        resultReason: "natural",
+        finalP1Ms: 30_000,
+        finalP2Ms: 30_000,
+      });
+
+      // Second finalize is a no-op on the match row (already completed)
+      // and MUST NOT insert a duplicate payout row even if the early-exit
+      // ever regresses. The first call's payout is what runs.
+      await finalizeMatch({
+        matchId: match.id,
+        winnerAgentId: p1.id,
+        resultReason: "natural",
+        finalP1Ms: 30_000,
+        finalP2Ms: 30_000,
+      });
+
+      const payouts = await db
+        .select()
+        .from(matchPayouts)
+        .where(eq(matchPayouts.matchId, match.id));
+      const winnerRows = payouts.filter((p) => p.payoutReason === "winner");
+      // Strictly 1 — not 2.
+      expect(winnerRows).toHaveLength(1);
     });
   });
 });
@@ -901,7 +1264,9 @@ describe("coliseum_match_state — wall-clock fields (all games)", () => {
       const { matchState } = await import("@/app/api/mcp/tools/match-state");
       await withTestDb(async ({ db }) => {
         currentDb = db;
-        const { agent } = await seedOwnerAgent(db, { handle: `wc_${gameType}` });
+        const { agent } = await seedOwnerAgent(db, {
+          handle: `wc_${gameType}`,
+        });
 
         // System-mode propose creates an active match with p1=agent on
         // move first; clockBudgetMs floors at the per-game recommendation
@@ -931,10 +1296,9 @@ describe("coliseum_match_state — wall-clock fields (all games)", () => {
           .set({ turnStartedAt: tenSecAgo, agentReadyAt: tenSecAgo })
           .where(eq(matches.id, matchId));
 
-        const state = (await matchState.handler(
-          { matchId },
-          { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
-        )) as Record<string, unknown>;
+        const state = (await matchState.handler({ matchId }, {
+          agent: { id: agent.id, ownerId: agent.ownerId },
+        } as never)) as Record<string, unknown>;
 
         // Static budget field stays equal to clockBudgetMs.
         expect(state.clockBudgetMs).toBe(budget);
@@ -992,10 +1356,9 @@ describe("coliseum_match_state — wall-clock fields (all games)", () => {
         .update(matches)
         .set({ turnStartedAt: new Date() })
         .where(eq(matches.id, matchId));
-      let state = (await matchState.handler(
-        { matchId },
-        { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
-      )) as Record<string, unknown>;
+      let state = (await matchState.handler({ matchId }, {
+        agent: { id: agent.id, ownerId: agent.ownerId },
+      } as never)) as Record<string, unknown>;
       expect(state.urgency).toBe("fresh");
 
       // half: 50% remaining
@@ -1003,10 +1366,9 @@ describe("coliseum_match_state — wall-clock fields (all games)", () => {
         .update(matches)
         .set({ turnStartedAt: new Date(Date.now() - budget * 0.5) })
         .where(eq(matches.id, matchId));
-      state = (await matchState.handler(
-        { matchId },
-        { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
-      )) as Record<string, unknown>;
+      state = (await matchState.handler({ matchId }, {
+        agent: { id: agent.id, ownerId: agent.ownerId },
+      } as never)) as Record<string, unknown>;
       expect(state.urgency).toBe("half");
 
       // low: 20% remaining = 80% elapsed
@@ -1014,10 +1376,9 @@ describe("coliseum_match_state — wall-clock fields (all games)", () => {
         .update(matches)
         .set({ turnStartedAt: new Date(Date.now() - budget * 0.8) })
         .where(eq(matches.id, matchId));
-      state = (await matchState.handler(
-        { matchId },
-        { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
-      )) as Record<string, unknown>;
+      state = (await matchState.handler({ matchId }, {
+        agent: { id: agent.id, ownerId: agent.ownerId },
+      } as never)) as Record<string, unknown>;
       expect(state.urgency).toBe("low");
 
       // critical: 5% remaining = 95% elapsed
@@ -1025,10 +1386,9 @@ describe("coliseum_match_state — wall-clock fields (all games)", () => {
         .update(matches)
         .set({ turnStartedAt: new Date(Date.now() - budget * 0.95) })
         .where(eq(matches.id, matchId));
-      state = (await matchState.handler(
-        { matchId },
-        { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
-      )) as Record<string, unknown>;
+      state = (await matchState.handler({ matchId }, {
+        agent: { id: agent.id, ownerId: agent.ownerId },
+      } as never)) as Record<string, unknown>;
       expect(state.urgency).toBe("critical");
       expect(state.myMsLeftLive).toBeLessThan(budget * 0.1);
     });
@@ -1039,7 +1399,10 @@ describe("coliseum_match_state — wall-clock fields (all games)", () => {
     await withTestDb(async ({ db }) => {
       currentDb = db;
       const { agent: p1 } = await seedOwnerAgent(db, { handle: "wc_p1" });
-      const { agent: p2 } = await seedOwnerAgent(db, { handle: "wc_p2", elo: 1200 });
+      const { agent: p2 } = await seedOwnerAgent(db, {
+        handle: "wc_p2",
+        elo: 1200,
+      });
 
       const challenge = await postChallenge({
         gameType: "tic-tac-toe",
@@ -1061,17 +1424,18 @@ describe("coliseum_match_state — wall-clock fields (all games)", () => {
         .set({ turnStartedAt: new Date(Date.now() - 30_000) })
         .where(eq(matches.id, match.id));
 
-      const p2State = (await matchState.handler(
-        { matchId: match.id },
-        { agent: { id: p2.id, ownerId: p2.ownerId } } as never,
-      )) as Record<string, unknown>;
+      const p2State = (await matchState.handler({ matchId: match.id }, {
+        agent: { id: p2.id, ownerId: p2.ownerId },
+      } as never)) as Record<string, unknown>;
 
       expect(p2State.isMyTurn).toBe(false);
       // p2's own clock isn't ticking, so myMsLeftLive is the full budget.
       expect(p2State.myMsLeftLive).toBe(p2State.clockBudgetMs);
       // But the OPPONENT (p1) IS under pressure — their live remaining
       // should be ~30s less than budget.
-      expect(p2State.opponentMsLeftLive).toBeLessThan(p2State.clockBudgetMs as number);
+      expect(p2State.opponentMsLeftLive).toBeLessThan(
+        p2State.clockBudgetMs as number,
+      );
     });
   });
 });
@@ -1109,7 +1473,8 @@ describe("coliseum_match_move — server-fills thinkingMs when omitted", () => {
 
       // Notice: NO thinkingMs in the payload. tic-tac-toe payload is
       // { index: 0..8 }.
-      const out = (await matchMove.handler({
+      const out = (await matchMove.handler(
+        {
           say: "Test say line meets voice and length requirements",
           reactingTo: { ref: "opponent_move", echo: "their move" },
           matchId,
@@ -1179,7 +1544,8 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
       if (r.kind !== "match") throw new Error("expected match");
       const matchId = r.match.id;
 
-      const out = (await matchMove.handler({
+      const out = (await matchMove.handler(
+        {
           say: "Test say line meets voice and length requirements",
           reactingTo: { ref: "opponent_move", echo: "their move" },
           matchId,
@@ -1220,10 +1586,12 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
 
       expect(move0.reasoning).toContain("Center is theoretically strongest");
       expect(Array.isArray(move0.candidates)).toBe(true);
-      expect(move0.candidates as Array<{ payload: unknown; why: string }>).toHaveLength(2);
       expect(
-        (move0.candidates as Array<{ why: string }>)[0].why,
-      ).toContain("Center");
+        move0.candidates as Array<{ payload: unknown; why: string }>,
+      ).toHaveLength(2);
+      expect((move0.candidates as Array<{ why: string }>)[0].why).toContain(
+        "Center",
+      );
       expect(move0.evaluation).toEqual({ score: 0.4, confidence: "med" });
       expect(move0.plan).toContain("Develop into a fork");
       expect(move0.expectedReply).toEqual({
@@ -1250,12 +1618,14 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
       if (r.kind !== "match") throw new Error("expected match");
 
       // No structured fields, no thinkingMs — the v1 contract.
-      const out = (await matchMove.handler({
+      const out = (await matchMove.handler(
+        {
           say: "Test say line meets voice and length requirements",
           reactingTo: { ref: "opponent_move", echo: "their move" },
           matchId: r.match.id,
           payload: { index: 0 },
-          reasoning: "Corner play — sets up two-line fork potential later in the match.",
+          reasoning:
+            "Corner play — sets up two-line fork potential later in the match.",
         },
         { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
       )) as Record<string, unknown>;
@@ -1289,7 +1659,8 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
       if (r.kind !== "match") throw new Error("expected match");
 
       // Bogus mood label
-      const badMood = (await matchMove.handler({
+      const badMood = (await matchMove.handler(
+        {
           say: "Test say line meets voice and length requirements",
           reactingTo: { ref: "opponent_move", echo: "their move" },
           matchId: r.match.id,
@@ -1302,7 +1673,8 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
       expect(badMood.error).toMatch(/validation_failed/);
 
       // Evaluation score out of [-1, 1]
-      const badScore = (await matchMove.handler({
+      const badScore = (await matchMove.handler(
+        {
           say: "Test say line meets voice and length requirements",
           reactingTo: { ref: "opponent_move", echo: "their move" },
           matchId: r.match.id,
@@ -1315,7 +1687,8 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
       expect(badScore.error).toMatch(/validation_failed/);
 
       // candidates exceeding max of 8
-      const tooManyCandidates = (await matchMove.handler({
+      const tooManyCandidates = (await matchMove.handler(
+        {
           say: "Test say line meets voice and length requirements",
           reactingTo: { ref: "opponent_move", echo: "their move" },
           matchId: r.match.id,
@@ -1356,10 +1729,9 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
       });
       if (r.kind !== "match") throw new Error("expected match");
 
-      const state = (await matchState.handler(
-        { matchId: r.match.id },
-        { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
-      )) as Record<string, unknown>;
+      const state = (await matchState.handler({ matchId: r.match.id }, {
+        agent: { id: agent.id, ownerId: agent.ownerId },
+      } as never)) as Record<string, unknown>;
 
       const myVoice = state.myVoice as {
         voicePackId: string;
@@ -1385,7 +1757,10 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
       const { agent: p1 } = await seedOwnerAgent(db, { handle: "vox_p1" });
       const { agent: p2 } = await seedOwnerAgent(db, { handle: "vox_p2" });
 
-      await db.update(agents).set({ voicePackId: "stoic-samurai" }).where(eq(agents.id, p2.id));
+      await db
+        .update(agents)
+        .set({ voicePackId: "stoic-samurai" })
+        .where(eq(agents.id, p2.id));
 
       const ch = await postChallenge({
         gameType: "tic-tac-toe",
@@ -1398,10 +1773,9 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
         acceptorAgentId: p2.id,
       });
 
-      const state = (await matchState.handler(
-        { matchId: m.id },
-        { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
-      )) as Record<string, unknown>;
+      const state = (await matchState.handler({ matchId: m.id }, {
+        agent: { id: p1.id, ownerId: p1.ownerId },
+      } as never)) as Record<string, unknown>;
 
       const oppVoice = state.opponentVoice as {
         voicePackId: string;
@@ -1428,12 +1802,14 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
       const matchId = r.match.id;
 
       // Submit a move with structured payload.
-      const move = (await matchMove.handler({
+      const move = (await matchMove.handler(
+        {
           say: "Test say line meets voice and length requirements",
           reactingTo: { ref: "opponent_move", echo: "their move" },
           matchId,
           payload: { index: 4 },
-          reasoning: "Center first move — strongest opening cell in tic-tac-toe.",
+          reasoning:
+            "Center first move — strongest opening cell in tic-tac-toe.",
           candidates: [
             { payload: { index: 4 }, why: "Center reach." },
             { payload: { index: 0 }, why: "Corner alt." },
@@ -1449,10 +1825,9 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
       expect(move.error).toBeUndefined();
 
       // Read state, verify recentReasoning includes the move.
-      const state = (await matchState.handler(
-        { matchId },
-        { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
-      )) as Record<string, unknown>;
+      const state = (await matchState.handler({ matchId }, {
+        agent: { id: agent.id, ownerId: agent.ownerId },
+      } as never)) as Record<string, unknown>;
 
       const recent = state.recentReasoning as Array<{
         moveNumber: number;
@@ -1467,7 +1842,9 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
       }>;
 
       // Should contain at LEAST our move (system bot may have replied).
-      const myMove = recent.find((m) => m.byMe && m.reasoning?.startsWith("Center"));
+      const myMove = recent.find(
+        (m) => m.byMe && m.reasoning?.startsWith("Center"),
+      );
       expect(myMove).toBeDefined();
       expect(myMove!.candidates).toBeDefined();
       expect((myMove!.candidates as Array<unknown>).length).toBe(2);
@@ -1517,7 +1894,8 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
       ];
 
       for (const m0 of movesScript) {
-        const res = (await matchMove.handler({
+        const res = (await matchMove.handler(
+          {
             say: "Test say line meets voice and length requirements",
             reactingTo: { ref: "opponent_move", echo: "their move" },
             matchId: m.id,
@@ -1531,10 +1909,9 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
       }
 
       // Read from p1's POV.
-      const state = (await matchState.handler(
-        { matchId: m.id },
-        { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
-      )) as Record<string, unknown>;
+      const state = (await matchState.handler({ matchId: m.id }, {
+        agent: { id: p1.id, ownerId: p1.ownerId },
+      } as never)) as Record<string, unknown>;
 
       // recentMoods is only my moods, oldest-first. The full sequence
       // was 5 moves but match_state limits to 5 most-recent entries
@@ -1562,7 +1939,8 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
         matchId: hardR.match.id,
         agentId: agent.id,
         payload: { index: 4 },
-        reasoning: "Center to flush out the bot's first response and read its style.",
+        reasoning:
+          "Center to flush out the bot's first response and read its style.",
         thinkingMs: 100,
       });
 
@@ -1602,12 +1980,14 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
       });
       if (r.kind !== "match") throw new Error("expected match");
 
-      await matchMove.handler({
+      await matchMove.handler(
+        {
           say: "Test say line meets voice and length requirements",
           reactingTo: { ref: "opponent_move", echo: "their move" },
           matchId: r.match.id,
           payload: { index: 4 },
-          reasoning: "Trying broadcast — testing realtime delivery to subscribed channels.",
+          reasoning:
+            "Trying broadcast — testing realtime delivery to subscribed channels.",
           mood: "cocky",
           phase: "opening",
         },
@@ -1671,10 +2051,14 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
       });
 
       // p1 plays, then p2 reacts to p1's move.
-      const move = await matchMove.handler({
-    say: "Test say line meets voice and length requirements",
-    reactingTo: { ref: "opponent_move", echo: "their move" },
- matchId: m.id, payload: { index: 4 }, reasoning: R },
+      const move = await matchMove.handler(
+        {
+          say: "Test say line meets voice and length requirements",
+          reactingTo: { ref: "opponent_move", echo: "their move" },
+          matchId: m.id,
+          payload: { index: 4 },
+          reasoning: R,
+        },
         { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
       );
       if ((move as { error?: string }).error) throw new Error(`p1 move failed`);
@@ -1690,8 +2074,14 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
       expect(react.error).toBeUndefined();
       expect(Array.isArray(react.reactions)).toBe(true);
 
-      const [moveRow] = await db.select().from(matchMoves).where(eq(matchMoves.matchId, m.id));
-      const reactions = moveRow.reactions as Array<{ emoji: string; fromAgentId?: string | null }>;
+      const [moveRow] = await db
+        .select()
+        .from(matchMoves)
+        .where(eq(matchMoves.matchId, m.id));
+      const reactions = moveRow.reactions as Array<{
+        emoji: string;
+        fromAgentId?: string | null;
+      }>;
       expect(reactions).toHaveLength(1);
       expect(reactions[0].emoji).toBe("🔥");
       expect(reactions[0].fromAgentId).toBe(p2.id);
@@ -1716,10 +2106,14 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
         acceptorAgentId: p2.id,
       });
 
-      await matchMove.handler({
-    say: "Test say line meets voice and length requirements",
-    reactingTo: { ref: "opponent_move", echo: "their move" },
- matchId: m.id, payload: { index: 4 }, reasoning: R },
+      await matchMove.handler(
+        {
+          say: "Test say line meets voice and length requirements",
+          reactingTo: { ref: "opponent_move", echo: "their move" },
+          matchId: m.id,
+          payload: { index: 4 },
+          reasoning: R,
+        },
         { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
       );
 
@@ -1763,10 +2157,14 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
         challengeId: ch.challenge.id,
         acceptorAgentId: p2.id,
       });
-      await matchMove.handler({
-    say: "Test say line meets voice and length requirements",
-    reactingTo: { ref: "opponent_move", echo: "their move" },
- matchId: m.id, payload: { index: 4 }, reasoning: R },
+      await matchMove.handler(
+        {
+          say: "Test say line meets voice and length requirements",
+          reactingTo: { ref: "opponent_move", echo: "their move" },
+          matchId: m.id,
+          payload: { index: 4 },
+          reasoning: R,
+        },
         { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
       );
       await matchReact.handler(
@@ -1790,7 +2188,9 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
       currentDb = db;
       const { agent: p1 } = await seedOwnerAgent(db, { handle: "auth_p1" });
       const { agent: p2 } = await seedOwnerAgent(db, { handle: "auth_p2" });
-      const { agent: outsider } = await seedOwnerAgent(db, { handle: "auth_o" });
+      const { agent: outsider } = await seedOwnerAgent(db, {
+        handle: "auth_o",
+      });
       const ch = await postChallenge({
         gameType: "tic-tac-toe",
         initiatorAgentId: p1.id,
@@ -1801,10 +2201,14 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
         challengeId: ch.challenge.id,
         acceptorAgentId: p2.id,
       });
-      await matchMove.handler({
-    say: "Test say line meets voice and length requirements",
-    reactingTo: { ref: "opponent_move", echo: "their move" },
- matchId: m.id, payload: { index: 4 }, reasoning: R },
+      await matchMove.handler(
+        {
+          say: "Test say line meets voice and length requirements",
+          reactingTo: { ref: "opponent_move", echo: "their move" },
+          matchId: m.id,
+          payload: { index: 4 },
+          reasoning: R,
+        },
         { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
       );
       const out = (await matchReact.handler(
@@ -1816,7 +2220,8 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
   });
 
   it("coliseum_match_chat_send persists chat + match_state returns full session oldest-first", async () => {
-    const { matchChatSend } = await import("@/app/api/mcp/tools/match-chat-send");
+    const { matchChatSend } =
+      await import("@/app/api/mcp/tools/match-chat-send");
     const { matchState } = await import("@/app/api/mcp/tools/match-state");
     await withTestDb(async ({ db }) => {
       currentDb = db;
@@ -1859,11 +2264,15 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
 
       // Read state from p1's POV. chat should be all 4 messages,
       // oldest-first.
-      const state = (await matchState.handler(
-        { matchId: m.id },
-        { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
-      )) as {
-        chat: Array<{ id: string; byMe: boolean; body: string; replyToMessageId: string | null }>;
+      const state = (await matchState.handler({ matchId: m.id }, {
+        agent: { id: p1.id, ownerId: p1.ownerId },
+      } as never)) as {
+        chat: Array<{
+          id: string;
+          byMe: boolean;
+          body: string;
+          replyToMessageId: string | null;
+        }>;
       };
       expect(state.chat).toHaveLength(4);
       expect(state.chat.map((c) => c.id)).toEqual([m1.id, m2.id, m3.id, m4.id]);
@@ -1874,7 +2283,8 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
   });
 
   it("coliseum_match_chat_send rejects non-players + reply mismatches", async () => {
-    const { matchChatSend } = await import("@/app/api/mcp/tools/match-chat-send");
+    const { matchChatSend } =
+      await import("@/app/api/mcp/tools/match-chat-send");
     await withTestDb(async ({ db }) => {
       currentDb = db;
       const { agent: p1 } = await seedOwnerAgent(db, { handle: "cs_p1" });
@@ -1918,7 +2328,8 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
       });
 
       // p1 plays move 0 with rich reasoning.
-      await matchMove.handler({
+      await matchMove.handler(
+        {
           say: "Test say line meets voice and length requirements",
           reactingTo: { ref: "opponent_move", echo: "their move" },
           matchId: m.id,
@@ -1933,10 +2344,9 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
 
       // From p2's POV, opponentLastMove should be p1's move with the
       // full structured payload.
-      const state = (await matchState.handler(
-        { matchId: m.id },
-        { agent: { id: p2.id, ownerId: p2.ownerId } } as never,
-      )) as {
+      const state = (await matchState.handler({ matchId: m.id }, {
+        agent: { id: p2.id, ownerId: p2.ownerId },
+      } as never)) as {
         opponentLastMove: {
           moveNumber: number;
           reasoning: string;
@@ -1968,10 +2378,11 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
       });
       if (r.kind !== "match") throw new Error("expected match");
 
-      const state = (await matchState.handler(
-        { matchId: r.match.id },
-        { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
-      )) as { opponentVoice: { voicePackId: string; catchphrase: string } | null };
+      const state = (await matchState.handler({ matchId: r.match.id }, {
+        agent: { id: agent.id, ownerId: agent.ownerId },
+      } as never)) as {
+        opponentVoice: { voicePackId: string; catchphrase: string } | null;
+      };
 
       expect(state.opponentVoice).not.toBeNull();
       expect(state.opponentVoice!.voicePackId).toBe("system-bot");
@@ -2006,7 +2417,10 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
         .select()
         .from(matchMoves)
         .where(eq(matchMoves.matchId, r.match.id));
-      const reactions = humanMove.reactions as Array<{ emoji: string; fromBot?: boolean }>;
+      const reactions = humanMove.reactions as Array<{
+        emoji: string;
+        fromBot?: boolean;
+      }>;
       expect(reactions).toHaveLength(1);
       expect(reactions[0].emoji).toBe("🤔");
       expect(reactions[0].fromBot).toBe(true);
@@ -2014,7 +2428,8 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
   });
 
   it("chat is ASYNC — agent can send multiple messages without it being their turn", async () => {
-    const { matchChatSend } = await import("@/app/api/mcp/tools/match-chat-send");
+    const { matchChatSend } =
+      await import("@/app/api/mcp/tools/match-chat-send");
     const { matchMove } = await import("@/app/api/mcp/tools/match-move");
     await withTestDb(async ({ db }) => {
       currentDb = db;
@@ -2032,10 +2447,14 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
       });
 
       // p1 plays a move.
-      const moveOut = (await matchMove.handler({
-    say: "Test say line meets voice and length requirements",
-    reactingTo: { ref: "opponent_move", echo: "their move" },
- matchId: m.id, payload: { index: 4 }, reasoning: R },
+      const moveOut = (await matchMove.handler(
+        {
+          say: "Test say line meets voice and length requirements",
+          reactingTo: { ref: "opponent_move", echo: "their move" },
+          matchId: m.id,
+          payload: { index: 4 },
+          reasoning: R,
+        },
         { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
       )) as { error?: string };
       expect(moveOut.error).toBeUndefined();
@@ -2043,19 +2462,17 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
       // It is now p2's turn. But p1 should still be able to send chat
       // messages WITHOUT it being their turn. Fire 3 in a row.
       for (const body of ["lol", "watch this next move", "trap incoming 😤"]) {
-        const out = (await matchChatSend.handler(
-          { matchId: m.id, body },
-          { agent: { id: p1.id, ownerId: p1.ownerId } } as never,
-        )) as { error?: string };
+        const out = (await matchChatSend.handler({ matchId: m.id, body }, {
+          agent: { id: p1.id, ownerId: p1.ownerId },
+        } as never)) as { error?: string };
         expect(out.error).toBeUndefined();
       }
 
       // p2 (whose turn it is) can ALSO send chats without playing yet.
       for (const body of ["cope", "I see it"]) {
-        const out = (await matchChatSend.handler(
-          { matchId: m.id, body },
-          { agent: { id: p2.id, ownerId: p2.ownerId } } as never,
-        )) as { error?: string };
+        const out = (await matchChatSend.handler({ matchId: m.id, body }, {
+          agent: { id: p2.id, ownerId: p2.ownerId },
+        } as never)) as { error?: string };
         expect(out.error).toBeUndefined();
       }
 
@@ -2076,7 +2493,8 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
   });
 
   it("coliseum_match_chat_send enforces the 50-per-agent soft cap", async () => {
-    const { matchChatSend } = await import("@/app/api/mcp/tools/match-chat-send");
+    const { matchChatSend } =
+      await import("@/app/api/mcp/tools/match-chat-send");
     await withTestDb(async ({ db }) => {
       currentDb = db;
       const { agent: p1 } = await seedOwnerAgent(db, { handle: "cap_p1" });
@@ -2165,7 +2583,8 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
         matchId: r.match.id,
         agentId: agent.id,
         payload: { index: 4 },
-        reasoning: "Looking for the fork at depth 2 — both diagonals are still open.",
+        reasoning:
+          "Looking for the fork at depth 2 — both diagonals are still open.",
         thinkingMs: 100,
       });
       const moves = await db
@@ -2206,14 +2625,16 @@ describe("annotateMove", () => {
         matchId: m.id,
         agentId: p1.id,
         payload: { index: 4 },
-        reasoning: "Claim the center cell — strongest first move in tic-tac-toe.",
+        reasoning:
+          "Claim the center cell — strongest first move in tic-tac-toe.",
         thinkingMs: 50,
       });
       const updated = await annotateMove({
         matchId: m.id,
         moveNumber: 0,
         agentId: p1.id,
-        reasoning: "Claim the center cell — strongest first move in tic-tac-toe.",
+        reasoning:
+          "Claim the center cell — strongest first move in tic-tac-toe.",
         plan: "force a fork by move 4",
         mood: "focused",
       });
@@ -2245,7 +2666,8 @@ describe("annotateMove", () => {
         matchId: m.id,
         agentId: p1.id,
         payload: { index: 4 },
-        reasoning: "Claim the center cell — strongest first move in tic-tac-toe.",
+        reasoning:
+          "Claim the center cell — strongest first move in tic-tac-toe.",
         thinkingMs: 50,
       });
       await expect(
@@ -2253,7 +2675,8 @@ describe("annotateMove", () => {
           matchId: m.id,
           moveNumber: 0,
           agentId: p2.id,
-          reasoning: "I am rewriting your move's reasoning here as a hostile actor.",
+          reasoning:
+            "I am rewriting your move's reasoning here as a hostile actor.",
         }),
       ).rejects.toBeInstanceOf(NotMoveAuthorError);
     });
@@ -2279,7 +2702,8 @@ describe("annotateMove", () => {
           matchId: m.id,
           moveNumber: 99,
           agentId: p1.id,
-          reasoning: "Annotating a move that does not exist — this should reject as move_not_found.",
+          reasoning:
+            "Annotating a move that does not exist — this should reject as move_not_found.",
         }),
       ).rejects.toBeInstanceOf(MoveNotFoundError);
     });
@@ -2304,7 +2728,8 @@ describe("annotateMove", () => {
         matchId: m.id,
         agentId: p1.id,
         payload: { index: 4 },
-        reasoning: "Claim the center cell — strongest first move in tic-tac-toe.",
+        reasoning:
+          "Claim the center cell — strongest first move in tic-tac-toe.",
         thinkingMs: 50,
       });
       const ancient = new Date(Date.now() - ANNOTATE_WINDOW_MS - 1000);
@@ -2317,7 +2742,8 @@ describe("annotateMove", () => {
           matchId: m.id,
           moveNumber: 0,
           agentId: p1.id,
-          reasoning: "Too late to annotate this move — the 5-minute window has expired.",
+          reasoning:
+            "Too late to annotate this move — the 5-minute window has expired.",
         }),
       ).rejects.toBeInstanceOf(AnnotateWindowExpiredError);
     });
@@ -2343,7 +2769,8 @@ describe("annotateMove", () => {
         matchId: m.id,
         agentId: p1.id,
         payload: { index: 4 },
-        reasoning: "Original prose explaining the move at submission time — must meet length.",
+        reasoning:
+          "Original prose explaining the move at submission time — must meet length.",
         mood: "confident",
         thinkingMs: 50,
       });
@@ -2352,7 +2779,8 @@ describe("annotateMove", () => {
         matchId: m.id,
         moveNumber: 0,
         agentId: p1.id,
-        reasoning: "Updated prose with a clearer plan — still in calm-professor voice.",
+        reasoning:
+          "Updated prose with a clearer plan — still in calm-professor voice.",
       });
       expect(updated.reasoning).toBe(
         "Updated prose with a clearer plan — still in calm-professor voice.",

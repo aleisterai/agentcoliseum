@@ -17,20 +17,13 @@
  *   AND agent_ready_at IS NULL
  *   AND started_at < now() - 30 minutes
  *
- * Per match:
- *   1. Mark status='completed', result_reason='abandoned',
- *      winner_agent_id=null, completed_at=now()
- *      (winner null + abandoned = no ELO impact downstream; same shape
- *      as a draw on the outcome side except no payout.)
- *
- *   2. If paid (stake_usdc > 0):
- *        - refund proposer stake → proposer's owner wallet
- *        - refund acceptor stake → acceptor's owner wallet
- *        - record both tx hashes; idempotent on payout_tx_hash IS NULL
- *      No treasury fee — the game never started.
- *
- *   3. If system mode: no on-chain movement. Just close the row so
- *      the lobby + MCP match_list stop surfacing it.
+ * Per match: call `finalizeMatch(resultReason='abandoned')`. As of
+ * the match_payouts refactor, finalize enqueues `abandon_refund`
+ * payout rows for both sides — settlement-sweep drains them on its
+ * next tick, idempotently per recipient. We no longer call
+ * `refundStake` directly from here, so the cron can't double-send if
+ * it crashes between p1 and p2 (each recipient is its own row with
+ * its own UNIQUE constraint).
  *
  * NOT a time-forfeit — the game never started, neither player did
  * anything wrong. `abandoned` is the correct resultReason and ELO
@@ -38,10 +31,9 @@
  * the existing abandoned-challenge path).
  */
 import { NextResponse } from "next/server";
-import { and, eq, isNull, lt, sql } from "drizzle-orm";
+import { and, eq, isNull, lt } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { agents, matches, owners } from "@/lib/db/schema";
-import { refundStake } from "@/lib/chain/stake";
+import { matches } from "@/lib/db/schema";
 import { finalizeMatch } from "@/lib/game/flow/finalize";
 import { jsonError } from "@/lib/http";
 import { recordCronRun } from "@/lib/cron-audit";
@@ -56,15 +48,17 @@ const UNREADY_MAX_MS = 30 * 60 * 1000; // 30 minutes
 export async function GET(req: Request) {
   if (!authorizedCronRequest(req))
     return jsonError(401, "unauthorized", "Cron secret required");
-  return recordCronRun("refund-unready-matches", async ({ setItems, setMetadata }) => {
-    return handle({ setItems, setMetadata });
-  });
+  return recordCronRun(
+    "refund-unready-matches",
+    async ({ setItems, setMetadata }) => {
+      return handle({ setItems, setMetadata });
+    },
+  );
 }
 
 interface PerMatchOutcome {
   matchId: string;
-  outcome: "abandoned" | "refunded" | "skipped" | "error";
-  refundedSides?: number;
+  outcome: "abandoned" | "error";
   detail?: string;
 }
 
@@ -102,8 +96,12 @@ async function handle({
 
   if (stuck.length === 0) {
     setItems(0);
-    setMetadata({ abandoned: 0, refunded: 0, skipped: 0, errored: 0 });
-    return NextResponse.json({ ok: true, abandoned: 0, message: "no stuck matches" });
+    setMetadata({ abandoned: 0, errored: 0 });
+    return NextResponse.json({
+      ok: true,
+      abandoned: 0,
+      message: "no stuck matches",
+    });
   }
 
   const results: PerMatchOutcome[] = [];
@@ -112,13 +110,14 @@ async function handle({
     try {
       // Close via finalizeMatch — NOT a raw UPDATE. finalizeMatch is
       // the single source of truth for match completion: it transacts
-      // the row update + fires the GameEnded Supabase Realtime broadcast
-      // so any spectator on the match page sees the end state without
-      // having to refresh. Doing a raw UPDATE here would have skipped
-      // the broadcast and left every connected client stuck on
-      // status='active' until they reloaded. resultReason='abandoned'
-      // signals to finalizeMatch to skip ELO Δ + W/L/D counter changes
-      // (the new policy from the moveCount=0 fairness gate).
+      // the row update, enqueues `abandon_refund` payout rows for
+      // paid matches (settlement-sweep drains them), and fires the
+      // GameEnded Supabase Realtime broadcast so any spectator on the
+      // match page sees the end state without having to refresh.
+      // Doing a raw UPDATE here would have skipped the broadcast AND
+      // the per-recipient idempotency. resultReason='abandoned'
+      // signals to finalize to skip ELO Δ + W/L/D counter changes
+      // (the policy from the moveCount=0 fairness gate).
       await finalizeMatch({
         matchId: m.id,
         winnerAgentId: null,
@@ -126,35 +125,7 @@ async function handle({
         finalP1Ms: 0,
         finalP2Ms: 0,
       });
-
-      // Paid match → refund both stakes. System matches have no stake.
-      if (m.mode === "paid" && m.stakeUsdc && m.stakeUsdc > 0) {
-        if (!process.env.PLATFORM_OPERATOR_PRIVATE_KEY) {
-          results.push({
-            matchId: m.id,
-            outcome: "skipped",
-            detail: "PLATFORM_OPERATOR_PRIVATE_KEY not set — match closed, refunds deferred",
-          });
-          continue;
-        }
-        let refundedSides = 0;
-        for (const agentId of [m.p1AgentId, m.p2AgentId].filter(Boolean) as string[]) {
-          const ownerRow = await db
-            .select({ wallet: owners.walletAddress })
-            .from(agents)
-            .innerJoin(owners, eq(agents.ownerId, owners.id))
-            .where(eq(agents.id, agentId))
-            .limit(1);
-          const wallet = ownerRow[0]?.wallet;
-          if (!wallet) continue;
-          await refundStake(wallet as `0x${string}`, m.stakeUsdc);
-          refundedSides++;
-        }
-        results.push({ matchId: m.id, outcome: "refunded", refundedSides });
-      } else {
-        // System / free: nothing to refund, row already closed.
-        results.push({ matchId: m.id, outcome: "abandoned" });
-      }
+      results.push({ matchId: m.id, outcome: "abandoned" });
     } catch (err) {
       console.error(`[cron/refund-unready-matches] ${m.id} failed`, err);
       results.push({
@@ -166,14 +137,13 @@ async function handle({
   }
 
   const abandoned = results.filter((r) => r.outcome === "abandoned").length;
-  const refunded = results.filter((r) => r.outcome === "refunded").length;
-  const skipped = results.filter((r) => r.outcome === "skipped").length;
   const errored = results.filter((r) => r.outcome === "error").length;
-  setItems(abandoned + refunded);
-  setMetadata({ abandoned, refunded, skipped, errored, batchSize: results.length });
-  return NextResponse.json({ ok: true, abandoned, refunded, skipped, errored, results });
+  setItems(abandoned);
+  setMetadata({ abandoned, errored, batchSize: results.length });
+  return NextResponse.json({
+    ok: true,
+    abandoned,
+    errored,
+    results,
+  });
 }
-
-// Silence unused import for the sql helper if we don't end up using
-// it (kept for future raw-SQL escape hatches).
-void sql;

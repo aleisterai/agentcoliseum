@@ -24,13 +24,9 @@ import { challenges, owners } from "@/lib/db/schema";
 import { guardian } from "@/lib/guardian";
 import { pullStake, refundStake, StakePullError } from "@/lib/chain/stake";
 import { requireTier } from "@/lib/chain/tiers";
-import {
-  acceptChallenge,
-  ChallengeRaceError,
-  IllegalMoveError,
-  UnknownGameTypeError,
-} from "@/lib/game/server-flow";
+import { acceptChallenge } from "@/lib/game/server-flow";
 import type { ToolDef } from "./_types";
+import { toolError, toToolError } from "./_shared";
 
 const AcceptArgs = z.object({ challengeId: z.string().uuid() }).strict();
 
@@ -59,33 +55,57 @@ export const challengeAccept: ToolDef = {
   async handler(args, { agent }) {
     const parsed = AcceptArgs.safeParse(args);
     if (!parsed.success) {
-      return { error: `validation_failed: ${JSON.stringify(parsed.error.flatten())}` };
+      return toolError("validation_failed", "challengeId must be a uuid", {
+        details: parsed.error.flatten(),
+      });
     }
     const challenge = await db.query.challenges.findFirst({
       where: eq(challenges.id, parsed.data.challengeId),
     });
-    if (!challenge) return { error: "challenge_not_found" };
+    if (!challenge) {
+      return toolError("challenge_not_found", "no challenge with that id", {
+        hint: "Call coliseum_match_list to refresh open challenges.",
+      });
+    }
     if (challenge.status !== "posted") {
-      return { error: `not_open: challenge is ${challenge.status}` };
+      return toolError(
+        "challenge_already_accepted",
+        `challenge is ${challenge.status}, not open`,
+        { details: { status: challenge.status } },
+      );
     }
     if (challenge.eloMin != null && agent.elo < challenge.eloMin) {
-      return { error: `elo_below_min: your ELO ${agent.elo} < min ${challenge.eloMin}` };
+      return toolError(
+        "elo_below_min",
+        `your ELO ${agent.elo} is below this challenge's floor ${challenge.eloMin}`,
+        { details: { yourElo: agent.elo, eloMin: challenge.eloMin } },
+      );
     }
     if (challenge.eloMax != null && agent.elo > challenge.eloMax) {
-      return { error: `elo_above_max: your ELO ${agent.elo} > max ${challenge.eloMax}` };
+      return toolError(
+        "elo_above_max",
+        `your ELO ${agent.elo} is above this challenge's ceiling ${challenge.eloMax}`,
+        { details: { yourElo: agent.elo, eloMax: challenge.eloMax } },
+      );
     }
 
     const ownerRow = await db.query.owners.findFirst({
       where: eq(owners.id, agent.ownerId),
     });
-    if (!ownerRow) return { error: "owner_not_found" };
+    if (!ownerRow) {
+      return toolError("agent_not_found", "agent has no owner row");
+    }
 
     try {
       await requireTier(ownerRow.walletAddress as `0x${string}`, "play");
     } catch (e) {
-      return {
-        error: `tier_insufficient: ${e instanceof Error ? e.message : String(e)}`,
-      };
+      return toolError(
+        "insufficient_tier",
+        e instanceof Error ? e.message : String(e),
+        {
+          hint: "Owner wallet needs the Play tier (20M+ ALEISTER) to accept paid challenges.",
+        },
+      );
     }
 
     const g = await guardian.evaluate("challenge.accept", {
@@ -94,9 +114,12 @@ export const challengeAccept: ToolDef = {
       gameType: challenge.gameType,
     });
     if (!g.ok) {
-      return {
-        error: `${g.denials[0]?.code ?? "guardian_denied"}: ${g.denials.map((d) => d.message).join(" · ")}`,
-      };
+      const denial = g.denials[0];
+      return toolError(
+        denial?.code ?? "validation_failed",
+        g.denials.map((d) => d.message).join(" · "),
+        { details: { denials: g.denials } },
+      );
     }
 
     let acceptorStakeTxHash: `0x${string}` | null = null;
@@ -110,7 +133,9 @@ export const challengeAccept: ToolDef = {
         acceptorStakeTxHash = pull.txHash;
       } catch (err) {
         if (err instanceof StakePullError) {
-          return { error: `${err.code}: ${err.message}` };
+          return toolError("stake_pull_failed", err.message, {
+            details: { code: err.code },
+          });
         }
         throw err;
       }
@@ -161,16 +186,7 @@ export const challengeAccept: ToolDef = {
           });
         }
       }
-      if (err instanceof ChallengeRaceError) {
-        return { error: `challenge_already_accepted: ${err.message}` };
-      }
-      if (err instanceof IllegalMoveError) {
-        return { error: `accept_failed: ${err.message}` };
-      }
-      if (err instanceof UnknownGameTypeError) {
-        return { error: `unknown_game_type: ${err.message}` };
-      }
-      throw err;
+      return toToolError(err);
     }
   },
 };

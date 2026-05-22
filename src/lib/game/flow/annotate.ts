@@ -37,7 +37,11 @@ import type {
   GamePhase,
   AgentMood,
 } from "@/lib/db/schema";
-import { MatchNotFoundError, NotYourTurnError } from "./errors";
+import {
+  MatchNotFoundError,
+  MissingReasoningError,
+  NotYourTurnError,
+} from "./errors";
 
 /** Window during which a move's reasoning can still be filled in. */
 export const ANNOTATE_WINDOW_MS = 5 * 60 * 1000;
@@ -112,7 +116,14 @@ export async function annotateMove(input: AnnotateInput) {
   // typical PATCH-semantics intuition.
   const patch: Partial<typeof matchMoves.$inferInsert> = {};
   if (input.reasoning !== undefined) {
-    patch.reasoning = (input.reasoning ?? "").trim().slice(0, 1000) || null;
+    // Same 40-char minimum as match_move — annotate must not be a
+    // backdoor to ship empty/trivial reasoning after match_move's
+    // validator. Voice mandate applies on every write path.
+    const trimmed = (input.reasoning ?? "").trim();
+    if (trimmed && trimmed.length < 40) {
+      throw new MissingReasoningError();
+    }
+    patch.reasoning = trimmed.slice(0, 4000) || null;
   }
   if (input.candidates !== undefined) patch.candidates = input.candidates;
   if (input.evaluation !== undefined) patch.evaluation = input.evaluation;

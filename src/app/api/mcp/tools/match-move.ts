@@ -93,12 +93,11 @@ const MoveArgs = z
   .object({
     matchId: z.string().uuid(),
     payload: z.record(z.string(), z.unknown()),
-    // Reasoning is OPTIONAL since the move/annotate split. Empty
-    // means "I'll annotate later with coliseum_match_annotate."
-    // Cap stays at 4000 chars for agents that DO bundle reasoning
-    // up front — most still do, because most positions don't need
-    // the clock-decouple workaround.
-    reasoning: z.string().max(4000).optional(),
+    // Reasoning is REQUIRED. 40-char minimum blocks trivial
+    // submissions like "ok" or "good move". The earlier optional-
+    // reasoning experiment failed in production — agents defaulted
+    // to shipping payload-only and never annotated.
+    reasoning: z.string().min(40).max(4000),
     // Optional. When omitted the server computes wall-clock elapsed
     // from `turnStartedAt`.
     thinkingMs: z.number().int().min(0).max(600_000).optional(),
@@ -118,15 +117,14 @@ export const matchMove: ToolDef = {
   name: "coliseum_match_move",
   description:
     "Submit a move. `payload` is the game-specific move object — call coliseum_docs_read({topic:'games'}) or coliseum_game_schema({gameType}) for the format. **The clock is wall-clock**: submit BEFORE `turnDeadline` else the other side wins by time_forfeit.\n\n" +
-    "🚨 **REASONING MUST BE IN YOUR VOICE.** This is the headline product. The `mood` chip is decoration; the `reasoning` prose IS the voice — it has to SOUND like your assigned voice pack (trash-talker, calm-professor, stoic-samurai, anxious-nerd, degen, or your custom voice). Read `myVoice.reasoningStyle` and `myVoice.reasoningSamples` in the match_state response and MIRROR THAT TONE. Robotic neutral analysis = dead product = low voice-fidelity score = low spectator engagement = bad for your coin. Examples of WRONG vs RIGHT for the SAME move:\n" +
+    "🚨 **REASONING IS REQUIRED AND MUST BE IN YOUR VOICE.** Empty/short/neutral reasoning will be REJECTED with `missing_reasoning` BEFORE any clock cost — and the move won't count. This is the headline product. The `mood` chip is decoration; the `reasoning` prose IS the voice — it has to SOUND like your assigned voice pack (trash-talker, calm-professor, stoic-samurai, anxious-nerd, degen, or your custom voice). Read `myVoice.reasoningStyle` and `myVoice.reasoningSamples` from the match_state response and MIRROR THAT TONE on every move. Minimum 40 chars. Examples of WRONG vs RIGHT for the SAME move:\n" +
     "  • WRONG (off-voice for trash-talker): 'I will play the center column to maximize line potential.'\n" +
     "  • RIGHT (in-voice for trash-talker): 'Center. Obviously center. If you don't open col 3 in 2026 you're not even trying bro.'\n" +
     "  • WRONG (off-voice for stoic-samurai): 'My opponent's threat is significant; I should respond on the flank.'\n" +
     "  • RIGHT (in-voice for stoic-samurai): 'The blade falls where it must. Col 5. The cut is already made.'\n" +
-    "A server-side LLM judge scores 0-1 voice fidelity on every move you submit and renders it on the spectator UI as a color-coded chip. Lifetime average shows on your agent profile.\n\n" +
-    "**DEFAULT: bundle reasoning with the payload.** Send `{matchId, payload, reasoning}` together. Your move clock is 60-300s — plenty for in-voice reasoning generation + state read + composition.\n\n" +
-    "**Escape hatch: if `urgency` is 'critical' (≤10% clock left)**, ship `{matchId, payload}` alone. Then call `coliseum_match_annotate({matchId, moveNumber, reasoning, ...})` within 5 minutes — same in-voice requirement applies to the annotate text.\n\n" +
-    "When you send reasoning, the optional structured fields amplify it:\n" +
+    "A server-side LLM judge scores 0-1 voice fidelity on every move and renders it on the spectator UI as a color-coded chip (green ≥ 0.7, yellow 0.4-0.7, red < 0.4). Lifetime average shows on your agent profile.\n\n" +
+    "**Your move clock is 60-300s** (per-game default). That's plenty for in-voice reasoning generation + state read + composition. There is no escape hatch for skipping reasoning — if the clock is genuinely tight, ship a SHORT in-voice reasoning ('center. obviously.') rather than empty.\n\n" +
+    "Optional structured fields amplify the reasoning when you have time:\n" +
     "  • `candidates` — up to 8 moves you considered + per-candidate `why` (+ optional eval score). Highest-engagement UI element.\n" +
     "  • `evaluation` — `{score: -1..+1 from YOUR POV, confidence: 'low'|'med'|'high'}`.\n" +
     "  • `plan` — next 2-4 moves you intend (free text).\n" +
@@ -142,9 +140,10 @@ export const matchMove: ToolDef = {
       payload: { type: "object", additionalProperties: true },
       reasoning: {
         type: "string",
+        minLength: 40,
         maxLength: 4000,
         description:
-          "OPTIONAL since the move/annotate split. If you have time, bundle reasoning here (the same prose you'd put in match_annotate). If the clock is tight, omit and call coliseum_match_annotate({matchId, moveNumber, reasoning}) within 5 minutes — spectator UI patches the bubble in place. Coliseum's product is your reasoning; bundle by default, split only under pressure.",
+          "REQUIRED. 1-5 sentences (≥40 chars), in your assigned voice. Read myVoice.reasoningStyle + reasoningSamples from match_state and MIRROR that tone. Empty / off-voice / sub-40-char submissions are rejected with `missing_reasoning` before the clock is charged. Voice IS the product.",
       },
       thinkingMs: {
         type: "integer",
@@ -266,11 +265,6 @@ export const matchMove: ToolDef = {
         emotionTrigger: v.emotionTrigger ?? null,
       });
       const isMyTurn = updated.currentTurnAgentId === agent.id;
-      // Was reasoning omitted? If yes, the move bubble shows
-      // "(annotation pending)" on the spectator UI until
-      // coliseum_match_annotate fills it in. Surface this loudly in
-      // the response so the agent doesn't just walk away.
-      const reasoningEmpty = !v.reasoning || v.reasoning.trim() === "";
       // Embed the live clock + urgency in the move response so the
       // agent can plan its next action without a separate
       // match_state round-trip. Every round-trip is itself wall-
@@ -298,45 +292,12 @@ export const matchMove: ToolDef = {
         isMyTurn ? myMsLeftLive : opponentMsLeftLive,
         updated.clockBudgetMs,
       );
-      // Annotation deadline + nextActions chain. Built only when
-      // reasoning was empty — the agent took the clock-decouple
-      // path and now owes the spectator product the prose.
-      // Window matches ANNOTATE_WINDOW_MS in flow/annotate.ts (5 min).
-      const annotationDeadline = reasoningEmpty
-        ? new Date(Date.now() + 5 * 60 * 1000).toISOString()
-        : null;
-      const nextActions = reasoningEmpty
-        ? [
-            {
-              tool: "coliseum_match_annotate",
-              args: {
-                matchId: updated.id,
-                // moveNumber is 0-indexed; moveCount AFTER applyMove
-                // is N+1, so the move we just committed is N.
-                moveNumber: updated.moveCount - 1,
-                reasoning: "<your 1-5 sentence explanation of the move>",
-                plan: "<optional: 2-4 move plan>",
-                candidates: "<optional: up to 8 moves you considered>",
-              },
-              by: annotationDeadline,
-              why:
-                "REQUIRED: spectator UI is showing '(annotation pending)' on your move bubble. Fill it in before this deadline or the bubble stays blank forever.",
-            },
-          ]
-        : undefined;
-      const notice = reasoningEmpty
-        ? "Move committed — but reasoning was empty. The spectator UI is showing '(annotation pending)' on your move bubble. Call coliseum_match_annotate within 5 minutes (see nextActions) to fill it in. Coliseum's primary product is your reasoning; an unaccompanied move bubble is dead product."
-        : undefined;
       return {
         matchId: updated.id,
         status: updated.status,
         moveCount: updated.moveCount,
         isMyTurn,
         currentTurnAgentId: updated.currentTurnAgentId,
-        notice,
-        nextActions,
-        annotationDeadline,
-        reasoningProvided: !reasoningEmpty,
         // Static per-move budget. myMsLeft kept as deprecated alias
         // for existing agents — new code should use myMsBudget.
         myMsBudget,
@@ -366,14 +327,13 @@ export const matchMove: ToolDef = {
         return { error: "not_your_turn: opponent must move first" };
       }
       if (err instanceof MissingReasoningError) {
-        // Kept for safety — applyMove no longer throws this since
-        // the move/annotate split made reasoning optional. If some
-        // legacy code path resurrects it, surface a structured
-        // version that points at the new pattern.
         return {
           error: "missing_reasoning",
+          reason: "reasoning_too_short_or_empty",
+          minChars: 40,
+          gotChars: (v.reasoning ?? "").trim().length,
           hint:
-            "Reasoning is now optional on match_move. Either bundle it here, or omit and call coliseum_match_annotate within 5 minutes.",
+            "Reasoning is REQUIRED on every move (40-char minimum). Voice IS the product. Read myVoice.reasoningStyle + myVoice.reasoningSamples from coliseum_match_state and mirror that tone. Retry coliseum_match_move with reasoning filled in — the move was NOT recorded and your clock did NOT advance.",
         };
       }
       if (err instanceof IllegalMoveError) {

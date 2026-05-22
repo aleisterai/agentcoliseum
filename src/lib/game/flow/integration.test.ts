@@ -95,10 +95,10 @@ const {
   NotMoveAuthorError,
 } = await import("./annotate");
 
-// Shared test reasoning — applyMove now requires non-empty reasoning so
-// every test that submits a move must include one. Kept generic + short
-// so the tests focus on the move-handling behaviour, not the prose.
-const R = "test reasoning";
+// Shared test reasoning — applyMove enforces a 40-char minimum so the
+// string below has to clear that bar. Kept generic so the tests focus
+// on move-handling behaviour, not voice prose.
+const R = "Test reasoning string for the move under test — sufficient length.";
 
 // ----- Helpers --------------------------------------------------------------
 
@@ -470,13 +470,11 @@ describe("applyMove", () => {
     });
   });
 
-  it("accepts a move with missing reasoning (move/annotate split)", async () => {
-    // The earlier contract REQUIRED reasoning on every match_move
-    // call. Move/annotate split: reasoning is now optional — agents
-    // can ship payload-only to stop the clock, then annotate later.
-    // Empty / whitespace-only resolves the same way (null reasoning
-    // on the row). MissingReasoningError no longer fires from
-    // applyMove; it's kept as an export for legacy harnesses only.
+  it("rejects a move with missing / empty / short reasoning (40-char min)", async () => {
+    // Reasoning is REQUIRED on every match_move (40-char minimum).
+    // Voice is the product; empty bubbles are unshippable. Reject
+    // BEFORE any clock cost or DB writes so a bad submission costs
+    // nothing except the round-trip.
     await withTestDb(async ({ db }) => {
       currentDb = db;
       const { agent: p1 } = await seedOwnerAgent(db, { handle: "p1" });
@@ -492,30 +490,56 @@ describe("applyMove", () => {
         acceptorAgentId: p2.id,
       });
 
-      // Empty string — accepted, persisted with null reasoning.
-      const ok1 = await applyMove({
-        matchId: match.id,
-        agentId: p1.id,
-        payload: { index: 4 },
-        reasoning: "",
-        thinkingMs: 50,
-      });
-      expect(ok1.moveCount).toBe(1);
+      // Empty string — rejected.
+      await expect(
+        applyMove({
+          matchId: match.id,
+          agentId: p1.id,
+          payload: { index: 4 },
+          reasoning: "",
+          thinkingMs: 50,
+        }),
+      ).rejects.toBeInstanceOf(MissingReasoningError);
 
+      // Whitespace-only — rejected.
+      await expect(
+        applyMove({
+          matchId: match.id,
+          agentId: p1.id,
+          payload: { index: 4 },
+          reasoning: "   \n\t  ",
+          thinkingMs: 50,
+        }),
+      ).rejects.toBeInstanceOf(MissingReasoningError);
+
+      // Too short (< 40 chars) — rejected.
+      await expect(
+        applyMove({
+          matchId: match.id,
+          agentId: p1.id,
+          payload: { index: 4 },
+          reasoning: "ok center",
+          thinkingMs: 50,
+        }),
+      ).rejects.toBeInstanceOf(MissingReasoningError);
+
+      // No move row was written despite multiple rejected calls.
       const rows = await db
         .select()
         .from(matchMoves)
         .where(eq(matchMoves.matchId, match.id));
-      expect(rows).toHaveLength(1);
-      expect(rows[0].reasoning ?? "").toBe("");
-    });
-  });
+      expect(rows).toHaveLength(0);
 
-  it("MissingReasoningError stays exported for legacy harnesses", () => {
-    // Pin the symbol — some older bot harnesses still import this.
-    // The class is intentionally unreachable from applyMove now.
-    expect(typeof MissingReasoningError).toBe("function");
-    expect(new MissingReasoningError()).toBeInstanceOf(Error);
+      // The same move with sufficient reasoning IS accepted.
+      const ok = await applyMove({
+        matchId: match.id,
+        agentId: p1.id,
+        payload: { index: 4 },
+        reasoning: "Center. Obviously center. Strongest first move on the board.",
+        thinkingMs: 50,
+      });
+      expect(ok.moveCount).toBe(1);
+    });
   });
 
   it("two illegal moves in a row forfeit the match (invalid_move_forfeit)", async () => {
@@ -1227,7 +1251,7 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
         {
           matchId: r.match.id,
           payload: { index: 0 },
-          reasoning: "Corner play.",
+          reasoning: "Corner play — sets up two-line fork potential later in the match.",
         },
         { agent: { id: agent.id, ownerId: agent.ownerId } } as never,
       )) as Record<string, unknown>;
@@ -1401,7 +1425,7 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
         {
           matchId,
           payload: { index: 4 },
-          reasoning: "Center first move.",
+          reasoning: "Center first move — strongest opening cell in tic-tac-toe.",
           candidates: [
             { payload: { index: 4 }, why: "Center reach." },
             { payload: { index: 0 }, why: "Corner alt." },
@@ -1489,7 +1513,7 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
           {
             matchId: m.id,
             payload: m0.payload,
-            reasoning: `${m0.mood} move`,
+            reasoning: `${m0.mood} move — playing index ${m0.payload.index} as part of the planned line.`,
             mood: m0.mood,
           },
           { agent: { id: m0.whose.id, ownerId: m0.whose.ownerId } } as never,
@@ -1529,7 +1553,7 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
         matchId: hardR.match.id,
         agentId: agent.id,
         payload: { index: 4 },
-        reasoning: "Center to flush the bot's response.",
+        reasoning: "Center to flush out the bot's first response and read its style.",
         thinkingMs: 100,
       });
 
@@ -1573,7 +1597,7 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
         {
           matchId: r.match.id,
           payload: { index: 4 },
-          reasoning: "Trying broadcast.",
+          reasoning: "Trying broadcast — testing realtime delivery to subscribed channels.",
           mood: "cocky",
           phase: "opening",
         },
@@ -1584,7 +1608,10 @@ describe("Phase A — structured reasoning + voice + emotion", () => {
       // broadcastGame is called as (channelId, eventName, payload).
       const humanCall = broadcast.mock.calls.find((c) => {
         const payload = c[2] as { reasoning?: string };
-        return payload?.reasoning === "Trying broadcast.";
+        return (
+          payload?.reasoning ===
+          "Trying broadcast — testing realtime delivery to subscribed channels."
+        );
       });
       expect(humanCall).toBeDefined();
       const payload = humanCall![2] as {
@@ -1877,7 +1904,7 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
         {
           matchId: m.id,
           payload: { index: 4 },
-          reasoning: "Center is principled — I expect mirror.",
+          reasoning: "Center is principled here — I expect a mirror response.",
           plan: "Trap on move 3.",
           mood: "cocky",
           phase: "opening",
@@ -2085,7 +2112,7 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
         matchId: r.match.id,
         agentId: agent.id,
         payload: { index: 4 },
-        reasoning: "Center.",
+        reasoning: "Center. Strongest first move on an empty board.",
         thinkingMs: 100,
       });
 
@@ -2117,7 +2144,7 @@ describe("Phase A++ — agent-to-agent chat + reactions", () => {
         matchId: r.match.id,
         agentId: agent.id,
         payload: { index: 4 },
-        reasoning: "Looking for the fork at depth 2.",
+        reasoning: "Looking for the fork at depth 2 — both diagonals are still open.",
         thinkingMs: 100,
       });
       const moves = await db
@@ -2158,18 +2185,20 @@ describe("annotateMove", () => {
         matchId: m.id,
         agentId: p1.id,
         payload: { index: 4 },
-        reasoning: "",
+        reasoning: "Claim the center cell — strongest first move in tic-tac-toe.",
         thinkingMs: 50,
       });
       const updated = await annotateMove({
         matchId: m.id,
         moveNumber: 0,
         agentId: p1.id,
-        reasoning: "claim the center",
+        reasoning: "Claim the center cell — strongest first move in tic-tac-toe.",
         plan: "force a fork by move 4",
         mood: "focused",
       });
-      expect(updated.reasoning).toBe("claim the center");
+      expect(updated.reasoning).toBe(
+        "Claim the center cell — strongest first move in tic-tac-toe.",
+      );
       expect(updated.plan).toBe("force a fork by move 4");
       expect(updated.mood).toBe("focused");
       expect(updated.voiceFidelityScore).toBeNull();
@@ -2195,7 +2224,7 @@ describe("annotateMove", () => {
         matchId: m.id,
         agentId: p1.id,
         payload: { index: 4 },
-        reasoning: "",
+        reasoning: "Claim the center cell — strongest first move in tic-tac-toe.",
         thinkingMs: 50,
       });
       await expect(
@@ -2203,7 +2232,7 @@ describe("annotateMove", () => {
           matchId: m.id,
           moveNumber: 0,
           agentId: p2.id,
-          reasoning: "I am rewriting your move's reasoning",
+          reasoning: "I am rewriting your move's reasoning here as a hostile actor.",
         }),
       ).rejects.toBeInstanceOf(NotMoveAuthorError);
     });
@@ -2229,7 +2258,7 @@ describe("annotateMove", () => {
           matchId: m.id,
           moveNumber: 99,
           agentId: p1.id,
-          reasoning: "annotating a move that does not exist",
+          reasoning: "Annotating a move that does not exist — this should reject as move_not_found.",
         }),
       ).rejects.toBeInstanceOf(MoveNotFoundError);
     });
@@ -2254,7 +2283,7 @@ describe("annotateMove", () => {
         matchId: m.id,
         agentId: p1.id,
         payload: { index: 4 },
-        reasoning: "",
+        reasoning: "Claim the center cell — strongest first move in tic-tac-toe.",
         thinkingMs: 50,
       });
       const ancient = new Date(Date.now() - ANNOTATE_WINDOW_MS - 1000);
@@ -2267,7 +2296,7 @@ describe("annotateMove", () => {
           matchId: m.id,
           moveNumber: 0,
           agentId: p1.id,
-          reasoning: "too late",
+          reasoning: "Too late to annotate this move — the 5-minute window has expired.",
         }),
       ).rejects.toBeInstanceOf(AnnotateWindowExpiredError);
     });
@@ -2293,7 +2322,7 @@ describe("annotateMove", () => {
         matchId: m.id,
         agentId: p1.id,
         payload: { index: 4 },
-        reasoning: "original prose",
+        reasoning: "Original prose explaining the move at submission time — must meet length.",
         mood: "confident",
         thinkingMs: 50,
       });
@@ -2302,9 +2331,11 @@ describe("annotateMove", () => {
         matchId: m.id,
         moveNumber: 0,
         agentId: p1.id,
-        reasoning: "updated prose",
+        reasoning: "Updated prose with a clearer plan — still in calm-professor voice.",
       });
-      expect(updated.reasoning).toBe("updated prose");
+      expect(updated.reasoning).toBe(
+        "Updated prose with a clearer plan — still in calm-professor voice.",
+      );
       expect(updated.mood).toBe("confident");
     });
   });

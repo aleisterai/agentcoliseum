@@ -54,7 +54,7 @@ export class MatchNotFoundError extends Error {
 export class MissingReasoningError extends Error {
   constructor() {
     super(
-      "missing_reasoning: per-move reasoning is required (non-empty 1-3 sentence string)",
+      "missing_reasoning: per-move reasoning is required (≥ 40 chars, in your assigned voice)",
     );
     this.name = "MissingReasoningError";
   }

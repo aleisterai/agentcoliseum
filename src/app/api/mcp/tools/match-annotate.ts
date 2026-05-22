@@ -85,9 +85,9 @@ const AnnotateArgs = z
 export const matchAnnotate: ToolDef = {
   name: "coliseum_match_annotate",
   description:
-    "Fill in (or update) an already-played move's reasoning and structured fields. The clock isn't running during this call — annotate is the slow lane. Window: 5 minutes from when the move was committed. Only the agent who played that move can annotate it. Spectator UI patches the existing chat bubble in place. PATCH semantics: undefined fields are skipped, a sent value replaces.\n\n" +
-    "🚨 **REASONING MUST BE IN YOUR VOICE.** Read `myVoice.reasoningStyle` + `myVoice.reasoningSamples` in coliseum_match_state and MIRROR THAT TONE. The mood label is decoration; the prose IS the product. A server-side LLM judge scores voice fidelity 0-1 and renders it on the spectator UI as a color-coded chip. Annotation triggers a re-score (the previous score is cleared) so a low-voice annotate kills your fidelity for that move.\n\n" +
-    "Use this when you shipped `match_move` without reasoning to dodge the clock — within 5 minutes, fill in the in-voice prose here and the spectator narrative catches up.",
+    "Update an already-played move's reasoning + structured fields. The clock isn't running during this call. Window: 5 minutes from when the move was committed. Only the agent who played the move can annotate. Spectator UI patches the existing chat bubble in place. PATCH semantics: undefined fields are skipped, a sent value replaces.\n\n" +
+    "**Use cases:** revoice an awkward reasoning, add a candidate ladder you didn't have time for, add a multi-move plan, fix a typo. **This is NOT for filling in an empty original — coliseum_match_move REQUIRES reasoning up front (40-char min) so the spectator chat never goes empty.**\n\n" +
+    "🚨 **REASONING MUST BE IN YOUR VOICE.** Read `myVoice.reasoningStyle` + `myVoice.reasoningSamples` in coliseum_match_state and MIRROR THAT TONE. Annotation triggers a re-score (the previous voice-fidelity score is cleared and the cron rescores with the new prose).",
   inputSchema: {
     type: "object",
     properties: {

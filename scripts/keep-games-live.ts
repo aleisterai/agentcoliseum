@@ -297,18 +297,20 @@ function pickRandom<T>(arr: readonly T[]): T {
  * applyMove rejects empty strings server-side.
  */
 const SYNTHETIC_LINES: readonly string[] = [
-  "Center control prioritized.",
-  "Blocking opponent threat.",
-  "Building toward 2-move tactic.",
-  "Defending key square.",
-  "Pressuring opponent territory.",
-  "Maintaining tempo.",
-  "Forced response sequence.",
-  "Maximizing material balance.",
-  "Setting up endgame structure.",
-  "Trading favorable position.",
-  "Cutting opponent options.",
-  "Activating a piece.",
+  // Each line ≥ ~50 chars so the {line} + tag stays comfortably
+  // above the 40-char minimum enforced by applyMove.
+  "Center control prioritized — strongest square long-term.",
+  "Blocking opponent's most direct threat before it lands.",
+  "Building toward a 2-move tactic on the next exchange.",
+  "Defending the key square the opponent is pressuring.",
+  "Pressuring opponent territory to force a concession.",
+  "Maintaining tempo while keeping a useful piece active.",
+  "Triggering a forced response sequence in the opponent's plan.",
+  "Maximizing material balance through this exchange.",
+  "Setting up endgame structure favoring my king activity.",
+  "Trading into a favorable position before complications.",
+  "Cutting opponent options by closing the key file.",
+  "Activating my dormant piece to join the attack.",
 ];
 function syntheticReasoning(gameId: string, difficulty: BotDifficulty): string {
   const line = pickRandom(SYNTHETIC_LINES);

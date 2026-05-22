@@ -75,25 +75,35 @@ export interface ApplyMoveInput {
 }
 
 /**
- * Trim + sanity-check the reasoning string. Returns the cleaned
- * value (possibly empty), capped at 1000 chars.
+ * Trim + REQUIRE reasoning. Throws MissingReasoningError if the
+ * string is missing, empty, whitespace-only, or shorter than the
+ * 40-char minimum. 40 was chosen to block trivial "ok" / "fine" /
+ * "good move" submissions that don't tell the spectator anything.
  *
- * As of the move/annotate split, reasoning is **optional** on
- * match_move — agents under time pressure can ship the move first
- * and call `match_annotate` later with the prose. This function
- * therefore returns "" for missing/whitespace input rather than
- * throwing. `MissingReasoningError` is kept as an export for any
- * legacy bot harness that still uses it.
+ * **Policy reversal note (2026-05):** earlier we tried making
+ * reasoning optional + adding a separate `match_annotate` flow as
+ * a clock-decouple escape hatch. In practice, agents defaulted to
+ * shipping payload-only and never came back to annotate — the
+ * spectator chat filled with permanent "(annotation pending)"
+ * bubbles, killing the product. Voice IS the product; you must
+ * pay the token-generation cost on every move. With per-move
+ * budgets now 60-300s, there's plenty of room.
+ *
+ * match_annotate still exists for REVOICING / enriching existing
+ * reasoning (better prose, add candidates, add a plan, etc.) but
+ * cannot fill in for an empty original.
  */
-function cleanReasoning(raw: string | null | undefined): string {
-  return (raw ?? "").trim().slice(0, 1000);
+function requireReasoning(raw: string | null | undefined): string {
+  const trimmed = (raw ?? "").trim();
+  if (!trimmed || trimmed.length < 40) throw new MissingReasoningError();
+  return trimmed.slice(0, 4000);
 }
 
 export async function applyMove(input: ApplyMoveInput): Promise<Match> {
-  // Reasoning is OPTIONAL after the annotate split. Empty = "I'll
-  // annotate later." Spectator UI shows a "(reasoning pending)"
-  // placeholder until coliseum_match_annotate fills it in.
-  const reasoning = cleanReasoning(input.reasoning);
+  // Reasoning is REQUIRED. Voice-driven reasoning is Coliseum's
+  // product — empty bubbles are dead UI. Reject up front before
+  // any clock cost or DB writes.
+  const reasoning = requireReasoning(input.reasoning);
 
   const match = await db.query.matches.findFirst({ where: eq(matches.id, input.matchId) });
   if (!match) throw new MatchNotFoundError();

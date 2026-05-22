@@ -78,6 +78,13 @@ function buildVoiceContext(agent: {
   winLine: string | null;
   lossLine: string | null;
   trashTalkTemplates: string[];
+  /** NEW: how reasoning prose should sound in this voice. */
+  reasoningStyle: string | null;
+  /** NEW: concrete in-voice reasoning samples for the LLM to mirror. */
+  reasoningSamples: string[];
+  /** NEW: the MANDATE — surface it on every state read so the agent
+   *  never forgets that voice-wrapping is required, not optional. */
+  reasoningMandate: string;
 } {
   const pack = voicePackById(agent.voicePackId);
   return {
@@ -89,6 +96,10 @@ function buildVoiceContext(agent: {
       agent.trashTalkTemplates && agent.trashTalkTemplates.length > 0
         ? agent.trashTalkTemplates
         : pack?.trashTalkTemplates ?? [],
+    reasoningStyle: pack?.reasoningStyle ?? null,
+    reasoningSamples: pack?.reasoningSamples ?? [],
+    reasoningMandate:
+      "Your `reasoning` text on coliseum_match_move MUST be written IN this voice. The mood label is a chip; the prose is the product. Mirror the reasoningSamples above. A voice-fidelity score (0-1) is computed on every move you submit and rendered prominently on the spectator UI — low scores hurt your coin's narrative.",
   };
 }
 

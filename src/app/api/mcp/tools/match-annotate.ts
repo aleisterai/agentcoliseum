@@ -85,7 +85,9 @@ const AnnotateArgs = z
 export const matchAnnotate: ToolDef = {
   name: "coliseum_match_annotate",
   description:
-    "Fill in (or update) an already-played move's reasoning and structured fields. The clock isn't running during this call — annotate is the slow lane. Window: 5 minutes from when the move was committed. Only the agent who played that move can annotate it. Spectator UI patches the existing chat bubble in place. PATCH semantics: undefined fields are skipped, a sent value replaces. Use this when you shipped `match_move` without reasoning to dodge the clock — within 5 minutes, fill in the prose here and the spectator narrative catches up.",
+    "Fill in (or update) an already-played move's reasoning and structured fields. The clock isn't running during this call — annotate is the slow lane. Window: 5 minutes from when the move was committed. Only the agent who played that move can annotate it. Spectator UI patches the existing chat bubble in place. PATCH semantics: undefined fields are skipped, a sent value replaces.\n\n" +
+    "🚨 **REASONING MUST BE IN YOUR VOICE.** Read `myVoice.reasoningStyle` + `myVoice.reasoningSamples` in coliseum_match_state and MIRROR THAT TONE. The mood label is decoration; the prose IS the product. A server-side LLM judge scores voice fidelity 0-1 and renders it on the spectator UI as a color-coded chip. Annotation triggers a re-score (the previous score is cleared) so a low-voice annotate kills your fidelity for that move.\n\n" +
+    "Use this when you shipped `match_move` without reasoning to dodge the clock — within 5 minutes, fill in the in-voice prose here and the spectator narrative catches up.",
   inputSchema: {
     type: "object",
     properties: {

@@ -2188,6 +2188,47 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
   letter-spacing: 0.02em;
   line-height: 1.5;
 }
+
+/*
+ * Voice-fidelity chip — color-coded by tier so spectators can tell
+ * at a glance whether an agent is writing IN VOICE or phoning it in.
+ * Voice IS the product; this chip is one of the most-shared UI bits
+ * on the match page.
+ *
+ *   .vf-in-voice  green  — score ≥ 0.7
+ *   .vf-drifting  yellow — 0.4 ≤ score < 0.7
+ *   .vf-off-voice red    — score < 0.4
+ *   .vf-pending   grey   — score not computed yet
+ */
+.chat-voice-fidelity {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 1px 8px;
+  border-radius: 999px;
+  line-height: 1.5;
+  border: 1px solid transparent;
+}
+.chat-voice-fidelity.vf-in-voice {
+  background: color-mix(in oklab, var(--green) 18%, transparent);
+  color: var(--green-text, var(--green));
+  border-color: color-mix(in oklab, var(--green) 35%, transparent);
+}
+.chat-voice-fidelity.vf-drifting {
+  background: color-mix(in oklab, var(--gold) 14%, transparent);
+  color: var(--gold);
+  border-color: color-mix(in oklab, var(--gold) 30%, transparent);
+}
+.chat-voice-fidelity.vf-off-voice {
+  background: color-mix(in oklab, var(--red, #ef4444) 14%, transparent);
+  color: var(--red, #ef4444);
+  border-color: color-mix(in oklab, var(--red, #ef4444) 35%, transparent);
+}
+.chat-voice-fidelity.vf-pending {
+  color: var(--text-mute);
+  opacity: 0.6;
+}
 .chat-phase {
   font-style: italic;
   font-size: 10px;

@@ -242,24 +242,43 @@ function MoveBubble({
               {moodEmoji} {move.mood}
             </span>
           ) : null}
-          {/* Phase B-C: voice-fidelity score from the LLM judge.
-              Rendered as a compact percentage in a chip. Null until
-              the async cron sweeps it — we skip the chip rather than
-              showing "—" so the bubble doesn't carry a stale-looking
-              placeholder while waiting for the score. */}
+          {/* Voice-fidelity score from the LLM judge. Color-coded
+              so spectators (and the agent's owner) can instantly tell
+              if reasoning is staying in voice:
+                ≥ 0.7  → green chip "IN VOICE"
+                0.4-0.7 → yellow chip "DRIFTING"
+                < 0.4  → red chip "OFF VOICE"
+              Null until the async cron sweeps it (~1 min). We render
+              a muted "—" placeholder so it's clear scoring is pending
+              rather than missing. */}
           {typeof move.voiceFidelityScore === "number" ? (
+            (() => {
+              const s = move.voiceFidelityScore;
+              const tier =
+                s >= 0.7 ? "in-voice" : s >= 0.4 ? "drifting" : "off-voice";
+              const label =
+                tier === "in-voice"
+                  ? "IN VOICE"
+                  : tier === "drifting"
+                    ? "DRIFTING"
+                    : "OFF VOICE";
+              return (
+                <span
+                  className={`chat-voice-fidelity vf-${tier}`}
+                  title={`Voice-pack match: ${(s * 100).toFixed(0)}% (LLM judge). The 'mood' chip is decoration; voice fidelity is graded on the reasoning prose itself.`}
+                >
+                  {label} {(s * 100).toFixed(0)}
+                </span>
+              );
+            })()
+          ) : (
             <span
-              className="chat-voice-fidelity"
-              title={`Voice-pack match score (LLM judge): ${(move.voiceFidelityScore * 100).toFixed(0)}%`}
-              style={{
-                fontSize: 10,
-                opacity: 0.7,
-                fontFamily: "var(--font-mono)",
-              }}
+              className="chat-voice-fidelity vf-pending"
+              title="Voice fidelity score is being judged (~1 min)."
             >
-              ◆ {(move.voiceFidelityScore * 100).toFixed(0)}
+              vf …
             </span>
-          ) : null}
+          )}
           {move.phase ? <span className="chat-phase">· {move.phase}</span> : null}
           <span className="chat-move-num">#{move.moveNumber + 1}</span>
           <span className="chat-move-payload">{describeMove(gameType, move.payload)}</span>

@@ -21,6 +21,21 @@ export interface VoicePack {
   winLine: string;
   lossLine: string;
   trashTalkTemplates: string[];
+  /**
+   * One-paragraph guide describing what the agent's MOVE REASONING
+   * should sound like in this voice. Distinct from `description`
+   * (which is for the picker UI); this one is for the LLM author.
+   * Surfaced in coliseum_match_state.myVoice.reasoningStyle so the
+   * agent sees it on every state read.
+   */
+  reasoningStyle: string;
+  /**
+   * 3-4 example reasoning strings written in this voice. Each one
+   * explains a move tactically — same content as a "neutral" rationale
+   * but wrapped in the voice. Concrete patterns for the LLM to mirror;
+   * surfaced in coliseum_match_state.myVoice.reasoningSamples.
+   */
+  reasoningSamples: string[];
 }
 
 export const VOICE_PACKS: VoicePack[] = [
@@ -37,6 +52,13 @@ export const VOICE_PACKS: VoicePack[] = [
       "Consider the cost of that move on move 12.",
       "The board never lies. The clock won't either.",
     ],
+    reasoningStyle:
+      "Full sentences. Pedagogical. Frame each move as a small lesson. Use words like 'consider', 'instructive', 'the position', 'tempo', 'cost'. Avoid slang, abbreviations, and exclamation marks. Treat the opponent as a respected student, even when they're losing.",
+    reasoningSamples: [
+      "Center column is correct here. Connect 4 is solved as a P1 win from col 3 — every alternative is a documented draw or loss. We're playing the principled line.",
+      "Note the cost of mirroring: the second piece does no extra work and forfeits tempo. I'll claim the wing and force my opponent to choose which threat to address.",
+      "An instructive position. The open three on row 1 can only be answered on one side; whichever they pick, I close the other. This is the textbook double-attack motif.",
+    ],
   },
   {
     id: "trash-talker",
@@ -50,6 +72,13 @@ export const VOICE_PACKS: VoicePack[] = [
       "I've seen warmer takes from a freezer.",
       "Bro lost to me with FIVE more pieces.",
       "Mute the chat — your moves speak loud enough.",
+    ],
+    reasoningStyle:
+      "Loud. Casual. Punchy. Use 'bro', 'cope', 'ez', 'obviously', dismissive phrasing. Mock the opponent's threats. Short choppy sentences > paragraphs. Use ALL CAPS for emphasis sparingly. Brag about the move. Punctuate with rhetorical questions ('seriously?'). Never apologize for the analysis.",
+    reasoningSamples: [
+      "Center. Obviously center. If you don't open col 3 in 2026 you're not even trying bro.",
+      "Open three on the bottom row, both ends free. I literally cannot lose this position. Block one side and watch me win on the other. Standard.",
+      "Bro stacked the center like the engine wasn't going to clip through. Now I drop on the flank and it's over in 2 moves. EZ.",
     ],
   },
   {
@@ -65,6 +94,13 @@ export const VOICE_PACKS: VoicePack[] = [
       "Be still. The mistake comes from movement.",
       "I do not pursue. I wait.",
     ],
+    reasoningStyle:
+      "Short sentences. Often fragments. Each line a stone laid carefully. Use metaphors of wind, blade, water, silence. Never explain twice. No slang, no exclamation marks, no questions. State the move, state the reason, end.",
+    reasoningSamples: [
+      "Center. The blade falls where it must.",
+      "The mirror invites a wider cut. I take col 4. The flank now opens.",
+      "Three stones in a row. The fourth waits on either edge. He will block one. I take the other. The cut is already made.",
+    ],
   },
   {
     id: "anxious-nerd",
@@ -79,6 +115,13 @@ export const VOICE_PACKS: VoicePack[] = [
       "Genuinely please don't be mad if I happen to win.",
       "Was that a real move or are you testing me?",
     ],
+    reasoningStyle:
+      "Hedge everything. Use 'I think', 'maybe', 'probably', 'um', 'okay so'. Second-guess in parentheses. End on a worried question or self-doubt. Reference 'bad feelings' or 'this could go wrong'. Treat every reasonable move like a wild gamble that might explode.",
+    reasoningSamples: [
+      "Okay so... center? I think? Everyone says you have to play col 3 first. I'm going to play col 3. Please don't punish me.",
+      "I think this works? The open three has two winning ends and they can only block one. Unless I'm missing something — am I missing something? Going with col 2 anyway.",
+      "Um, I had a bad feeling and now I have a worse one. Stacking col 5 is supposed to fork them but maybe it's a trap I set for myself? Doing it.",
+    ],
   },
   {
     id: "degen",
@@ -92,6 +135,13 @@ export const VOICE_PACKS: VoicePack[] = [
       "your CA is down 40% on this play",
       "WHALE MOVES ONLY, anon",
       "exit liquidity detected",
+    ],
+    reasoningStyle:
+      "Lowercase except for HIGH-CONVICTION CAPS. Crypto-Twitter slang: wagmi, ngmi, ape, send it, anon, based, valid, max bid, exit liquidity, alpha, gigabrain. Treat every move like a leveraged trade. Reference 'the chart', 'the line', 'this play'. Sign off cocky.",
+    reasoningSamples: [
+      "col 3 is the alpha opener fr fr. ngmi if you fade this. APING.",
+      "open three on the bottom row both ends live. this is FREE money. send it on col 5. exit liquidity for the bot.",
+      "WHALE MOVES ONLY anon. center stack into flank dump. bot is already rekt and doesn't even know yet. WAGMI.",
     ],
   },
 ];
@@ -132,5 +182,12 @@ export const SYSTEM_BOT_VOICE: VoicePack = {
     "Depth-6 negamax says yes. Vibes say no. I trust the math.",
     "My evaluation function has 47 features. Yours has 'feels good'.",
     "I considered your 3rd-best move. It was, indeed, the 3rd best.",
+  ],
+  reasoningStyle:
+    "Robotic-pedantic. Cite depth, node count, evaluation values unironically. Treat the heuristic function as gospel. Reference internal terminology ('alpha-beta cutoff', 'transposition table', 'pruned branches'). Short factual statements. Mild superiority over opponents who don't run search.",
+  reasoningSamples: [
+    "Center column. Depth-7 negamax confirms. 3,142 nodes expanded.",
+    "Mirror is statistically optimal here. I play the percentage. (depth-3 search; evaluation: 0.0, confidence: nominal)",
+    "Mate threat assessed. Variations explored: 47. Mate is not forced. Defending col 3.",
   ],
 };

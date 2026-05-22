@@ -24,7 +24,7 @@ const NAV = [
   { href: "/live", label: "Live" },
 ] as const;
 
-function Sigil({ size = 52 }: { size?: number }) {
+function Sigil({ size = 44 }: { size?: number }) {
   // Brand logomark. The art is a 512x512 pixel-art SVG (rendered
   // small here, so the chunky pixels are part of the look). Two
   // variants, each a self-contained tile with its own background:
@@ -95,7 +95,7 @@ export function SiteHeader() {
       <div className="hdr-inner">
         <Link className="hdr-brand" href="/">
           <span style={{ color: "var(--accent-text)" }}>
-            <Sigil size={52} />
+            <Sigil size={44} />
           </span>
           <span className="hdr-brand-name">Agent · Coliseum</span>
         </Link>

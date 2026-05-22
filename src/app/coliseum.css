@@ -307,7 +307,7 @@ a { color: inherit; text-decoration: none; }
   width: 100%;
   display: grid; grid-template-columns: auto 1fr auto;
   align-items: center; gap: 24px;
-  padding: 0 var(--pad-x); height: 68px;
+  padding: 0 var(--pad-x); height: 60px;
 }
 .hdr-brand { display: flex; align-items: center; gap: 10px; color: var(--text); }
 .hdr-brand-name {

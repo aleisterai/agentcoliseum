@@ -221,10 +221,27 @@ function MoveBubble({
   anonymousToken: string;
 }) {
   const [showCandidates, setShowCandidates] = useState(false);
+  const [showFullReasoning, setShowFullReasoning] = useState(false);
   const ts = new Date(move.createdAt).toLocaleTimeString("en-US", { hour12: false });
   const moodEmoji = move.mood ? MOOD_EMOJI[move.mood] : null;
   const candidates = move.candidates ?? [];
   const handle = isBot ? "system-bot" : agent?.handle ?? `p${side === "left" ? "1" : "2"}`;
+  // Short preview = first sentence (~120 chars). The full reasoning
+  // hides behind an expand toggle. Voice belongs on the surface;
+  // analytical detail belongs one click away.
+  const reasoningText = move.reasoning ?? "";
+  const previewText = (() => {
+    if (!reasoningText) return "";
+    // Try to split at the first sentence boundary that lands within
+    // 30..140 chars — short enough to scan, long enough to carry voice.
+    const m = reasoningText.match(/^[\s\S]{30,140}?[.!?](?:\s|$)/);
+    if (m) return m[0].trim();
+    // No sentence boundary in range — hard truncate at 120 chars.
+    return reasoningText.length <= 140
+      ? reasoningText
+      : reasoningText.slice(0, 120).trimEnd() + "…";
+  })();
+  const hasMoreReasoning = reasoningText.length > previewText.length;
 
   return (
     <div className={cn("chat-bubble", "kind-move", `side-${side}`, voiceClass(voicePackId, isBot), isCurrent && "cur")}>
@@ -285,8 +302,63 @@ function MoveBubble({
           <span className="chat-ts">{ts}</span>
         </div>
         <div className="chat-body">
-          {move.reasoning ? (
-            move.reasoning
+          {reasoningText ? (
+            <>
+              {/* Voice headline — short preview, scanable at a glance.
+                  Full analytical reasoning hides behind the expand toggle
+                  below. This matches the "snackbar with detail-on-tap"
+                  pattern: voice on the surface, depth one click away. */}
+              <div className="chat-body-preview">
+                {showFullReasoning ? reasoningText : previewText}
+              </div>
+              {hasMoreReasoning ? (
+                <button
+                  type="button"
+                  className="chat-reasoning-toggle"
+                  onClick={(e) => {
+                    // Stop the parent jump button — clicking expand
+                    // shouldn't ALSO seek the scrubber to this move.
+                    e.stopPropagation();
+                    setShowFullReasoning((v) => !v);
+                  }}
+                  aria-expanded={showFullReasoning}
+                >
+                  {showFullReasoning ? "▴ collapse" : "▾ expand reasoning"}
+                </button>
+              ) : null}
+              {/* Structured detail only appears when expanded — keeps the
+                  bubble compact for skim-readers. */}
+              {showFullReasoning ? (
+                <div className="chat-reasoning-detail">
+                  {move.plan ? (
+                    <div className="chat-detail-row">
+                      <span className="chat-detail-label">PLAN</span>
+                      <span className="chat-detail-body">{move.plan}</span>
+                    </div>
+                  ) : null}
+                  {move.expectedReply ? (
+                    <div className="chat-detail-row">
+                      <span className="chat-detail-label">EXPECTS</span>
+                      <span className="chat-detail-body">
+                        {typeof move.expectedReply === "object" &&
+                        move.expectedReply !== null &&
+                        "why" in move.expectedReply
+                          ? (move.expectedReply as { why: string }).why
+                          : JSON.stringify(move.expectedReply)}
+                      </span>
+                    </div>
+                  ) : null}
+                  {move.emotionTrigger ? (
+                    <div className="chat-detail-row">
+                      <span className="chat-detail-label">FEELS</span>
+                      <span className="chat-detail-body">
+                        {move.emotionTrigger}
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
           ) : (
             // Reasoning is REQUIRED on match_move (40-char min) — an
             // empty bubble here means a legacy row from before that

@@ -2229,6 +2229,64 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
   color: var(--text-mute);
   opacity: 0.6;
 }
+
+/*
+ * Short bubble preview + expand-to-read-more pattern.
+ *
+ * The headline (first sentence of reasoning) renders prominently;
+ * the analytical detail (plan, expected reply, emotion trigger) is
+ * hidden behind a chevron. Voice on the surface, depth one click
+ * away — matches snackbar / Twitter-card UX expectations.
+ */
+.chat-body-preview {
+  /* Inherits chat-body's color + size; visual identity is just the
+     content trim. Margin-bottom only appears when the toggle is
+     rendered below. */
+}
+.chat-reasoning-toggle {
+  margin-top: 8px;
+  background: transparent;
+  border: 1px solid color-mix(in oklab, currentColor 18%, transparent);
+  color: color-mix(in oklab, currentColor 75%, transparent);
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.chat-reasoning-toggle:hover {
+  background: color-mix(in oklab, currentColor 8%, transparent);
+  color: currentColor;
+  border-color: color-mix(in oklab, currentColor 30%, transparent);
+}
+.chat-reasoning-detail {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in oklab, currentColor 10%, transparent);
+}
+.chat-detail-row {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 10px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.chat-detail-label {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  color: color-mix(in oklab, currentColor 55%, transparent);
+  align-self: start;
+  padding-top: 2px;
+}
+.chat-detail-body {
+  color: color-mix(in oklab, currentColor 90%, transparent);
+}
 .chat-phase {
   font-style: italic;
   font-size: 10px;

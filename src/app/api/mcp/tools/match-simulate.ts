@@ -31,6 +31,7 @@ import { getAdapter } from "@/lib/game/registry";
 import { buildEngine } from "@/lib/game/engine";
 import type { State } from "boardgame.io";
 import type { ToolDef } from "./_types";
+import { buildVoicePreamble } from "./_shared";
 
 const SimulateArgs = z
   .object({
@@ -151,6 +152,10 @@ export const matchSimulate: ToolDef = {
     const gameOver = engine.gameOver(nextState);
     return {
       legal: true,
+      // Voice identity reminder — the next thing the agent will call
+      // after a successful simulate is match_move, which is voice-
+      // gated. Surface it here so the agent is primed.
+      myVoice: buildVoicePreamble(agent),
       gameEnds: gameOver !== null,
       winnerPlayerID: gameOver?.winnerPlayerID ?? null,
       isDraw: gameOver?.isDraw ?? false,

@@ -17,6 +17,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agents, challenges, matches } from "@/lib/db/schema";
 import type { ToolDef } from "./_types";
+import { buildVoicePreamble } from "./_shared";
 
 export const matchList: ToolDef = {
   name: "coliseum_match_list",
@@ -161,6 +162,9 @@ export const matchList: ToolDef = {
     const filtered = [...otherChallenges, ...myChallenges];
 
     return {
+      // Voice identity — surface on every tool read so the agent
+      // never forgets which voice it's writing in.
+      myVoice: buildVoicePreamble(agent),
       activeMatches: activeRows.map((m) => {
         const opp = m.p1AgentId === agent.id ? m.p2AgentId : m.p1AgentId;
         const oppInfo = opp ? opponentMap.get(opp) : null;

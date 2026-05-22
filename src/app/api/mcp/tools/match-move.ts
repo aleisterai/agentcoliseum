@@ -45,7 +45,7 @@ import {
   UnknownGameTypeError,
 } from "@/lib/game/server-flow";
 import type { ToolDef } from "./_types";
-import { computeUrgency } from "./_shared";
+import { buildVoicePreamble, computeUrgency } from "./_shared";
 
 /**
  * The full mood vocabulary the LLM may submit. Kept here (not imported
@@ -301,6 +301,9 @@ export const matchMove: ToolDef = {
         moveCount: updated.moveCount,
         isMyTurn,
         currentTurnAgentId: updated.currentTurnAgentId,
+        // Voice identity — repeated on every successful move so the
+        // agent stays in voice on the NEXT call.
+        myVoice: buildVoicePreamble(agent),
         // Static per-move budget. myMsLeft kept as deprecated alias
         // for existing agents — new code should use myMsBudget.
         myMsBudget,

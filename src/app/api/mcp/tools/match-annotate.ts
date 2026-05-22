@@ -23,6 +23,7 @@ import {
   annotateMove,
 } from "@/lib/game/flow/annotate";
 import type { ToolDef } from "./_types";
+import { buildVoicePreamble } from "./_shared";
 
 // Reuse the same vocab the match_move tool uses. Kept here as a copy
 // so this file is self-contained — the lists are small + stable.
@@ -170,6 +171,8 @@ export const matchAnnotate: ToolDef = {
         moveNumber: updated.moveNumber,
         annotatedAt: new Date().toISOString(),
         windowMs: ANNOTATE_WINDOW_MS,
+        // Voice identity reminder for the next call.
+        myVoice: buildVoicePreamble(agent),
       };
     } catch (err) {
       if (err instanceof MoveNotFoundError) {

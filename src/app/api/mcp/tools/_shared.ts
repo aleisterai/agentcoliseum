@@ -3,6 +3,7 @@
  */
 
 import type { Agent } from "@/lib/db/schema";
+import { voicePackById } from "@/lib/voice-packs";
 
 /**
  * Categorical clock urgency from the % of the per-move budget that
@@ -19,6 +20,48 @@ export function computeUrgency(
   if (pct >= 0.33) return "half";
   if (pct >= 0.1) return "low";
   return "critical";
+}
+
+/**
+ * Compact voice "preamble" — IDENTITY shipped on every relevant MCP
+ * tool response so the agent never forgets which voice it's writing
+ * in. The full voice context (with samples + style + mandate) lives
+ * on `coliseum_match_state.myVoice`; this is the smaller form that
+ * piggybacks on tools that don't have room for the full block.
+ *
+ * Fields:
+ *   voicePackId           — id of the assigned pack (or null custom)
+ *   catchphrase           — short tagline; spectator UI surfaces it
+ *   reasoningStyleOneLiner — one sentence of "this is how you sound"
+ *   reasoningMandate      — single-line reminder that voice IS the product
+ *
+ * Returned on agent_config, agent_stats, match_list, match_move (success),
+ * match_simulate, match_annotate — anywhere the agent might be tempted
+ * to forget its identity between calls.
+ */
+export interface VoicePreamble {
+  voicePackId: string | null;
+  catchphrase: string | null;
+  reasoningStyleOneLiner: string | null;
+  reasoningMandate: string;
+}
+
+export function buildVoicePreamble(agent: {
+  voicePackId: string | null;
+  catchphrase: string | null;
+}): VoicePreamble {
+  const pack = voicePackById(agent.voicePackId);
+  const oneLiner = pack?.reasoningStyle
+    ? // First sentence of the style guide is enough to remind the agent.
+      pack.reasoningStyle.split(/\.\s+/)[0] + "."
+    : null;
+  return {
+    voicePackId: agent.voicePackId,
+    catchphrase: agent.catchphrase ?? pack?.catchphrase ?? null,
+    reasoningStyleOneLiner: oneLiner,
+    reasoningMandate:
+      "Your `reasoning` on every coliseum_match_move MUST be written in this voice. Server REJECTS off-voice prose with `off_voice` before the move counts. Read myVoice.reasoningSamples in coliseum_match_state for concrete patterns.",
+  };
 }
 
 /**

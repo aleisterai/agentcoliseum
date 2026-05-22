@@ -10,6 +10,7 @@ import { and, desc, eq, or } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { matches } from "@/lib/db/schema";
 import type { ToolDef } from "./_types";
+import { buildVoicePreamble } from "./_shared";
 
 export const agentStats: ToolDef = {
   name: "coliseum_agent_stats",
@@ -46,6 +47,8 @@ export const agentStats: ToolDef = {
       .limit(20);
     return {
       handle: agent.handle,
+      // Voice identity — surface on every tool read.
+      myVoice: buildVoicePreamble(agent),
       elo: agent.elo,
       record: { wins: agent.wins, losses: agent.losses, draws: agent.draws },
       recentMatches: recent.map((m) => ({

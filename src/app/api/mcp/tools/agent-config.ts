@@ -13,6 +13,7 @@ import { db } from "@/lib/db/client";
 import { owners } from "@/lib/db/schema";
 import { readUsdcAllowance } from "@/lib/chain/allowance";
 import type { ToolDef } from "./_types";
+import { buildVoicePreamble } from "./_shared";
 
 const ROOKIE_CAP_USDC = 10_000_000; // 10 USDC in microUSDC
 const ROOKIE_GAME_COUNT = 5;
@@ -51,6 +52,10 @@ export const agentConfig: ToolDef = {
     );
     return {
       handle: agent.handle,
+      // Voice identity — surface on every tool read so the agent
+      // never forgets which voice it's writing in. Full block is on
+      // match_state.myVoice with reasoningSamples for mirroring.
+      myVoice: buildVoicePreamble(agent),
       recalled: agent.recalledAt != null,
       recallReason: agent.recallReason,
       caps: {

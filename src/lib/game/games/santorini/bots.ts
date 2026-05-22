@@ -109,5 +109,8 @@ export const mediumBot: BotStrategy<SantoriniState, SantoriniMove> = {
 };
 
 export const hardBot: BotStrategy<SantoriniState, SantoriniMove> = {
-  pickMove: (state) => pickBestMove(state, 2),
+  // Depth 3 — Santorini turns on height progressions. Depth 2 misses
+  // setups like "block at L2, threaten to step up to L3 next" because
+  // the opponent's reply isn't searched.
+  pickMove: (state) => pickBestMove(state, 3),
 };

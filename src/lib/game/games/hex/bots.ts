@@ -205,7 +205,10 @@ export const mediumBot: BotStrategy<HexState, HexMove> = {
 };
 
 export const hardBot: BotStrategy<HexState, HexMove> = {
-  pickMove: (state) => pickBestMove(state, 2),
+  // Depth 3 — Hex branching shrinks fast as cells fill; the bridge-
+  // detection heuristic does the heavy lifting on leaves. Depth 2
+  // missed obvious bridge-threat replies in profiling games.
+  pickMove: (state) => pickBestMove(state, 3),
 };
 
 // Compatibility re-exports.

@@ -279,5 +279,9 @@ export const mediumBot: BotStrategy<GomokuState, GomokuMove> = {
 };
 
 export const hardBot: BotStrategy<GomokuState, GomokuMove> = {
-  pickMove: (state) => pickBestMove(state, 2),
+  // Depth 3 — Gomoku threat detection is dominated by the pattern
+  // recogniser at leaves (open-fours, double-threes). Bumping to 3
+  // lets hard see the obvious double-threat trap that depth 2 walks
+  // straight into.
+  pickMove: (state) => pickBestMove(state, 3),
 };

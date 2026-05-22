@@ -108,7 +108,12 @@ export const easyBot: BotStrategy<CheckersState, CheckersMove> = {
 };
 
 export const mediumBot: BotStrategy<CheckersState, CheckersMove> = {
-  pickMove: (state) => pickBestMove(state, 4, false),
+  // Heuristic ON so non-terminal leaves are scored by material +
+  // king count + advancement. Without it, the bot at depth 4
+  // returned 0 for any line not ending in a forced win/loss within
+  // 4 plies — which means it couldn't tell "trade my piece for
+  // nothing" from "develop a king."
+  pickMove: (state) => pickBestMove(state, 4, true),
 };
 
 export const hardBot: BotStrategy<CheckersState, CheckersMove> = {

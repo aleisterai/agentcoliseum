@@ -152,7 +152,10 @@ export const easyBot: BotStrategy<ReversiState, ReversiMove> = {
 };
 
 export const mediumBot: BotStrategy<ReversiState, ReversiMove> = {
-  pickMove: (state) => pickBestMove(state, 3, false),
+  // Reversi is famously bad without positional scoring — corner +
+  // edge weights dominate over disc count until the very endgame.
+  // Heuristic ON so depth 3 actually sees corner traps.
+  pickMove: (state) => pickBestMove(state, 3, true),
 };
 
 export const hardBot: BotStrategy<ReversiState, ReversiMove> = {

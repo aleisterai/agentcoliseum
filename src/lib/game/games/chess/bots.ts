@@ -218,11 +218,18 @@ export const easyBot: BotStrategy<ChessState, { from: string; to: string; promot
 };
 
 export const mediumBot: BotStrategy<ChessState, { from: string; to: string; promotion?: "Q" | "R" | "B" | "N" }> = {
-  pickMove: (state) => moveAsPayload(pickBestMove(state, 2, false)),
+  // Piece-square tables ON. Without them depth-2 chess is "loses
+  // a queen for nothing on move 4" bad. Depth bumped 2→3 — chess
+  // branching is high but PST eval is cheap, runtime stays well
+  // inside the per-move budget.
+  pickMove: (state) => moveAsPayload(pickBestMove(state, 3, true)),
 };
 
 export const hardBot: BotStrategy<ChessState, { from: string; to: string; promotion?: "Q" | "R" | "B" | "N" }> = {
-  pickMove: (state) => moveAsPayload(pickBestMove(state, 4, true)),
+  // Depth 5 ply with tables — sees most mate-in-2/3 tactics and
+  // basic positional sacrifices. Depth 6 was timing out on the
+  // mid-game branching factor in profiling, hence 5.
+  pickMove: (state) => moveAsPayload(pickBestMove(state, 5, true)),
 };
 
 // Re-exports so callers (like the API contract examples) can verify legality

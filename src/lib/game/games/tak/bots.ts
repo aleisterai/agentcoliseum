@@ -162,5 +162,9 @@ export const mediumBot: BotStrategy<TakState, TakMove> = {
 };
 
 export const hardBot: BotStrategy<TakState, TakMove> = {
-  pickMove: (state) => pickBestMove(state, 2),
+  // Depth 3 — Tak's branching is high (place vs move, every stack
+  // arrangement), but road-completion threats are local and depth 3
+  // is where the road-blocking + bridge-extension tactics start to
+  // emerge.
+  pickMove: (state) => pickBestMove(state, 3),
 };

@@ -164,44 +164,45 @@ describe("postChallenge", () => {
     // 15-60s on each move; the agent frequently ran out of clock on
     // hard tactical positions (production data: ~66% forfeit rate).
     // The lobby flow now floors the per-move budget at the
-    // game-specific recommendation (60s for tic-tac-toe, 120s for
-    // most games, 300s for chess/santorini/tak/etc).
+    // game-specific recommendation (120s for tic-tac-toe, 240s for
+    // most games, 600s for chess/santorini/tak/etc) after the
+    // second-pass recalibration that doubled all budgets again.
     await withTestDb(async ({ db }) => {
       currentDb = db;
       const { agent } = await seedOwnerAgent(db, { handle: "p1" });
 
-      // Caller asks for 60s on tic-tac-toe — at or above floor (60s), so honored.
+      // Caller asks for 120s on tic-tac-toe — at or above floor (120s), so honored.
       const ttt = await postChallenge({
         gameType: "tic-tac-toe",
         initiatorAgentId: agent.id,
         mode: "system",
         systemBotDifficulty: "easy",
-        perMoveSeconds: 60,
+        perMoveSeconds: 120,
       });
       if (ttt.kind !== "match") throw new Error("expected match");
-      expect(ttt.match.clockBudgetMs).toBe(60_000);
+      expect(ttt.match.clockBudgetMs).toBe(120_000);
 
-      // Caller asks for 60s on chess — chess floor is 300s, should bump.
+      // Caller asks for 120s on chess — chess floor is 600s, should bump.
       const chess = await postChallenge({
         gameType: "chess",
         initiatorAgentId: agent.id,
         mode: "system",
         systemBotDifficulty: "easy",
-        perMoveSeconds: 60,
+        perMoveSeconds: 120,
       });
       if (chess.kind !== "match") throw new Error("expected match");
-      expect(chess.match.clockBudgetMs).toBe(300_000);
+      expect(chess.match.clockBudgetMs).toBe(600_000);
 
-      // Caller asks for 180s on connect4 — above floor (120s), honored.
+      // Caller asks for 360s on connect4 — above floor (240s), honored.
       const c4 = await postChallenge({
         gameType: "connect4",
         initiatorAgentId: agent.id,
         mode: "system",
         systemBotDifficulty: "easy",
-        perMoveSeconds: 180,
+        perMoveSeconds: 360,
       });
       if (c4.kind !== "match") throw new Error("expected match");
-      expect(c4.match.clockBudgetMs).toBe(180_000);
+      expect(c4.match.clockBudgetMs).toBe(360_000);
     });
   });
 
@@ -219,14 +220,14 @@ describe("postChallenge", () => {
         expect(result.challenge.mode).toBe("free");
         expect(result.challenge.status).toBe("posted");
         expect(result.challenge.stakeUsdc).toBeNull();
-        expect(result.challenge.clockBudgetMs).toBe(120_000); // default
+        expect(result.challenge.clockBudgetMs).toBe(240_000); // default
       }
       const matchRows = await db.select().from(matches);
       expect(matchRows).toHaveLength(0);
     });
   });
 
-  it("honors initiator's chosen perMoveSeconds (60s)", async () => {
+  it("honors initiator's chosen perMoveSeconds (120s)", async () => {
     await withTestDb(async ({ db }) => {
       currentDb = db;
       const { agent } = await seedOwnerAgent(db, { handle: "p1" });
@@ -234,11 +235,11 @@ describe("postChallenge", () => {
         gameType: "chess",
         initiatorAgentId: agent.id,
         mode: "free",
-        perMoveSeconds: 60,
+        perMoveSeconds: 120,
       });
       expect(result.kind).toBe("challenge");
       if (result.kind === "challenge") {
-        expect(result.challenge.clockBudgetMs).toBe(60_000);
+        expect(result.challenge.clockBudgetMs).toBe(120_000);
       }
     });
   });
@@ -251,11 +252,11 @@ describe("postChallenge", () => {
         gameType: "chess",
         initiatorAgentId: agent.id,
         mode: "free",
-        // API layer validates, but if it leaks through, fall back to default (120).
-        perMoveSeconds: 7 as unknown as 60 | 120 | 180 | 300 | 600,
+        // API layer validates, but if it leaks through, fall back to default (240).
+        perMoveSeconds: 7 as unknown as 120 | 240 | 360 | 600 | 1200,
       });
       if (result.kind === "challenge") {
-        expect(result.challenge.clockBudgetMs).toBe(120_000);
+        expect(result.challenge.clockBudgetMs).toBe(240_000);
       }
     });
   });
@@ -371,16 +372,16 @@ describe("acceptChallenge", () => {
         gameType: "tic-tac-toe",
         initiatorAgentId: p1.id,
         mode: "free",
-        perMoveSeconds: 60,
+        perMoveSeconds: 120,
       });
       if (created.kind !== "challenge") throw new Error("expected challenge");
       const match = await acceptChallenge({
         challengeId: created.challenge.id,
         acceptorAgentId: p2.id,
       });
-      expect(match.clockBudgetMs).toBe(60_000);
-      expect(match.p1MsLeft).toBe(60_000);
-      expect(match.p2MsLeft).toBe(60_000);
+      expect(match.clockBudgetMs).toBe(120_000);
+      expect(match.p1MsLeft).toBe(120_000);
+      expect(match.p2MsLeft).toBe(120_000);
     });
   });
 });
@@ -815,14 +816,14 @@ describe("finalizeMatch", () => {
       if (created.kind !== "match") throw new Error("expected match");
 
       // Backdate turnStartedAt well past the per-game budget (tic-tac-
-      // toe = 60s as of 2026-05) + mark the agent ready so the readiness
-      // gate doesn't keep the clock frozen. 120s back guarantees the
-      // clock has expired regardless of future budget tweaks.
+      // toe = 120s as of the 2026-05 second-pass recalibration). 240s
+      // back guarantees the clock has expired regardless of future
+      // budget tweaks.
       await db
         .update(matches)
         .set({
-          turnStartedAt: new Date(Date.now() - 120_000),
-          agentReadyAt: new Date(Date.now() - 120_000),
+          turnStartedAt: new Date(Date.now() - 240_000),
+          agentReadyAt: new Date(Date.now() - 240_000),
         })
         .where(eq(matches.id, created.match.id));
 

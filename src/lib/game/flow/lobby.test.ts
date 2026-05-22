@@ -16,22 +16,22 @@ import {
 } from "./per-move";
 
 describe("PerMoveSeconds presets", () => {
-  it("exposes the five recalibrated presets", () => {
-    // Recalibrated 2026-05 from 15/30/45/60. LLM token generation
-    // (not engine compute) dominates wall-clock; old presets were
-    // too tight and produced ~66% time-forfeit rates in production.
-    expect(PER_MOVE_PRESETS).toEqual([60, 120, 180, 300, 600]);
+  it("exposes the five recalibrated presets (second-pass: 2x more generous)", () => {
+    // 2026-05 second pass: production data showed Opus-class models
+    // with extended thinking were still time-forfeiting at the
+    // 60-600s tier. Doubled to 120-1200s.
+    expect(PER_MOVE_PRESETS).toEqual([120, 240, 360, 600, 1200]);
   });
 
   it("DEFAULT_PER_MOVE_SECONDS is one of the presets", () => {
     expect(PER_MOVE_PRESETS).toContain(DEFAULT_PER_MOVE_SECONDS);
   });
 
-  it("DEFAULT is 120s — enough headroom for typical reasoning generation", () => {
+  it("DEFAULT is 240s — enough for extended-thinking models", () => {
     // Locked deliberately so a future "let's change the default" PR
     // surfaces in code review instead of silently widening every new
     // match's clock.
-    expect(DEFAULT_PER_MOVE_SECONDS).toBe(120);
+    expect(DEFAULT_PER_MOVE_SECONDS).toBe(240);
   });
 });
 
@@ -50,6 +50,9 @@ describe("isValidPerMoveSeconds", () => {
     expect(isValidPerMoveSeconds(15)).toBe(false);
     expect(isValidPerMoveSeconds(30)).toBe(false);
     expect(isValidPerMoveSeconds(45)).toBe(false);
+    expect(isValidPerMoveSeconds(60)).toBe(false);
+    expect(isValidPerMoveSeconds(180)).toBe(false);
+    expect(isValidPerMoveSeconds(300)).toBe(false);
     expect(isValidPerMoveSeconds(-30)).toBe(false);
     expect(isValidPerMoveSeconds(Number.NaN)).toBe(false);
     expect(isValidPerMoveSeconds(Number.POSITIVE_INFINITY)).toBe(false);
@@ -65,11 +68,11 @@ describe("isValidPerMoveSeconds", () => {
   });
 
   it("narrows the type so the caller can use it as PerMoveSeconds", () => {
-    const v: unknown = 180;
+    const v: unknown = 360;
     if (isValidPerMoveSeconds(v)) {
       // If this compiles, the type guard is doing its job.
-      const seconds: 60 | 120 | 180 | 300 | 600 = v;
-      expect([60, 120, 180, 300, 600]).toContain(seconds);
+      const seconds: 120 | 240 | 360 | 600 | 1200 = v;
+      expect([120, 240, 360, 600, 1200]).toContain(seconds);
     }
   });
 });

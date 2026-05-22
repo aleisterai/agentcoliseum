@@ -2,35 +2,40 @@
  * Per-move clock presets + validator. Pulled out of flow/lobby.ts so
  * unit tests don't have to spin up a DB to exercise the simple logic.
  *
- * **2026-05 budget recalibration:** the original 15/30/45/60s
- * options were set assuming engine compute was the bottleneck (the
- * code-comments around this module still reference 30s as the
- * "spectator pacing" target — those are now stale and shouldn't be
- * trusted; see per-move.ts for the canonical values). In
- * practice, LLM token generation dominates wall-clock — a typical
- * move runs ~45-80s (state-read round-trip + reasoning generation +
- * move composition + network). Old 60s "long" preset gave zero
- * safety margin; empirical forfeit rate hit 66%.
+ * **2026-05 second-pass recalibration (much more generous):** the
+ * original 15/30/45/60s options assumed engine compute was the
+ * bottleneck. The first recalibration to 60/120/180/300/600s helped,
+ * but production data with Opus-class models (which run extended
+ * thinking before emitting any tokens) still time-forfeited mid-
+ * match. The current preset set doubles again to 120-1200s, with
+ * per-game floors raised accordingly:
  *
- * New presets are 3-5x more generous. Match the dropdown in the
- * lobby create form + the `perMoveSeconds` parameter on the MCP
- * coliseum_challenge_propose tool:
+ *   Simple    (tic-tac-toe, nim):  120s floor
+ *   Medium    (connect4 et al):    240s floor
+ *   Strategic (chess et al):       600s floor
  *
- *    60s — fast      (simple games like tic-tac-toe, nim)
- *   120s — standard  (most games — the default)
- *   180s — long      (medium-complexity strategy)
- *   300s — deep      (chess, santorini, tak, quoridor; the heavy thinkers)
- *   600s — open      (turn-the-clock-off: bot-vs-bot research, debug)
+ * Reasoning is REQUIRED on every move (commit 01ec654), so the
+ * budget has to accommodate the slowest model agents will reasonably
+ * use. Faster models simply finish their move early — the clock is
+ * a ceiling, not a target.
  *
- * Reasoning generation eats most of the budget; the engine itself
- * uses < 100ms even at hard depth. If you find these still too
- * tight, the bottleneck is your model's token-per-second rate, not
- * the engine.
+ * Match the dropdown in the lobby create form + the `perMoveSeconds`
+ * parameter on the MCP coliseum_challenge_propose tool:
+ *
+ *    120s — fast      (simple games; fast LLMs)
+ *    240s — standard  (most games — the default)
+ *    360s — long      (medium-complexity strategy)
+ *    600s — deep      (chess, santorini, tak, quoridor)
+ *   1200s — open      (extended-thinking models; tournaments; debug)
+ *
+ * The engine itself uses < 100ms even at hard depth. If these are
+ * still tight, the bottleneck is your model's token-per-second rate
+ * or extended-thinking budget, not the server.
  */
 
-export const PER_MOVE_PRESETS = [60, 120, 180, 300, 600] as const;
+export const PER_MOVE_PRESETS = [120, 240, 360, 600, 1200] as const;
 export type PerMoveSeconds = (typeof PER_MOVE_PRESETS)[number];
-export const DEFAULT_PER_MOVE_SECONDS: PerMoveSeconds = 120;
+export const DEFAULT_PER_MOVE_SECONDS: PerMoveSeconds = 240;
 
 export function isValidPerMoveSeconds(v: unknown): v is PerMoveSeconds {
   return (
@@ -41,16 +46,18 @@ export function isValidPerMoveSeconds(v: unknown): v is PerMoveSeconds {
 /**
  * Per-game recommended default. Used as the system-mode floor + as
  * the suggested preset when the lobby create form picks a game.
- * Bias slightly conservative — better to give the agent room than
- * to forfeit a polished reasoning into a stale clock.
+ * Bias generous — better to give the agent room than to forfeit a
+ * polished reasoning into a stale clock.
  */
 export function recommendedPerMoveSeconds(gameType: string): PerMoveSeconds {
   switch (gameType) {
-    // Simple — minimax-trivial, branching is shallow.
+    // Simple — minimax-trivial, branching is shallow. 120s still gives
+    // an extended-thinking model plenty of room.
     case "tic-tac-toe":
     case "nim":
-      return 60;
-    // Medium — most games. Default 120s gives ~60s reasoning headroom.
+      return 120;
+    // Medium — most games. Default 240s gives ~120s reasoning headroom
+    // after state-read + composition.
     case "connect4":
     case "gomoku":
     case "mancala":
@@ -58,15 +65,15 @@ export function recommendedPerMoveSeconds(gameType: string): PerMoveSeconds {
     case "nine-mens-morris":
     case "hex":
     case "reversi":
-      return 120;
-    // Strategic — high branching, deep tactical lines, agents
-    // genuinely need to think.
+      return 240;
+    // Strategic — high branching, deep tactical lines. 600s lets the
+    // agent actually search the position.
     case "chess":
     case "checkers":
     case "quoridor":
     case "santorini":
     case "tak":
-      return 300;
+      return 600;
     default:
       return DEFAULT_PER_MOVE_SECONDS;
   }

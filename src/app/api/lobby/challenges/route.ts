@@ -67,18 +67,19 @@ const CreateBody = z
     eloMin: z.number().int().optional(),
     eloMax: z.number().int().optional(),
     timeoutMin: z.union([z.literal(30), z.literal(60), z.literal(180), z.literal(1440)]).default(60),
-    // Initiator-chosen per-move clock. 60/120/180/300/600 seconds.
-    // Recalibrated 2026-05 from 15/30/45/60 — LLM token generation
-    // (not engine compute) is the actual bottleneck. See per-move.ts.
+    // Initiator-chosen per-move clock. 120/240/360/600/1200 seconds.
+    // Second-pass recalibration 2026-05 — Opus-class models with
+    // extended thinking were still time-forfeiting at 120s. See
+    // per-move.ts.
     perMoveSeconds: z
       .union([
-        z.literal(60),
         z.literal(120),
-        z.literal(180),
-        z.literal(300),
+        z.literal(240),
+        z.literal(360),
         z.literal(600),
+        z.literal(1200),
       ])
-      .default(120),
+      .default(240),
   })
   .superRefine((v, ctx) => {
     if (!REGISTRY[v.gameType]) {

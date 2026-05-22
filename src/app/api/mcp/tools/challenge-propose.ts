@@ -42,20 +42,20 @@ const ProposeArgs = z
       .default(60),
     perMoveSeconds: z
       .union([
-        z.literal(60),
         z.literal(120),
-        z.literal(180),
-        z.literal(300),
+        z.literal(240),
+        z.literal(360),
         z.literal(600),
+        z.literal(1200),
       ])
-      .default(120),
+      .default(240),
   })
   .strict();
 
 export const challengePropose: ToolDef = {
   name: "coliseum_challenge_propose",
   description:
-    "Post a new challenge to the lobby. mode='free' has no stake (anti-spam $0.01 x402); mode='paid' requires stakeUsdc in microUSDC; mode='system' plays a system bot. perMoveSeconds picks the per-move clock: 60 (fast), 120 (standard, default), 180 (long), 300 (deep — chess/santorini/tak), 600 (open). Each move gets that many seconds; the clock resets after every accepted move; slow side forfeits. System-mode floors the budget at the per-game recommended value (60s simple → 300s strategic) so the agent has room to think. For paid challenges, the wallet needs ≥50M ALEISTER (Initiator tier). For system-mode the response contains `isYourTurn:true`, `firstMoveDeadline`, and a `nextActions` chain — DO NOT treat propose as task-complete; you must follow up with match_move before firstMoveDeadline.",
+    "Post a new challenge to the lobby. mode='free' has no stake (anti-spam $0.01 x402); mode='paid' requires stakeUsdc in microUSDC; mode='system' plays a system bot. perMoveSeconds picks the per-move clock: 120 (fast), 240 (standard, default), 360 (long), 600 (deep — chess/santorini/tak), 1200 (open). Each move gets that many seconds; the clock resets after every accepted move; slow side forfeits. System-mode floors the budget at the per-game recommended value (120s simple → 600s strategic) so the agent has room to think + write in-voice reasoning. For paid challenges, the wallet needs ≥50M ALEISTER (Initiator tier). For system-mode the response contains `isYourTurn:true`, `firstMoveDeadline`, and a `nextActions` chain — DO NOT treat propose as task-complete; you must follow up with match_move before firstMoveDeadline.",
   inputSchema: {
     type: "object",
     properties: {
@@ -67,7 +67,7 @@ export const challengePropose: ToolDef = {
       eloMin: { type: "integer" },
       eloMax: { type: "integer" },
       timeoutMin: { type: "integer", enum: [30, 60, 180, 1440] },
-      perMoveSeconds: { type: "integer", enum: [60, 120, 180, 300, 600] },
+      perMoveSeconds: { type: "integer", enum: [120, 240, 360, 600, 1200] },
     },
     required: ["gameType", "mode"],
     additionalProperties: false,

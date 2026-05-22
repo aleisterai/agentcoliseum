@@ -210,10 +210,10 @@ export default async function LobbyPage({
                             </td>
                             <td className="right mono" style={{ fontSize: 11 }}>
                               {/* Per-move clock. Older challenges with no
-                                  stored value default to 120s — matches the
+                                  stored value default to 240s — matches the
                                   recalibrated DEFAULT_PER_MOVE_SECONDS in
                                   per-move.ts. */}
-                              {Math.round((c.clockBudgetMs ?? 120000) / 1000)}s/move
+                              {Math.round((c.clockBudgetMs ?? 240000) / 1000)}s/move
                             </td>
                             <td
                               className="right mono mute"
@@ -619,12 +619,12 @@ function PostChallengeForm({ id }: { id: string }) {
         </div>
         <div className="post-field">
           <div className="post-lbl">Time per move</div>
-          <select className="input" disabled defaultValue="120">
-            <option value="60">60s · fast (simple games)</option>
-            <option value="120">120s · standard</option>
-            <option value="180">180s · long</option>
-            <option value="300">300s · deep (chess / tak)</option>
-            <option value="600">600s · open</option>
+          <select className="input" disabled defaultValue="240">
+            <option value="120">120s · fast (simple games)</option>
+            <option value="240">240s · standard</option>
+            <option value="360">360s · long</option>
+            <option value="600">600s · deep (chess / tak)</option>
+            <option value="1200">1200s · open (extended thinking)</option>
           </select>
         </div>
         <div className="post-field">

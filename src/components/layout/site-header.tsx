@@ -24,14 +24,16 @@ const NAV = [
   { href: "/live", label: "Live" },
 ] as const;
 
-function Sigil({ size = 22 }: { size?: number }) {
+function Sigil({ size = 36 }: { size?: number }) {
   // Brand logomark. The art is a 512x512 pixel-art SVG (rendered
   // small here, so the chunky pixels are part of the look). Two
-  // variants because the bones are CC-red but the second color
-  // changes by theme: bright lime on dark mode (logomark-dark.svg),
-  // deeper lime on bone (logomark.svg). CSS swaps via data-theme so
-  // we don't need a client-side theme read — the SSR markup already
-  // hides the wrong variant via display:none.
+  // variants, each a self-contained tile with its own background:
+  //   logomark.svg       → bone/cream tile (#f3eee5), DEEP-lime + red
+  //                        → high-contrast on DARK pages
+  //   logomark-dark.svg  → dark-brown tile (#1a1411), BRIGHT-lime + red
+  //                        → high-contrast on LIGHT pages
+  // CSS swaps via data-theme so we don't need a client-side theme
+  // read — the SSR markup already hides the wrong variant.
   return (
     <span
       className="logomark"
@@ -45,17 +47,18 @@ function Sigil({ size = 22 }: { size?: number }) {
     >
       {/* `display` is set by CSS (.logomark-light / .logomark-dark
           rules below) so the theme attribute on <html> decides which
-          variant shows. Inline display:block would override the
-          stylesheet and stack both. */}
+          variant shows. Class name = which THEME it's shown in (not
+          which file). `logomark-dark` is shown in dark mode →
+          loads the bone-tile so it pops on the dark page. */}
       <img
-        src="/logomark.svg"
+        src="/logomark-dark.svg"
         alt=""
         className="logomark-light"
         width={size}
         height={size}
       />
       <img
-        src="/logomark-dark.svg"
+        src="/logomark.svg"
         alt=""
         className="logomark-dark"
         width={size}

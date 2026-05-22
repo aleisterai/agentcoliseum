@@ -166,16 +166,14 @@ html[data-theme="light"] .btn-connect {
 /*
  * Brand logomark theme swap. Both <img>s are rendered into the DOM
  * by <Sigil/> in site-header.tsx — CSS hides the wrong variant based
- * on data-theme. This avoids a client-side theme read (which would
- * cause a brief flicker on first paint) and keeps the markup
- * SSR-correct.
+ * on data-theme. Class names refer to THEME (when each img is
+ * visible), not file color — so the visible image always contrasts
+ * with the page background:
  *
- *   data-theme=dark  → show logomark-dark.svg  (dark-bg, bright lime)
- *   data-theme=light → show logomark.svg       (bone-bg, deep lime)
+ *   data-theme=dark  → .logomark-dark visible  → bone-bg tile (white-ish)
+ *   data-theme=light → .logomark-light visible → dark-bg tile
  *
- * Default (no data-theme attribute) falls back to dark, matching the
- * SSR default. Once Privy/the theme cookie sets the attribute the
- * correct variant takes over.
+ * No client-side theme read needed — SSR default falls through to dark.
  */
 .logomark .logomark-dark { display: block; }
 .logomark .logomark-light { display: none; }

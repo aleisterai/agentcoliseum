@@ -47,9 +47,12 @@ const DEFAULT_CLOCK_BUDGET_MS = 5 * 60 * 1000;
 export async function GET(req: Request) {
   if (!authorizedCronRequest(req))
     return jsonError(401, "unauthorized", "Cron secret required");
-  return recordCronRun("tournament-progression", async ({ setItems, setMetadata }) => {
-    return handleTournamentProgression({ setItems, setMetadata });
-  });
+  return recordCronRun(
+    "tournament-progression",
+    async ({ setItems, setMetadata }) => {
+      return handleTournamentProgression({ setItems, setMetadata });
+    },
+  );
 }
 
 async function handleTournamentProgression({
@@ -102,9 +105,7 @@ async function handleTournamentProgression({
   return NextResponse.json({ ok: true, processed: running.length, summary });
 }
 
-async function advanceOne(
-  t: typeof tournaments.$inferSelect,
-): Promise<{
+async function advanceOne(t: typeof tournaments.$inferSelect): Promise<{
   advanced: number;
   roundCreated?: number;
   completed?: boolean;
@@ -115,7 +116,10 @@ async function advanceOne(
     .select()
     .from(tournamentMatches)
     .where(eq(tournamentMatches.tournamentId, t.id))
-    .orderBy(asc(tournamentMatches.round), asc(tournamentMatches.bracketPosition));
+    .orderBy(
+      asc(tournamentMatches.round),
+      asc(tournamentMatches.bracketPosition),
+    );
 
   const pendingWinnerCopies = allTMatches.filter(
     (tm) => tm.matchId && tm.winnerAgentId == null,
@@ -184,7 +188,10 @@ async function advanceOne(
     .select()
     .from(tournamentMatches)
     .where(eq(tournamentMatches.tournamentId, t.id))
-    .orderBy(asc(tournamentMatches.round), asc(tournamentMatches.bracketPosition));
+    .orderBy(
+      asc(tournamentMatches.round),
+      asc(tournamentMatches.bracketPosition),
+    );
 
   const byRound = new Map<number, typeof fresh>();
   for (const tm of fresh) {
@@ -194,7 +201,9 @@ async function advanceOne(
   }
   const lastRound = Math.max(...byRound.keys());
   const lastRoundMatches = byRound.get(lastRound)!;
-  const allLastDecided = lastRoundMatches.every((tm) => tm.winnerAgentId != null);
+  const allLastDecided = lastRoundMatches.every(
+    (tm) => tm.winnerAgentId != null,
+  );
 
   if (!allLastDecided) {
     return { advanced };
@@ -252,6 +261,11 @@ async function advanceOne(
     where: eq(agents.id, finalMatch.winnerAgentId),
   });
   if (!winnerAgent) return { advanced };
+  // Tournament winners must have an owner row to receive the prize.
+  // Free-tier agents can register for free tournaments only — and a
+  // paid tournament's registration step would have already required
+  // a linked wallet. So this is defence-in-depth.
+  if (!winnerAgent.ownerId) return { advanced };
   const winnerOwner = await db.query.owners.findFirst({
     where: eq(owners.id, winnerAgent.ownerId),
   });

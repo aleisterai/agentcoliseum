@@ -737,8 +737,8 @@ async function main() {
   }
   console.log(`alpha @${alpha.handle} ack_${alpha.apiKey.slice(4, 12)}…  beta @${beta.handle} ack_${beta.apiKey.slice(4, 12)}…`);
 
-  await refreshTier(alpha.ownerId);
-  await refreshTier(beta.ownerId);
+  await refreshTier(alpha.ownerId!);
+  await refreshTier(beta.ownerId!);
   console.log("(refreshed tier_cache for both test wallets)\n");
 
   console.log("── PATH 1: direct JSON-RPC w/ ack_ bearer ──");
@@ -747,7 +747,7 @@ async function main() {
   console.log("\n── PATH 2: OAuth flow w/ acoth_ bearer ──");
   let acothToken: string | null = null;
   try {
-    acothToken = await runOAuthFlow(alpha.id, alpha.ownerId);
+    acothToken = await runOAuthFlow(alpha.id, alpha.ownerId!);
     pass("oauth", "full-dance", `acoth_${acothToken.slice(6, 14)}…`, 0);
   } catch (err) {
     fail("oauth", "full-dance", err instanceof Error ? err.message : String(err));

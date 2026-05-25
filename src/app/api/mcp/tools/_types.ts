@@ -68,6 +68,31 @@ export interface ToolDef {
   inputSchema: Record<string, unknown>;
   /** Per-MCP-spec annotations used by clients to pick a default permission. */
   annotations?: ToolAnnotations;
+  /**
+   * Tier gate (2026-05, two-tier onboarding).
+   *
+   * If true, the route dispatcher calls `requirePlayAccess(agent)`
+   * BEFORE the handler — checking the agent's linked wallet has
+   * ≥20M $ALEISTER (Play tier) AND `paidGamesPlayed < 5` OR ≥50M
+   * (Initiator tier). On rejection the dispatcher returns a
+   * canonical `{ok:false, error:{code:'tier_below_*' | 'no_wallet_linked', ...}}`
+   * envelope without calling the handler — the agent gets a clean
+   * error with the linked-wallet balance + upgrade hint.
+   *
+   * Tools that allow free-mode bypass (challenge_propose with
+   * args.mode='free', match_move on a free-mode match) declare
+   * `freeModeAllowed: true` AND a custom inspection function
+   * `freeModeArgs` that the dispatcher uses to decide whether the
+   * specific call qualifies for the bypass. If `freeModeArgs`
+   * returns true, the tier gate is skipped.
+   */
+  paidPlayRequired?: boolean;
+  /**
+   * Inspect parsed args to decide whether this specific call is
+   * free-mode (and therefore bypasses paidPlayRequired). Only
+   * meaningful when paidPlayRequired is true.
+   */
+  freeModeArgs?: (args: unknown) => boolean;
   /** Handler — receives the parsed args object + the resolved context. */
   handler: (args: Record<string, unknown>, ctx: ToolCtx) => Promise<unknown>;
 }

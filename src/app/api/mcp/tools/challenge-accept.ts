@@ -23,7 +23,7 @@ import { db } from "@/lib/db/client";
 import { challenges, owners } from "@/lib/db/schema";
 import { guardian } from "@/lib/guardian";
 import { pullStake, refundStake, StakePullError } from "@/lib/chain/stake";
-import { requireTier } from "@/lib/chain/tiers";
+import { requirePlayAccess } from "@/lib/chain/tiers";
 import { acceptChallenge } from "@/lib/game/server-flow";
 import type { ToolDef } from "./_types";
 import { toolError, toToolError } from "./_shared";
@@ -89,23 +89,45 @@ export const challengeAccept: ToolDef = {
       );
     }
 
-    const ownerRow = await db.query.owners.findFirst({
-      where: eq(owners.id, agent.ownerId),
-    });
-    if (!ownerRow) {
-      return toolError("agent_not_found", "agent has no owner row");
+    // Paid challenge accept gates via requirePlayAccess — the canonical
+    // tier check (linked wallet balance + 5-game cap). Skip for free-mode
+    // challenges, which any agent can accept regardless of tier.
+    if (challenge.mode === "paid") {
+      const access = await requirePlayAccess({
+        id: agent.id,
+        handle: agent.handle,
+        linkedWalletAddress: agent.linkedWalletAddress,
+        paidGamesPlayed: agent.paidGamesPlayed,
+      });
+      if (!access.ok) {
+        return toolError(access.code, access.message, {
+          details: access.details,
+          hint: access.hint,
+        });
+      }
     }
 
-    try {
-      await requireTier(ownerRow.walletAddress as `0x${string}`, "play");
-    } catch (e) {
-      return toolError(
-        "insufficient_tier",
-        e instanceof Error ? e.message : String(e),
-        {
-          hint: "Owner wallet needs the Play tier (20M+ ALEISTER) to accept paid challenges.",
-        },
-      );
+    // Paid mode requires an owner row to pull the stake from. Free-mode
+    // can accept without one. Free-mode agents that linked a wallet get
+    // an ownerId via wallet-connect; free-mode never reaches here.
+    let ownerRow: Awaited<ReturnType<typeof db.query.owners.findFirst>> | null =
+      null;
+    if (challenge.mode === "paid") {
+      if (!agent.ownerId) {
+        return toolError(
+          "no_wallet_linked",
+          "paid challenges require a linked wallet",
+          {
+            hint: "Call coliseum_agent_wallet_link_request → sign → coliseum_agent_wallet_connect.",
+          },
+        );
+      }
+      ownerRow = await db.query.owners.findFirst({
+        where: eq(owners.id, agent.ownerId),
+      });
+      if (!ownerRow) {
+        return toolError("agent_not_found", "agent has no owner row");
+      }
     }
 
     const g = await guardian.evaluate("challenge.accept", {
@@ -124,7 +146,7 @@ export const challengeAccept: ToolDef = {
 
     let acceptorStakeTxHash: `0x${string}` | null = null;
     const isPaid = challenge.mode === "paid" && challenge.stakeUsdc;
-    if (isPaid) {
+    if (isPaid && ownerRow) {
       try {
         const pull = await pullStake(
           ownerRow.walletAddress as `0x${string}`,
@@ -172,7 +194,7 @@ export const challengeAccept: ToolDef = {
       // Race-loss refund: we pulled the stake but a concurrent accept
       // won the FOR UPDATE lock. Best-effort refund — failure here is
       // logged but the error returned to the LLM is the original.
-      if (acceptorStakeTxHash) {
+      if (acceptorStakeTxHash && ownerRow) {
         try {
           await refundStake(
             ownerRow.walletAddress as `0x${string}`,

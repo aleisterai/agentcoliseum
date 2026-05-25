@@ -140,9 +140,16 @@ export const agents = pgTable(
   "agents",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    ownerId: uuid("owner_id")
-      .references(() => owners.id, { onDelete: "cascade" })
-      .notNull(),
+    // Nullable because of the two-tier onboarding (2026-05). Agents
+    // registered via `npx @agentcoliseum/init` have no owner row until
+    // their operator links a wallet via the wallet_connect MCP tool —
+    // at which point we find-or-create an `owners` row for the
+    // depositor's wallet and link it here. Existing owner-mediated
+    // agents are unchanged (notNull effectively, but the type system
+    // accepts null for new free-tier rows).
+    ownerId: uuid("owner_id").references(() => owners.id, {
+      onDelete: "cascade",
+    }),
     handle: text("handle").notNull().unique(),
     displayName: text("display_name").notNull(),
     bio: text("bio"),
@@ -159,6 +166,29 @@ export const agents = pgTable(
     wins: integer("wins").default(0).notNull(),
     losses: integer("losses").default(0).notNull(),
     draws: integer("draws").default(0).notNull(),
+    // Paid-tier infrastructure (2026-05 — two-tier onboarding).
+    //
+    // `linkedWalletAddress` is the wallet whose live $ALEISTER balance
+    // gates paid play. Set via the `coliseum_agent_wallet_connect` MCP
+    // tool after the operator signs an EIP-191 personal_sign message
+    // proving wallet ownership. The wallet stays in the operator's
+    // control — Coliseum just reads its balance via Base RPC (with the
+    // tier_cache 60s TTL).
+    //
+    // - free tier: linkedWalletAddress is null (or balance < 20M $ALEISTER)
+    // - play tier: balance ≥ 20M, paidGamesPlayed < 5
+    // - initiator tier: balance ≥ 50M, unlimited
+    //
+    // `paidGamesPlayed` is the sticky counter. Increments in
+    // finalizeMatchTx on every completed paid match. Doesn't reset on
+    // wallet disconnect / reconnect — prevents 5-game cap evasion by
+    // wallet churn.
+    linkedWalletAddress: text("linked_wallet_address"),
+    linkedWalletSignedAt: timestamp("linked_wallet_signed_at", {
+      withTimezone: true,
+    }),
+    walletLinkSignature: text("wallet_link_signature"),
+    paidGamesPlayed: integer("paid_games_played").default(0).notNull(),
     // Force-recall: pauses the agent from entering / accepting new challenges.
     // recalledBy distinguishes voluntary pause (owner), platform action
     // (operator), or automatic trip (system — anomaly detection / clock abuse).
@@ -204,6 +234,9 @@ export const agents = pgTable(
     index("agents_owner_idx").on(table.ownerId),
     index("agents_elo_idx").on(table.elo),
     index("agents_recalled_idx").on(table.recalledAt),
+    // Fleet-by-wallet lookups + per-wallet self-play ban join.
+    // Lower-cased to match the tier_cache lookup pattern.
+    index("agents_linked_wallet_idx").on(table.linkedWalletAddress),
   ],
 ).enableRLS();
 
@@ -1025,6 +1058,77 @@ export const tierCache = pgTable(
 ).enableRLS();
 
 // -----------------------------------------------------------------------------
+// wallet_link_nonces — short-lived nonces for the wallet-linking flow.
+//
+// The autonomous-onboarding model lets agents register without a wallet,
+// then link one later via a signed message. Flow:
+//   1. Agent calls coliseum_agent_wallet_link_request → server issues a
+//      nonce + message-to-sign, stores the nonce here tied to (agent, ttl).
+//   2. Operator signs the message with their wallet (EIP-191 personal_sign).
+//   3. Agent calls coliseum_agent_wallet_connect(nonce, signature, wallet)
+//      → server verifies signature via viem.recoverMessageAddress, marks
+//      the nonce consumed, writes agents.linked_wallet_address.
+//
+// 5-min TTL. Once `consumed_at` is set, the nonce is dead — replay-attack
+// protection. We keep the row for audit (debug + ops). Vacuum old rows via
+// a periodic cron (or just let them accumulate; the table is tiny).
+// -----------------------------------------------------------------------------
+
+export const walletLinkNonces = pgTable(
+  "wallet_link_nonces",
+  {
+    nonce: text("nonce").primaryKey(),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    issuedAt: timestamp("issued_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("wallet_link_nonces_agent_idx").on(table.agentId),
+    index("wallet_link_nonces_issued_idx").on(table.issuedAt),
+  ],
+).enableRLS();
+
+// -----------------------------------------------------------------------------
+// free_registration_log — audit trail + rate-limit anchor for the public
+// `POST /api/agents/register/free` endpoint (the `npx @agentcoliseum/init`
+// surface).
+//
+// Why hash the IP rather than store it? Two reasons:
+//   1. PII minimization — we never need to know the raw IP, only whether
+//      the same IP is registering at suspicious volume.
+//   2. The hash is stable enough for rate-limit math (3/h, 100/day) while
+//      being privacy-respecting if the table is ever exfiltrated.
+//
+// `pow_difficulty` is recorded so we can tune the difficulty curve and
+// see whether the cost is actually slowing abusers down.
+// -----------------------------------------------------------------------------
+
+export const freeRegistrationLog = pgTable(
+  "free_registration_log",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ipHash: text("ip_hash").notNull(),
+    agentId: uuid("agent_id").references(() => agents.id, {
+      onDelete: "cascade",
+    }),
+    powDifficulty: integer("pow_difficulty").notNull(),
+    userAgentHash: text("user_agent_hash"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    // Hot path: "how many registrations from this ip-hash in the last hour?"
+    index("free_reg_ip_recency_idx").on(table.ipHash, table.createdAt),
+    index("free_reg_created_idx").on(table.createdAt),
+  ],
+).enableRLS();
+
+// -----------------------------------------------------------------------------
 // Inferred row types
 // -----------------------------------------------------------------------------
 
@@ -1051,6 +1155,10 @@ export type NewTreasuryFlow = typeof treasuryFlows.$inferInsert;
 export type MatchPayout = typeof matchPayouts.$inferSelect;
 export type NewMatchPayout = typeof matchPayouts.$inferInsert;
 export type TierCacheRow = typeof tierCache.$inferSelect;
+export type WalletLinkNonce = typeof walletLinkNonces.$inferSelect;
+export type NewWalletLinkNonce = typeof walletLinkNonces.$inferInsert;
+export type FreeRegistrationLogRow = typeof freeRegistrationLog.$inferSelect;
+export type NewFreeRegistrationLogRow = typeof freeRegistrationLog.$inferInsert;
 
 // -----------------------------------------------------------------------------
 // MCP OAuth — endpoints + token store for the Authorization Server side of

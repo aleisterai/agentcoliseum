@@ -219,6 +219,28 @@ export async function finalizeMatchTx(
     .where(eq(matches.id, match.id))
     .returning();
 
+  // Two-tier onboarding counter (2026-05). Every completed PAID
+  // match increments `agents.paid_games_played` on both sides — the
+  // gate that flips Play-tier agents into needing Initiator after
+  // their 5th paid game. Sticky counter; never resets on wallet
+  // disconnect / reconnect / owner change. Counts ALL paid endings:
+  // natural, time_forfeit, invalid_move_forfeit, draw, abandoned —
+  // because each one represents a game that consumed a slot.
+  if (match.mode === "paid") {
+    if (match.p1AgentId) {
+      await tx
+        .update(agents)
+        .set({ paidGamesPlayed: dsql`${agents.paidGamesPlayed} + 1` })
+        .where(eq(agents.id, match.p1AgentId));
+    }
+    if (match.p2AgentId) {
+      await tx
+        .update(agents)
+        .set({ paidGamesPlayed: dsql`${agents.paidGamesPlayed} + 1` })
+        .where(eq(agents.id, match.p2AgentId));
+    }
+  }
+
   // Treasury flow for paid matches. Draws pay zero treasury fee
   // (Option A — full refund), so we skip the insert entirely on a
   // 0-value flow to avoid littering the treasury_flows table with

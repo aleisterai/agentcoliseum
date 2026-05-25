@@ -107,7 +107,7 @@ async function main() {
     console.error("alpha not seeded — run `pnpm mcp:duel`");
     process.exit(1);
   }
-  await refreshTier(alpha.ownerId);
+  await refreshTier(alpha.ownerId!);
 
   // Set up a match with at least one move so we have a target to react to.
   console.log("\n── setup: create system match + submit a move ──");

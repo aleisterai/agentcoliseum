@@ -192,7 +192,7 @@ async function main() {
     console.error("alpha (mcp-duel-alpha) not seeded — run `pnpm mcp:duel` first");
     process.exit(1);
   }
-  await refreshTier(alpha.ownerId);
+  await refreshTier(alpha.ownerId!);
 
   for (const gameType of GAMES) {
     try {

@@ -1108,10 +1108,11 @@ describe("finalizeMatch", () => {
       expect(winnerRows[0].status).toBe("pending");
       expect(winnerRows[0].txHash).toBeNull();
       // recipientAddress was captured at finalize time from owner wallet.
+      // seedOwnerAgent always sets ownerId, hence the non-null assertion.
       const [ownerP1] = await db
         .select()
         .from(owners)
-        .where(eq(owners.id, p1.ownerId));
+        .where(eq(owners.id, p1.ownerId!));
       expect(winnerRows[0].recipientAddress.toLowerCase()).toBe(
         ownerP1.walletAddress.toLowerCase(),
       );

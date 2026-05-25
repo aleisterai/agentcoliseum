@@ -1,0 +1,257 @@
+@import "tailwindcss";
+@import "fumadocs-ui/css/black.css";
+@import "fumadocs-ui/css/preset.css";
+
+/*
+ * ──────────────────────────────────────────────────────────────────
+ * Agent Coliseum design tokens
+ *
+ * Mirrors `coliseum.css` from the main app so the docs site reads
+ * as one with the rest of the brand. Single source of truth is the
+ * main app's tokens — this file is the carbon copy that targets
+ * Fumadocs UI primitives.
+ *
+ * Palette is dark-first (ox / gold on near-black). Light theme is
+ * derived from the same hues at higher luminance.
+ * ──────────────────────────────────────────────────────────────────
+ */
+
+:root {
+  /* Brand */
+  --gold: oklch(0.86 0.18 92);
+  --gold-dim: oklch(0.72 0.14 92);
+  --ox: oklch(0.55 0.21 28);
+  --ox-bright: oklch(0.7 0.24 28);
+  --up: oklch(0.85 0.22 142);
+  --down: oklch(0.65 0.22 28);
+
+  /* Surfaces (dark default) */
+  --bg-0: oklch(0.13 0.005 280);
+  --bg-1: oklch(0.17 0.006 280);
+  --bg-2: oklch(0.21 0.008 280);
+
+  /* Text */
+  --text: oklch(0.96 0.005 280);
+  --text-2: oklch(0.78 0.008 280);
+  --text-mute: oklch(0.55 0.01 280);
+
+  /* Lines */
+  --line: oklch(0.27 0.008 280);
+  --line-2: oklch(0.32 0.01 280);
+  --line-3: oklch(0.4 0.012 280);
+
+  /* Typography */
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Menlo", monospace;
+  --font-display: var(--font-mono);
+
+  /* Map Fumadocs vars to Coliseum tokens. Fumadocs UI reads from
+   * these CSS custom properties — by remapping them we get full
+   * theme parity without touching component code. */
+  --color-fd-background: var(--bg-0);
+  --color-fd-foreground: var(--text);
+  --color-fd-muted: var(--bg-1);
+  --color-fd-muted-foreground: var(--text-mute);
+  --color-fd-card: var(--bg-1);
+  --color-fd-card-foreground: var(--text);
+  --color-fd-popover: var(--bg-1);
+  --color-fd-popover-foreground: var(--text);
+  --color-fd-border: var(--line);
+  --color-fd-primary: var(--gold);
+  --color-fd-primary-foreground: var(--bg-0);
+  --color-fd-secondary: var(--bg-2);
+  --color-fd-secondary-foreground: var(--text);
+  --color-fd-accent: var(--bg-2);
+  --color-fd-accent-foreground: var(--gold);
+  --color-fd-ring: var(--gold);
+}
+
+/* Light theme — same hues, inverted lightness */
+:root.light,
+.light {
+  --bg-0: oklch(0.99 0.002 280);
+  --bg-1: oklch(0.96 0.004 280);
+  --bg-2: oklch(0.92 0.005 280);
+  --text: oklch(0.18 0.008 280);
+  --text-2: oklch(0.32 0.01 280);
+  --text-mute: oklch(0.48 0.01 280);
+  --line: oklch(0.86 0.006 280);
+  --line-2: oklch(0.78 0.008 280);
+  --line-3: oklch(0.66 0.01 280);
+  --gold: oklch(0.62 0.18 78);
+  --gold-dim: oklch(0.52 0.14 78);
+}
+
+/* Body baseline — mono everywhere, dark canvas, ligatures off so
+ * "fi" stays readable in tool names like `coliseum_match_state`. */
+html,
+body {
+  background: var(--bg-0);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-feature-settings: "liga" 0, "calt" 0, "ss01" 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Headings — keep mono, gold accent for h1 only. Tight letter-spacing
+ * matches the main site's hero rhythm. */
+h1 {
+  font-family: var(--font-display);
+  letter-spacing: -0.025em;
+  font-weight: 500;
+}
+h2,
+h3,
+h4 {
+  font-family: var(--font-display);
+  letter-spacing: -0.015em;
+  font-weight: 500;
+}
+
+/* Inline `code` — gold tint on a soft surface so it picks out of
+ * the mono body text without screaming. */
+:not(pre) > code {
+  color: var(--gold);
+  background: color-mix(in oklab, var(--gold) 10%, var(--bg-1));
+  border: 1px solid color-mix(in oklab, var(--gold) 25%, transparent);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.9em;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Code blocks — fully Coliseum-themed in BOTH modes.
+ *
+ * Fumadocs ships Shiki with a light theme by default → blue keywords
+ * on a near-white bg, which reads as "generic docs" not "terminal".
+ * We force:
+ *   • Coliseum surfaces (--bg-1 / --line) for the box itself
+ *   • Coliseum text color for the code (overrides Shiki's blues)
+ *   • Same treatment in light + dark so the box never looks bland
+ * ────────────────────────────────────────────────────────────────── */
+
+/* The OUTER container carries the visual (border, bg, radius).
+ * Fumadocs UI 16.x renders MDX code blocks as:
+ *   <figure class="shiki ...">  ← outer (border + bg via Tailwind)
+ *     <div class="fd-scroll-container">  ← scroll wrapper
+ *       <pre>...</pre>                    ← inner (no chrome)
+ *
+ * Without this rule, my generic `pre` background+border was painting
+ * a SECOND rounded box inside the figure → the "double container"
+ * bug. Now: figure draws the box, inner pre is fully transparent. */
+figure.shiki {
+  background: var(--bg-1) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+
+figure.shiki pre,
+figure.shiki .fd-scroll-container {
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  margin: 0 !important;
+}
+
+/* Standalone <pre> (no wrapping figure.shiki) — raw markdown ``` blocks
+ * without syntax highlighting still need their own border. */
+pre:not(figure.shiki pre) {
+  background: var(--bg-1) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 8px !important;
+  padding: 14px 16px !important;
+}
+
+/* The <code> inside a pre — strip Shiki's inline color overrides
+ * so the body color is our --text token, not Shiki's pastel set */
+pre code,
+pre[data-language] code {
+  color: var(--text) !important;
+  background: transparent !important;
+  font-family: var(--font-mono) !important;
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+/* Strip Shiki's per-token inline styles. The `[style*="color"]`
+ * selector catches the inline color attribute Shiki injects on
+ * every span; we recolor by token role using semantic classes
+ * Shiki emits (`.token`, etc) — but the cheap-and-clean win is just
+ * to ignore Shiki's palette entirely in light mode where it's
+ * worst, and tint the few high-signal tokens in our brand. */
+pre code span[style*="color"] {
+  color: inherit !important;
+}
+
+/* Gentle accents for keywords / strings / numbers via the token
+ * classes Shiki + rehype emit (works in both modes) */
+pre .token.keyword,
+pre .token.builtin,
+pre .token.tag {
+  color: var(--gold) !important;
+}
+pre .token.string,
+pre .token.attr-value {
+  color: var(--up, oklch(0.85 0.22 142)) !important;
+}
+pre .token.comment {
+  color: var(--text-mute) !important;
+  font-style: italic;
+}
+pre .token.number,
+pre .token.boolean {
+  color: var(--ox-bright) !important;
+}
+
+/* Links — gold, no underline by default (Fumadocs default is gross),
+ * subtle dim-on-hover. */
+a {
+  color: var(--gold);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--gold-dim);
+}
+
+/* Sidebar active item — gold accent border-left, matches Coliseum
+ * tab-strip pattern in the main app. */
+[data-active="true"] {
+  color: var(--gold) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Brand logomark — theme-swap (mirrors main site's <Sigil>)
+ *
+ * Both <img> variants SSR; CSS shows exactly one based on the active
+ * `next-themes` class on <html>. Default = dark mode → cream-tile
+ * shows. Toggle to light → dark-tile shows. Stacked with absolute
+ * positioning so the wrong-mode variant doesn't push layout.
+ * ────────────────────────────────────────────────────────────────── */
+.brand-logo {
+  position: relative;
+}
+.brand-logo img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Dark mode (default) — show cream tile, hide dark tile */
+html.dark .brand-logo-on-dark,
+:root:not(.light) .brand-logo-on-dark {
+  display: block;
+}
+html.dark .brand-logo-on-light,
+:root:not(.light) .brand-logo-on-light {
+  display: none;
+}
+
+/* Light mode — flip them */
+html.light .brand-logo-on-dark {
+  display: none;
+}
+html.light .brand-logo-on-light {
+  display: block;
+}

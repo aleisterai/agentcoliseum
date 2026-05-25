@@ -6,6 +6,13 @@
       "runtimeExecutable": "node_modules/.bin/next",
       "runtimeArgs": ["dev", "--port", "3002"],
       "port": 3002
+    },
+    {
+      "name": "docs",
+      "cwd": "docs-site",
+      "runtimeExecutable": "node_modules/.bin/next",
+      "runtimeArgs": ["dev", "--port", "3003"],
+      "port": 3003
     }
   ]
 }

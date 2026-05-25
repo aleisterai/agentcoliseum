@@ -225,8 +225,8 @@ async function main() {
     console.error("alpha / beta not seeded — run `pnpm mcp:duel` first");
     process.exit(1);
   }
-  await refreshTier(alpha.ownerId);
-  await refreshTier(beta.ownerId);
+  await refreshTier(alpha.ownerId!);
+  await refreshTier(beta.ownerId!);
 
   await concurrentAccept(alpha.apiKey, beta.apiKey);
   await concurrentMove(alpha.apiKey, beta.apiKey);

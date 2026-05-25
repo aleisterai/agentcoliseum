@@ -24,7 +24,7 @@ import { challenges, owners } from "@/lib/db/schema";
 import { REGISTRY } from "@/lib/game/registry";
 import { guardian } from "@/lib/guardian";
 import { pullStake, StakePullError } from "@/lib/chain/stake";
-import { requireTier } from "@/lib/chain/tiers";
+import { requirePlayAccess } from "@/lib/chain/tiers";
 import { postChallenge, UnknownGameTypeError } from "@/lib/game/server-flow";
 import type { ToolDef } from "./_types";
 
@@ -85,7 +85,9 @@ export const challengePropose: ToolDef = {
   async handler(args, { agent }) {
     const parsed = ProposeArgs.safeParse(args);
     if (!parsed.success) {
-      return { error: `validation_failed: ${JSON.stringify(parsed.error.flatten())}` };
+      return {
+        error: `validation_failed: ${JSON.stringify(parsed.error.flatten())}`,
+      };
     }
     const v = parsed.data;
     if (!REGISTRY[v.gameType]) {
@@ -100,21 +102,45 @@ export const challengePropose: ToolDef = {
       return { error: "systemBotDifficulty required for mode='system'" };
     }
 
-    const ownerRow = await db.query.owners.findFirst({
-      where: eq(owners.id, agent.ownerId),
-    });
-    if (!ownerRow) return { error: "owner_not_found" };
+    // Paid + system propose both need a linked wallet (Initiator tier
+    // for paid stakes, Play tier even for system mode since the bot
+    // pays nothing but the human side does). Free-mode propose is the
+    // only mode a free-tier agent can use.
+    if (!agent.ownerId) {
+      if (v.mode === "free") {
+        // Free mode is wallet-less; proceed without an owner row.
+      } else {
+        return {
+          error:
+            "no_wallet_linked: paid/system challenges require a linked wallet. Call coliseum_agent_wallet_link_request → sign → coliseum_agent_wallet_connect with a wallet holding ≥20M $ALEISTER. Free-mode challenges work without one.",
+        };
+      }
+    }
+    const ownerRow = agent.ownerId
+      ? await db.query.owners.findFirst({
+          where: eq(owners.id, agent.ownerId),
+        })
+      : null;
+    if (!ownerRow && v.mode !== "free") return { error: "owner_not_found" };
 
-    // Tier gate.
-    try {
-      await requireTier(
-        ownerRow.walletAddress as `0x${string}`,
-        v.mode === "paid" ? "initiator" : "play",
-      );
-    } catch (e) {
-      return {
-        error: `tier_insufficient: ${e instanceof Error ? e.message : String(e)}`,
-      };
+    // Tier gate. Free mode bypasses entirely — no wallet, no balance
+    // check, no stake. Paid/system go through requirePlayAccess which
+    // reads agent.linkedWalletAddress live and enforces the 5-game
+    // cap on Play tier.
+    if (v.mode !== "free") {
+      const access = await requirePlayAccess({
+        id: agent.id,
+        handle: agent.handle,
+        linkedWalletAddress: agent.linkedWalletAddress,
+        paidGamesPlayed: agent.paidGamesPlayed,
+      });
+      if (!access.ok) {
+        return {
+          error: `${access.code}: ${access.message}`,
+          hint: access.hint,
+          details: access.details,
+        };
+      }
     }
 
     // Guardian.
@@ -131,9 +157,11 @@ export const challengePropose: ToolDef = {
 
     // Pull stake BEFORE creating the challenge so a transferFrom
     // failure (insufficient allowance / balance / RPC) doesn't orphan
-    // a challenge row.
+    // a challenge row. Only paid mode pulls a stake; free/system don't.
+    // Paid mode is guarded above to require ownerRow, so the non-null
+    // assertion is safe here (TS can't see across the conditional).
     let proposerStakeTxHash: `0x${string}` | null = null;
-    if (v.mode === "paid" && v.stakeUsdc) {
+    if (v.mode === "paid" && v.stakeUsdc && ownerRow) {
       try {
         const pull = await pullStake(
           ownerRow.walletAddress as `0x${string}`,
@@ -203,16 +231,15 @@ export const challengePropose: ToolDef = {
               tool: "coliseum_match_move",
               args: {
                 matchId: m.id,
-                payload: "<game-specific move object — see coliseum_docs_read({topic:'games'})>",
+                payload:
+                  "<game-specific move object — see coliseum_docs_read({topic:'games'})>",
                 reasoning: "<required: 1-3 sentence explanation of the move>",
                 thinkingMs: "<wall-clock ms spent thinking>",
               },
-              why:
-                "Play. If you skip this, the system bot wins by time forfeit when the clock hits zero.",
+              why: "Play. If you skip this, the system bot wins by time forfeit when the clock hits zero.",
             },
           ],
-          notice:
-            `You are on move (p1). You have ${Math.round(m.clockBudgetMs / 1000)}s for EVERY move (not just the first) — wall-clock, including your reasoning generation time. Call coliseum_match_move within firstMoveBudgetMs or the system bot wins by time_forfeit.`,
+          notice: `You are on move (p1). You have ${Math.round(m.clockBudgetMs / 1000)}s for EVERY move (not just the first) — wall-clock, including your reasoning generation time. Call coliseum_match_move within firstMoveBudgetMs or the system bot wins by time_forfeit.`,
         };
       }
       return { ...result, proposerStakeTxHash };

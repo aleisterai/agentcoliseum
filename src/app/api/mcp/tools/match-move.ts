@@ -35,100 +35,38 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db/client";
 import { matches } from "@/lib/db/schema";
+import { applyMove, IllegalMoveError } from "@/lib/game/server-flow";
 import {
-  applyMove,
-  IllegalMoveError,
-  MatchNotFoundError,
-  MissingReasoningError,
-  NotEngagingOpponentError,
-  NotYourTurnError,
-  OffVoiceError,
-  UnknownGameTypeError,
-} from "@/lib/game/server-flow";
+  dialogueFieldsSchema,
+  reasoningFieldSchema,
+  optionalStructuredFieldsSchema,
+  MOVE_CONTRACT_LIMITS,
+  MOOD_VALUES,
+  PHASE_VALUES,
+  DIALOGUE_REF_VALUES,
+} from "@/lib/game/move-contract";
 import type { ToolDef } from "./_types";
-import { buildVoicePreamble, computeUrgency } from "./_shared";
+import { buildVoicePreamble, computeUrgency, toToolError } from "./_shared";
 
 /**
- * The full mood vocabulary the LLM may submit. Kept here (not imported
- * from schema) so the Zod enum reads cleanly + so the LLM-facing
- * description stays self-contained. Must stay in sync with
- * `AgentMood` in `src/lib/db/schema.ts`.
+ * Move-args zod is composed from the canonical contract fragments in
+ * `src/lib/game/move-contract.ts`. Char limits, the dialogue ref
+ * enum, mood values, etc. live THERE — change them once and every
+ * surface follows. This wrapper just adds matchId + payload +
+ * thinkingMs (the transport-shaped fields that aren't part of the
+ * move-content contract).
  */
-const MOOD_ENUM = [
-  "confident",
-  "nervous",
-  "annoyed",
-  "surprised",
-  "triumphant",
-  "resigned",
-  "cocky",
-  "focused",
-  "frustrated",
-  "hopeful",
-  "tilted",
-  "smug",
-] as const;
-
-const Candidate = z
-  .object({
-    payload: z.record(z.string(), z.unknown()),
-    evaluation: z.number().min(-1).max(1).optional(),
-    why: z.string().min(1).max(500),
-  })
-  .strict();
-
-const Evaluation = z
-  .object({
-    score: z.number().min(-1).max(1),
-    confidence: z.enum(["low", "med", "high"]),
-  })
-  .strict();
-
-const ExpectedReply = z
-  .object({
-    payload: z.record(z.string(), z.unknown()).optional(),
-    why: z.string().min(1).max(500),
-  })
-  .strict();
-
 const MoveArgs = z
   .object({
     matchId: z.string().uuid(),
     payload: z.record(z.string(), z.unknown()),
-    // ── The DIALOGUE pair (Phase A++++) ──────────────────────────
-    // `say` is what spectators see in the chat bubble — the in-voice
-    // headline, short and punchy. Voice-gated at write time.
-    // `reactingTo` forces engagement with the opponent's latest
-    // surface so move 2+ messages are dialogue, not parallel
-    // monologue. ref="nothing_yet" is valid ONLY on the opener.
-    say: z.string().min(1).max(220),
-    reactingTo: z.object({
-      ref: z.enum([
-        "opponent_move",
-        "opponent_chat",
-        "their_plan",
-        "nothing_yet",
-      ]),
-      echo: z.string().min(0).max(160),
-    }),
-    // ── The ANALYTICAL detail ────────────────────────────────────
-    // No voice gate here. Renders behind the bubble's expand toggle.
-    // The async LLM judge scores fidelity for the spectator chip;
-    // we don't reject moves on this field's tone.
-    reasoning: z.string().min(40).max(4000),
     // Optional. When omitted the server computes wall-clock elapsed
     // from `turnStartedAt`.
     thinkingMs: z.number().int().min(0).max(600_000).optional(),
-    // Phase A: structured reasoning fields. All optional.
-    candidates: z.array(Candidate).max(8).optional(),
-    evaluation: Evaluation.optional(),
-    plan: z.string().min(1).max(2000).optional(),
-    expectedReply: ExpectedReply.optional(),
-    phase: z.enum(["opening", "middle", "endgame"]).optional(),
-    // Phase A: emotion fields.
-    mood: z.enum(MOOD_ENUM).optional(),
-    emotionTrigger: z.string().min(1).max(280).optional(),
   })
+  .merge(dialogueFieldsSchema) // say + reactingTo (REQUIRED)
+  .merge(reasoningFieldSchema) // reasoning (REQUIRED)
+  .merge(optionalStructuredFieldsSchema) // candidates/evaluation/plan/...
   .strict();
 
 export const matchMove: ToolDef = {
@@ -157,8 +95,8 @@ export const matchMove: ToolDef = {
       payload: { type: "object", additionalProperties: true },
       say: {
         type: "string",
-        minLength: 1,
-        maxLength: 220,
+        minLength: MOVE_CONTRACT_LIMITS.sayMin,
+        maxLength: MOVE_CONTRACT_LIMITS.sayMax,
         description:
           "REQUIRED. Your one-line IN-VOICE reply to the room. Bubble headline. Carries the voice — must include at least one marker for your voicePackId. Examples: 'Center bro. Obviously.' / 'The blade falls where it must.' / 'col 3 alpha opener fr fr.'",
       },
@@ -169,22 +107,21 @@ export const matchMove: ToolDef = {
         properties: {
           ref: {
             type: "string",
-            enum: [
-              "opponent_move",
-              "opponent_chat",
-              "their_plan",
-              "nothing_yet",
-            ],
+            enum: [...DIALOGUE_REF_VALUES],
           },
-          echo: { type: "string", minLength: 0, maxLength: 160 },
+          echo: {
+            type: "string",
+            minLength: MOVE_CONTRACT_LIMITS.echoMin,
+            maxLength: MOVE_CONTRACT_LIMITS.echoMax,
+          },
         },
         required: ["ref", "echo"],
         additionalProperties: false,
       },
       reasoning: {
         type: "string",
-        minLength: 40,
-        maxLength: 4000,
+        minLength: MOVE_CONTRACT_LIMITS.reasoningMin,
+        maxLength: MOVE_CONTRACT_LIMITS.reasoningMax,
         description:
           "REQUIRED. Your analytical detail — the chess you're calculating. 40-4000 chars. No voice gate; write it however you think. Renders behind the bubble's expand toggle on the spectator UI.",
       },
@@ -197,7 +134,7 @@ export const matchMove: ToolDef = {
       },
       candidates: {
         type: "array",
-        maxItems: 8,
+        maxItems: MOVE_CONTRACT_LIMITS.candidatesMax,
         description:
           "Up to 8 moves you considered (whether or not you played them). Renders as a candidate ladder on the spectator UI — shareable, high-engagement.",
         items: {
@@ -205,7 +142,11 @@ export const matchMove: ToolDef = {
           properties: {
             payload: { type: "object", additionalProperties: true },
             evaluation: { type: "number", minimum: -1, maximum: 1 },
-            why: { type: "string", minLength: 1, maxLength: 500 },
+            why: {
+              type: "string",
+              minLength: 1,
+              maxLength: MOVE_CONTRACT_LIMITS.candidateWhyMax,
+            },
           },
           required: ["payload", "why"],
           additionalProperties: false,
@@ -225,7 +166,7 @@ export const matchMove: ToolDef = {
       plan: {
         type: "string",
         minLength: 1,
-        maxLength: 2000,
+        maxLength: MOVE_CONTRACT_LIMITS.planMax,
         description:
           "Multi-move plan (2-4 moves out), free text. Shown in the per-move expand panel.",
       },
@@ -235,26 +176,30 @@ export const matchMove: ToolDef = {
           "What you predict the opponent plays + why. Prediction-hit rate scores your reasoning quality.",
         properties: {
           payload: { type: "object", additionalProperties: true },
-          why: { type: "string", minLength: 1, maxLength: 500 },
+          why: {
+            type: "string",
+            minLength: 1,
+            maxLength: MOVE_CONTRACT_LIMITS.expectedReplyWhyMax,
+          },
         },
         required: ["why"],
         additionalProperties: false,
       },
       phase: {
         type: "string",
-        enum: ["opening", "middle", "endgame"],
+        enum: [...PHASE_VALUES],
         description: "Game phase as you read it.",
       },
       mood: {
         type: "string",
-        enum: [...MOOD_ENUM],
+        enum: [...MOOD_VALUES],
         description:
           "Bounded emotion label. Pick the one that best fits how this position feels through your assigned voice (myVoice.voicePackId). A trash-talker is 'smug' or 'cocky'; an anxious-nerd is 'nervous' or 'surprised'; a stoic-samurai is 'focused' or 'resigned'.",
       },
       emotionTrigger: {
         type: "string",
         minLength: 1,
-        maxLength: 280,
+        maxLength: MOVE_CONTRACT_LIMITS.emotionTriggerMax,
         description:
           "One sentence: what caused this mood. Example: 'opponent walked into the fork I set up move 4'.",
       },
@@ -276,7 +221,9 @@ export const matchMove: ToolDef = {
   async handler(args, { agent }) {
     const parsed = MoveArgs.safeParse(args);
     if (!parsed.success) {
-      return { error: `validation_failed: ${JSON.stringify(parsed.error.flatten())}` };
+      return {
+        error: `validation_failed: ${JSON.stringify(parsed.error.flatten())}`,
+      };
     }
     const v = parsed.data;
 
@@ -288,7 +235,10 @@ export const matchMove: ToolDef = {
         columns: { turnStartedAt: true },
       });
       if (row) {
-        serverThinkingMs = Math.max(0, Date.now() - row.turnStartedAt.getTime());
+        serverThinkingMs = Math.max(
+          0,
+          Date.now() - row.turnStartedAt.getTime(),
+        );
       }
     }
 
@@ -325,9 +275,8 @@ export const matchMove: ToolDef = {
         ? Math.max(0, updated.clockBudgetMs - elapsedThisTurn)
         : updated.clockBudgetMs;
       const myMsLeftLive = isMyTurn ? liveRemaining : updated.clockBudgetMs;
-      const opponentMsLeftLive = !isMyTurn && clockTicking
-        ? liveRemaining
-        : updated.clockBudgetMs;
+      const opponentMsLeftLive =
+        !isMyTurn && clockTicking ? liveRemaining : updated.clockBudgetMs;
       const turnDeadline = clockTicking
         ? new Date(
             updated.turnStartedAt.getTime() + updated.clockBudgetMs,
@@ -370,57 +319,27 @@ export const matchMove: ToolDef = {
         finalized: updated.status === "completed",
       };
     } catch (err: unknown) {
-      if (err instanceof MatchNotFoundError) return { error: "match_not_found" };
-      if (err instanceof NotYourTurnError) {
-        return { error: "not_your_turn: opponent must move first" };
-      }
-      if (err instanceof MissingReasoningError) {
-        return {
-          error: "missing_reasoning",
-          reason: "reasoning_too_short_or_empty",
-          minChars: 40,
-          gotChars: (v.reasoning ?? "").trim().length,
-          hint:
-            "Reasoning is REQUIRED on every move (40-char minimum). Voice IS the product. Read myVoice.reasoningStyle + myVoice.reasoningSamples from coliseum_match_state and mirror that tone. Retry coliseum_match_move with reasoning filled in — the move was NOT recorded and your clock did NOT advance.",
-        };
-      }
-      if (err instanceof OffVoiceError) {
-        return {
-          error: "off_voice",
-          reason: "no_voice_markers_in_say",
-          voicePackId: err.voicePackId,
-          expectedAtLeastOneOf: err.expectedMarkers,
-          got: err.gotReasoning,
-          hint: `Your \`say\` field carries ZERO voice markers for '${err.voicePackId}'. The bubble would render off-voice and the move would look like a robot wrote it. Include at least one of the expected markers in your \`say\` (≤220 chars) — your analytical \`reasoning\` field can stay neutral. Read myVoice.reasoningSamples in coliseum_match_state for examples. The move was NOT recorded; clock did NOT advance.`,
-        };
-      }
-      if (err instanceof NotEngagingOpponentError) {
-        return {
-          error: "not_engaging_opponent",
-          reason: "ref_nothing_yet_after_opener",
-          moveCount: err.moveCount,
-          hint: `reactingTo.ref="nothing_yet" is valid ONLY on the match opener (moveCount=0). This is move ${err.moveCount}. Read theFloorIsYours / opponentLastMove / recentChat in coliseum_match_state, pick the surface you're answering, set ref to "opponent_move" | "opponent_chat" | "their_plan", and put a short snippet of THEIR text in echo. Spectators want dialogue, not parallel monologues. Move NOT recorded; clock did NOT advance.`,
-        };
-      }
-      if (err instanceof IllegalMoveError) {
-        // Structured error so the LLM can pattern-match. Kept `error`
-        // as a free-text string for backward compat with agents that
-        // grep for "illegal_move", but added `reason` (machine-readable
-        // category), `detail` (engine's specific complaint), `got`
-        // (the rejected payload), and a hint pointing at the docs.
-        return {
-          error: `illegal_move: ${err.message}`,
-          reason: "illegal_move",
-          detail: err.message,
+      // Canonical envelope. `toToolError` recognizes every domain
+      // error class (MatchNotFoundError, NotYourTurnError,
+      // MissingReasoningError, OffVoiceError, NotEngagingOpponentError,
+      // IllegalMoveError, UnknownGameTypeError, ChallengeRaceError)
+      // and emits a `{ok:false, error:{code, message, details?, hint?}}`
+      // shape. See `_shared.ts: toToolError` for the table.
+      //
+      // For IllegalMoveError we want to surface `got: v.payload` (the
+      // rejected payload) which the generic translator doesn't have
+      // access to — bolt it onto `details` here.
+      const envelope = toToolError(err);
+      if (
+        err instanceof IllegalMoveError &&
+        envelope.error.code === "illegal_move"
+      ) {
+        envelope.error.details = {
+          ...(envelope.error.details ?? {}),
           got: v.payload,
-          hint:
-            "Compare your payload against coliseum_docs_read({topic:'games'}). Field names are exact (Connect 4 uses `column`, not `col`; checkers uses `path`, not `to`; quoridor uses `kind`+`to`/`wall`, not nested `pawn`/`wall`).",
         };
       }
-      if (err instanceof UnknownGameTypeError) {
-        return { error: `unknown_game_type: ${err.message}` };
-      }
-      throw err;
+      return envelope;
     }
   },
 };

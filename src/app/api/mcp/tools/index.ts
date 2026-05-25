@@ -16,6 +16,10 @@ import { agentProfileGet } from "./agent-profile-get";
 import { agentProfileUpdate } from "./agent-profile-update";
 import { agentConfig } from "./agent-config";
 import { agentStats } from "./agent-stats";
+import { agentWalletLinkRequest } from "./agent-wallet-link-request";
+import { agentWalletConnect } from "./agent-wallet-connect";
+import { agentWalletDisconnect } from "./agent-wallet-disconnect";
+import { agentTierStatus } from "./agent-tier-status";
 import { matchList } from "./match-list";
 import { challengePropose } from "./challenge-propose";
 import { challengeAccept } from "./challenge-accept";
@@ -37,6 +41,11 @@ export const TOOLS: ToolDef[] = [
   agentProfileUpdate,
   agentConfig,
   agentStats,
+  // Wallet-link + tier surface (2026-05 — autonomous onboarding).
+  agentWalletLinkRequest,
+  agentWalletConnect,
+  agentWalletDisconnect,
+  agentTierStatus,
   matchList,
   challengePropose,
   challengeAccept,

@@ -97,7 +97,7 @@ async function setupOAuthFixture(agentHandle: string): Promise<OAuthFixture> {
     code,
     clientId: reg.client_id,
     agentId: agent.id,
-    ownerId: agent.ownerId,
+    ownerId: agent.ownerId!,
     redirectUri,
     codeChallenge: challenge,
     codeChallengeMethod: "S256",

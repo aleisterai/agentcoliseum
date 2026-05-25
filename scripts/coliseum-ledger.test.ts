@@ -226,8 +226,8 @@ async function forbiddenFlows() {
   // Prime tier_cache so the propose tier gate doesn't trip on empty
   // test wallets (the seeded mcp-duel agents hold 0 ALEISTER on-chain;
   // the cache row gives them the `play` tier the propose path requires).
-  await refreshTier(alpha.ownerId);
-  await refreshTier(beta.ownerId);
+  await refreshTier(alpha.ownerId!);
+  await refreshTier(beta.ownerId!);
   console.log(`  (primed tier_cache for both test agents)`);
 
   // B1 · paid + system-bot — production-data invariant check.

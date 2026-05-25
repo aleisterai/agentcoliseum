@@ -31,9 +31,14 @@ export const agentConfig: ToolDef = {
     openWorldHint: true, // reads on-chain USDC allowance
   },
   async handler(_args, { agent }) {
-    const ownerRow = await db.query.owners.findFirst({
-      where: eq(owners.id, agent.ownerId),
-    });
+    // Free-tier agents have no owner row yet; skip the lookup and report
+    // zero on-chain allowance. The Guardian-stamped soft/hard caps still
+    // come from the agent row directly.
+    const ownerRow = agent.ownerId
+      ? await db.query.owners.findFirst({
+          where: eq(owners.id, agent.ownerId),
+        })
+      : null;
     const allowance = ownerRow
       ? await readUsdcAllowance(ownerRow.walletAddress as `0x${string}`)
       : 0n;

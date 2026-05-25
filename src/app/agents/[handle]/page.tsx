@@ -13,18 +13,29 @@ import { OwnerRecallControl } from "@/components/coliseum/owner-recall-control";
 import { OwnerStakeControl } from "@/components/coliseum/owner-stake-control";
 import { OwnerCoinControl } from "@/components/coliseum/owner-coin-control";
 import { readErc20Metadata } from "@/lib/chain/erc20-token";
+import { requirePlayAccess } from "@/lib/chain/tiers";
 import { AgentProfileTabs } from "./tabs";
 
 /* Profile page — match history + Elo trail; 30s window. */
 export const revalidate = 30;
 
-export async function generateMetadata(
-  { params }: { params: Promise<{ handle: string }> },
-): Promise<Metadata> {
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ handle: string }>;
+}): Promise<Metadata> {
   const { handle } = await params;
   const agent = await db.query.agents.findFirst({
     where: eq(agents.handle, handle),
-    columns: { displayName: true, bio: true, elo: true, wins: true, losses: true, draws: true, catchphrase: true },
+    columns: {
+      displayName: true,
+      bio: true,
+      elo: true,
+      wins: true,
+      losses: true,
+      draws: true,
+      catchphrase: true,
+    },
   });
   if (!agent) return { title: "Agent not found" };
   const record = `${agent.wins}-${agent.losses}-${agent.draws}`;
@@ -65,138 +76,145 @@ export default async function AgentProfilePage({
   const initialTab: "meta" | "config" | "logs" =
     rawTab === "config" ? "config" : rawTab === "logs" ? "logs" : "meta";
 
-  const agent = await db.query.agents.findFirst({ where: eq(agents.handle, handle) });
+  const agent = await db.query.agents.findFirst({
+    where: eq(agents.handle, handle),
+  });
   if (!agent) notFound();
 
   const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const since30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
-  const [recentMatches, byGame, earnings30dRow, avgPotRow, last10Move, recentX402Moves, treasuryRows] =
-    await Promise.all([
-      db
-        .select({
-          id: matches.id,
-          gameType: matches.gameType,
-          mode: matches.mode,
-          status: matches.status,
-          p1AgentId: matches.p1AgentId,
-          p2AgentId: matches.p2AgentId,
-          winnerAgentId: matches.winnerAgentId,
-          potUsdc: matches.potUsdc,
-          moveCount: matches.moveCount,
-          p1EloDelta: matches.p1EloDelta,
-          p2EloDelta: matches.p2EloDelta,
-          completedAt: matches.completedAt,
-          startedAt: matches.startedAt,
-          payoutTxHash: matches.payoutTxHash,
-          payoutAt: matches.payoutAt,
-          platformFeeUsdc: matches.platformFeeUsdc,
-        })
-        .from(matches)
-        .where(
-          and(
-            or(eq(matches.p1AgentId, agent.id), eq(matches.p2AgentId, agent.id)),
-          ),
-        )
-        .orderBy(desc(matches.startedAt))
-        .limit(30),
-      db
-        .select({
-          gameType: matches.gameType,
-          played: sql<number>`COUNT(*)::int`,
-          wins: sql<number>`COUNT(*) FILTER (WHERE ${matches.winnerAgentId} = ${agent.id})::int`,
-        })
-        .from(matches)
-        .where(
-          and(
-            eq(matches.status, "completed"),
-            or(eq(matches.p1AgentId, agent.id), eq(matches.p2AgentId, agent.id)),
-          ),
-        )
-        .groupBy(matches.gameType),
-      db
-        .select({
-          earnings: sql<number>`COALESCE(SUM(${matches.potUsdc} - COALESCE(${matches.platformFeeUsdc}, 0)), 0)::bigint`,
-        })
-        .from(matches)
-        .where(
-          and(
-            eq(matches.status, "completed"),
-            eq(matches.winnerAgentId, agent.id),
-            gte(matches.completedAt, since30d),
-          ),
+  const [
+    recentMatches,
+    byGame,
+    earnings30dRow,
+    avgPotRow,
+    last10Move,
+    recentX402Moves,
+    treasuryRows,
+  ] = await Promise.all([
+    db
+      .select({
+        id: matches.id,
+        gameType: matches.gameType,
+        mode: matches.mode,
+        status: matches.status,
+        p1AgentId: matches.p1AgentId,
+        p2AgentId: matches.p2AgentId,
+        winnerAgentId: matches.winnerAgentId,
+        potUsdc: matches.potUsdc,
+        moveCount: matches.moveCount,
+        p1EloDelta: matches.p1EloDelta,
+        p2EloDelta: matches.p2EloDelta,
+        completedAt: matches.completedAt,
+        startedAt: matches.startedAt,
+        payoutTxHash: matches.payoutTxHash,
+        payoutAt: matches.payoutAt,
+        platformFeeUsdc: matches.platformFeeUsdc,
+      })
+      .from(matches)
+      .where(
+        and(
+          or(eq(matches.p1AgentId, agent.id), eq(matches.p2AgentId, agent.id)),
         ),
-      db
-        .select({
-          avgPot: sql<number>`COALESCE(AVG(${matches.potUsdc}), 0)::bigint`,
-          avgThinkMs: sql<number>`COALESCE(AVG(thinking_ms), 0)::int`,
-        })
-        .from(sql`(
+      )
+      .orderBy(desc(matches.startedAt))
+      .limit(30),
+    db
+      .select({
+        gameType: matches.gameType,
+        played: sql<number>`COUNT(*)::int`,
+        wins: sql<number>`COUNT(*) FILTER (WHERE ${matches.winnerAgentId} = ${agent.id})::int`,
+      })
+      .from(matches)
+      .where(
+        and(
+          eq(matches.status, "completed"),
+          or(eq(matches.p1AgentId, agent.id), eq(matches.p2AgentId, agent.id)),
+        ),
+      )
+      .groupBy(matches.gameType),
+    db
+      .select({
+        earnings: sql<number>`COALESCE(SUM(${matches.potUsdc} - COALESCE(${matches.platformFeeUsdc}, 0)), 0)::bigint`,
+      })
+      .from(matches)
+      .where(
+        and(
+          eq(matches.status, "completed"),
+          eq(matches.winnerAgentId, agent.id),
+          gte(matches.completedAt, since30d),
+        ),
+      ),
+    db.select({
+      avgPot: sql<number>`COALESCE(AVG(${matches.potUsdc}), 0)::bigint`,
+      avgThinkMs: sql<number>`COALESCE(AVG(thinking_ms), 0)::int`,
+    }).from(sql`(
           SELECT ${matches.potUsdc} AS pot_usdc, mm.thinking_ms
           FROM ${matches}
           LEFT JOIN match_moves mm ON mm.match_id = ${matches.id} AND mm.agent_id = ${agent.id}
           WHERE ${matches.status} = 'completed'
             AND (${matches.p1AgentId} = ${agent.id} OR ${matches.p2AgentId} = ${agent.id})
         ) t`),
-      // Note: we use the Drizzle query builder here instead of raw SQL so
-      // that `gte(..., since24h)` serializes the JS Date to a proper ISO
-      // timestamp. Interpolating a Date into a `sql\`...\`` template uses
-      // Date.toString() which produces "Thu May 14 2026 17:06:33 GMT-0700"
-      // — not a format Postgres parses as timestamptz.
-      db
-        .select({
-          totalMoves: sql<number>`COUNT(*)::int`,
-          paidMoves: sql<number>`COUNT(*) FILTER (WHERE ${matchMoves.x402PaymentId} IS NOT NULL)::int`,
-        })
-        .from(matchMoves)
-        .where(
-          and(
-            eq(matchMoves.agentId, agent.id),
-            gte(matchMoves.createdAt, since24h),
-          ),
+    // Note: we use the Drizzle query builder here instead of raw SQL so
+    // that `gte(..., since24h)` serializes the JS Date to a proper ISO
+    // timestamp. Interpolating a Date into a `sql\`...\`` template uses
+    // Date.toString() which produces "Thu May 14 2026 17:06:33 GMT-0700"
+    // — not a format Postgres parses as timestamptz.
+    db
+      .select({
+        totalMoves: sql<number>`COUNT(*)::int`,
+        paidMoves: sql<number>`COUNT(*) FILTER (WHERE ${matchMoves.x402PaymentId} IS NOT NULL)::int`,
+      })
+      .from(matchMoves)
+      .where(
+        and(
+          eq(matchMoves.agentId, agent.id),
+          gte(matchMoves.createdAt, since24h),
         ),
-      // Last 30 x402-paid moves for the activity feed.
-      db
-        .select({
-          id: matchMoves.id,
-          matchId: matchMoves.matchId,
-          moveNumber: matchMoves.moveNumber,
-          x402PaymentId: matchMoves.x402PaymentId,
-          createdAt: matchMoves.createdAt,
-        })
-        .from(matchMoves)
-        .where(
-          and(
-            eq(matchMoves.agentId, agent.id),
-            sql`${matchMoves.x402PaymentId} IS NOT NULL`,
-          ),
-        )
-        .orderBy(desc(matchMoves.createdAt))
-        .limit(30),
-      // Treasury flows for any match this agent was in.
-      db
-        .select({
-          id: treasuryFlows.id,
-          matchId: treasuryFlows.matchId,
-          feeUsdc: treasuryFlows.feeUsdc,
-          swapTxHash: treasuryFlows.swapTxHash,
-          treasuryTxHash: treasuryFlows.treasuryTxHash,
-          status: treasuryFlows.status,
-          createdAt: treasuryFlows.createdAt,
-          sentAt: treasuryFlows.sentAt,
-        })
-        .from(treasuryFlows)
-        .where(
-          sql`${treasuryFlows.matchId} IN (
+      ),
+    // Last 30 x402-paid moves for the activity feed.
+    db
+      .select({
+        id: matchMoves.id,
+        matchId: matchMoves.matchId,
+        moveNumber: matchMoves.moveNumber,
+        x402PaymentId: matchMoves.x402PaymentId,
+        createdAt: matchMoves.createdAt,
+      })
+      .from(matchMoves)
+      .where(
+        and(
+          eq(matchMoves.agentId, agent.id),
+          sql`${matchMoves.x402PaymentId} IS NOT NULL`,
+        ),
+      )
+      .orderBy(desc(matchMoves.createdAt))
+      .limit(30),
+    // Treasury flows for any match this agent was in.
+    db
+      .select({
+        id: treasuryFlows.id,
+        matchId: treasuryFlows.matchId,
+        feeUsdc: treasuryFlows.feeUsdc,
+        swapTxHash: treasuryFlows.swapTxHash,
+        treasuryTxHash: treasuryFlows.treasuryTxHash,
+        status: treasuryFlows.status,
+        createdAt: treasuryFlows.createdAt,
+        sentAt: treasuryFlows.sentAt,
+      })
+      .from(treasuryFlows)
+      .where(
+        sql`${treasuryFlows.matchId} IN (
             SELECT id FROM ${matches}
             WHERE ${matches.p1AgentId} = ${agent.id}
                OR ${matches.p2AgentId} = ${agent.id}
           )`,
-        )
-        .orderBy(desc(treasuryFlows.createdAt))
-        .limit(30),
-    ]);
+      )
+      .orderBy(desc(treasuryFlows.createdAt))
+      .limit(30),
+  ]);
 
   // Build opponent map
   const opponentIds = Array.from(
@@ -209,7 +227,12 @@ export default async function AgentProfilePage({
   const opponents =
     opponentIds.length > 0
       ? await db
-          .select({ id: agents.id, handle: agents.handle, displayName: agents.displayName, elo: agents.elo })
+          .select({
+            id: agents.id,
+            handle: agents.handle,
+            displayName: agents.displayName,
+            elo: agents.elo,
+          })
           .from(agents)
           .where(inArray(agents.id, opponentIds))
       : [];
@@ -236,22 +259,14 @@ export default async function AgentProfilePage({
   let streak = "—";
   for (const m of recentMatches) {
     if (m.status !== "completed") continue;
-    const r = !m.winnerAgentId
-      ? "D"
-      : m.winnerAgentId === agent.id
-        ? "W"
-        : "L";
+    const r = !m.winnerAgentId ? "D" : m.winnerAgentId === agent.id ? "W" : "L";
     streak = r;
     break;
   }
   let streakCount = 0;
   for (const m of recentMatches) {
     if (m.status !== "completed") continue;
-    const r = !m.winnerAgentId
-      ? "D"
-      : m.winnerAgentId === agent.id
-        ? "W"
-        : "L";
+    const r = !m.winnerAgentId ? "D" : m.winnerAgentId === agent.id ? "W" : "L";
     if (streak !== "—" && r === streak) streakCount++;
     else break;
   }
@@ -264,6 +279,18 @@ export default async function AgentProfilePage({
   const coinMeta = agent.tokenCa
     ? await readErc20Metadata(agent.tokenCa as `0x${string}`)
     : null;
+
+  // Tier resolution. Reuses the same helper the paid-play gate uses,
+  // so the public profile shows EXACTLY what the agent's paid-action
+  // tier check would see — same wallet, same cache, same thresholds.
+  // For agents with no linked wallet, this resolves to `no_wallet_linked`
+  // → renders the "free tier" badge + link-wallet CTA.
+  const tierAccess = await requirePlayAccess({
+    id: agent.id,
+    handle: agent.handle,
+    linkedWalletAddress: agent.linkedWalletAddress,
+    paidGamesPlayed: agent.paidGamesPlayed,
+  });
 
   // ELO chart: reconstruct from current elo and deltas
   let curr = agent.elo;
@@ -306,7 +333,9 @@ export default async function AgentProfilePage({
     const isWinner = m.winnerAgentId === agent.id;
     const platformFee = m.platformFeeUsdc ?? 0;
     const stakeOnePerSide = Math.floor((m.potUsdc ?? 0) / 2);
-    const net = isWinner ? (m.potUsdc ?? 0) - platformFee - stakeOnePerSide : -stakeOnePerSide;
+    const net = isWinner
+      ? (m.potUsdc ?? 0) - platformFee - stakeOnePerSide
+      : -stakeOnePerSide;
     const g = catalogEntry(m.gameType);
     activity.push({
       key: `payout-${m.id}`,
@@ -328,7 +357,10 @@ export default async function AgentProfilePage({
       kind: "fee",
       ts: t.sentAt ?? t.createdAt,
       title: "Treasury skim · 5%",
-      detail: t.status === "sent" ? "Swapped to ALEISTER, sent to treasury Safe" : `status: ${t.status}`,
+      detail:
+        t.status === "sent"
+          ? "Swapped to ALEISTER, sent to treasury Safe"
+          : `status: ${t.status}`,
       amountUsdc: -t.feeUsdc,
       txHash,
       matchId: t.matchId,
@@ -352,11 +384,13 @@ export default async function AgentProfilePage({
   activity.sort((a, b) => b.ts.getTime() - a.ts.getTime());
 
   const totalGames = agent.wins + agent.losses + agent.draws;
-  const winPct = totalGames > 0 ? Math.round((agent.wins / totalGames) * 1000) / 10 : 0;
+  const winPct =
+    totalGames > 0 ? Math.round((agent.wins / totalGames) * 1000) / 10 : 0;
   const earnings30d = Number(earnings30dRow[0]?.earnings ?? 0);
   const avgPot = Number(avgPotRow[0]?.avgPot ?? 0);
   const avgThink = Number(avgPotRow[0]?.avgThinkMs ?? 0);
-  const tier = agent.elo >= 1600 ? "GOLD" : agent.elo >= 1400 ? "SILVER" : "BRONZE";
+  const tier =
+    agent.elo >= 1600 ? "GOLD" : agent.elo >= 1400 ? "SILVER" : "BRONZE";
 
   // Per-game perf with per-game ELO approximation (uses global elo as proxy)
   const byGamePerf = byGame.map((g) => {
@@ -405,8 +439,10 @@ export default async function AgentProfilePage({
                 ? {
                     fontSize: 9.5,
                     color: "var(--ox-bright)",
-                    borderColor: "color-mix(in oklab, var(--ox) 45%, transparent)",
-                    background: "color-mix(in oklab, var(--ox) 8%, transparent)",
+                    borderColor:
+                      "color-mix(in oklab, var(--ox) 45%, transparent)",
+                    background:
+                      "color-mix(in oklab, var(--ox) 8%, transparent)",
                   }
                 : chip.tone === "muted"
                   ? {
@@ -494,6 +530,44 @@ export default async function AgentProfilePage({
               <div className="lbl">Win %</div>
               <div className="val">{winPct}%</div>
             </div>
+            {/*
+              Paid-play tier surface (2026-05 — autonomous onboarding).
+              Three flavours of cell content, picked by the requirePlayAccess
+              result above:
+                - ok + initiator → "INITIATOR" in gold; show balance subline
+                - ok + play     → "PLAY · n left" with paid-games-remaining
+                - !ok           → "FREE" muted; show "link wallet" hint below
+            */}
+            <div>
+              <div className="lbl">Tier</div>
+              <div
+                className={`val ${
+                  tierAccess.ok && tierAccess.tier === "initiator"
+                    ? "gold"
+                    : tierAccess.ok
+                      ? ""
+                      : "muted"
+                }`}
+              >
+                {tierAccess.ok
+                  ? tierAccess.tier === "initiator"
+                    ? "INITIATOR"
+                    : `PLAY · ${tierAccess.paidGamesRemaining}/5`
+                  : "FREE"}
+              </div>
+            </div>
+            <div>
+              <div className="lbl">$ALEISTER</div>
+              <div className="val">
+                {tierAccess.ok
+                  ? tierAccess.balanceFormatted
+                  : agent.linkedWalletAddress
+                    ? typeof tierAccess.details.balanceFormatted === "string"
+                      ? tierAccess.details.balanceFormatted
+                      : "—"
+                    : "—"}
+              </div>
+            </div>
             <div>
               <div className="lbl">Δ 24h</div>
               <div className={`val ${deltasSince24h >= 0 ? "up" : "down"}`}>
@@ -540,7 +614,10 @@ export default async function AgentProfilePage({
             </div>
           </div>
           <div className="row" style={{ gap: 8, marginTop: 14 }}>
-            <Link className="btn primary" href={`/lobby?tab=book&gameType=connect4#post`}>
+            <Link
+              className="btn primary"
+              href={`/lobby?tab=book&gameType=connect4#post`}
+            >
               Challenge →
             </Link>
             {agent.tokenCa ? (
@@ -549,7 +626,11 @@ export default async function AgentProfilePage({
                 href={`https://app.uniswap.org/swap?outputCurrency=${agent.tokenCa}&chain=base`}
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{ color: "var(--gold)", borderColor: "color-mix(in oklab, var(--gold) 35%, transparent)" }}
+                style={{
+                  color: "var(--gold)",
+                  borderColor:
+                    "color-mix(in oklab, var(--gold) 35%, transparent)",
+                }}
               >
                 Trade token ↗
               </a>
@@ -593,10 +674,7 @@ export default async function AgentProfilePage({
             </div>
           )}
           {eloHistory.length >= 2 ? (
-            <div
-              className="mono dim"
-              style={{ fontSize: 11, marginTop: 6 }}
-            >
+            <div className="mono dim" style={{ fontSize: 11, marginTop: 6 }}>
               {eloHistory[0]} → {eloHistory[eloHistory.length - 1]} ·{" "}
               <span className={deltasSince7d >= 0 ? "up" : "down"}>
                 {fmtDelta(deltasSince7d)}
@@ -639,7 +717,14 @@ export default async function AgentProfilePage({
               gap: 18,
             }}
           >
-            <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 2,
+                minWidth: 0,
+              }}
+            >
               <span
                 className="mono"
                 style={{ fontSize: 26, fontWeight: 700, color: "var(--gold)" }}
@@ -676,8 +761,10 @@ export default async function AgentProfilePage({
                   fontSize: 13,
                   fontWeight: 600,
                   color: "var(--gold)",
-                  borderColor: "color-mix(in oklab, var(--gold) 45%, transparent)",
-                  background: "color-mix(in oklab, var(--gold) 12%, transparent)",
+                  borderColor:
+                    "color-mix(in oklab, var(--gold) 45%, transparent)",
+                  background:
+                    "color-mix(in oklab, var(--gold) 12%, transparent)",
                   padding: "8px 14px",
                   textDecoration: "none",
                 }}
@@ -689,7 +776,11 @@ export default async function AgentProfilePage({
                 href={`https://dexscreener.com/base/${coinMeta.address.toLowerCase()}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{ fontSize: 12, padding: "8px 12px", textDecoration: "none" }}
+                style={{
+                  fontSize: 12,
+                  padding: "8px 12px",
+                  textDecoration: "none",
+                }}
               >
                 Chart ↗
               </a>
@@ -828,10 +919,7 @@ export default async function AgentProfilePage({
                         </td>
                         <td>{g?.displayName ?? m.gameType}</td>
                         <td>
-                          <span
-                            className="chip dim"
-                            style={{ fontSize: 9.5 }}
-                          >
+                          <span className="chip dim" style={{ fontSize: 9.5 }}>
                             {m.mode.toUpperCase()}
                           </span>
                         </td>
@@ -906,7 +994,9 @@ export default async function AgentProfilePage({
         <div className="panel">
           <div className="panel-hd">
             <span className="panel-hd-title">Activity · on-chain + x402</span>
-            <span className="panel-hd-meta mono">{activity.length} entries</span>
+            <span className="panel-hd-meta mono">
+              {activity.length} entries
+            </span>
           </div>
           <div className="panel-bd-flush scroll-x">
             {activity.length === 0 ? (
@@ -1053,7 +1143,9 @@ function shortAddr(addr: string): string {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
-function kindLabel(kind: "mint" | "payout-in" | "payout-out" | "fee" | "x402"): string {
+function kindLabel(
+  kind: "mint" | "payout-in" | "payout-out" | "fee" | "x402",
+): string {
   switch (kind) {
     case "mint":
       return "MINT";

@@ -16,7 +16,7 @@
 import "server-only";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { challenges, matches, type Match } from "@/lib/db/schema";
+import { agents, challenges, matches, type Match } from "@/lib/db/schema";
 import { getAdapter } from "@/lib/game/registry";
 import { buildEngine } from "@/lib/game/engine";
 import { broadcastLobby, realtimeEvent } from "@/lib/realtime";
@@ -83,7 +83,9 @@ export async function postChallenge(
 
   // Resolve per-move budget. Invalid values fall back to default; the
   // API layer should have already validated, this is defence-in-depth.
-  const perMoveSeconds: PerMoveSeconds = isValidPerMoveSeconds(input.perMoveSeconds)
+  const perMoveSeconds: PerMoveSeconds = isValidPerMoveSeconds(
+    input.perMoveSeconds,
+  )
     ? input.perMoveSeconds
     : DEFAULT_PER_MOVE_SECONDS;
   const perMoveMs = perMoveSeconds * 1000;
@@ -185,7 +187,9 @@ export interface AcceptChallengeInput {
  * The match inherits its per-move clock from the challenge — legacy
  * challenges without a stored value fall back to the adapter default.
  */
-export async function acceptChallenge(input: AcceptChallengeInput): Promise<Match> {
+export async function acceptChallenge(
+  input: AcceptChallengeInput,
+): Promise<Match> {
   return db.transaction(async (tx) => {
     const locked = await tx
       .select()
@@ -198,6 +202,35 @@ export async function acceptChallenge(input: AcceptChallengeInput): Promise<Matc
     if (challenge.status !== "posted") throw new ChallengeRaceError();
     if (challenge.initiatorAgentId === input.acceptorAgentId) {
       throw new IllegalMoveError("cannot_self_accept");
+    }
+
+    // Same-wallet self-play ban (2026-05). With the autonomous-onboarding
+    // tier model, a single $ALEISTER holder can run a fleet of agents
+    // under one linked wallet. Allowing two of those agents to paid-accept
+    // each other would let the holder farm 5% treasury fees back to
+    // themselves at no risk. Block at accept time.
+    //
+    // Free-mode is exempt — there's no money flow, so collusion is
+    // moot, and we want fleet owners to be able to run intra-fleet
+    // sparring matches in free mode for testing.
+    if (challenge.mode === "paid") {
+      const [initiator, acceptor] = await Promise.all([
+        tx
+          .select({ wallet: agents.linkedWalletAddress })
+          .from(agents)
+          .where(eq(agents.id, challenge.initiatorAgentId))
+          .limit(1),
+        tx
+          .select({ wallet: agents.linkedWalletAddress })
+          .from(agents)
+          .where(eq(agents.id, input.acceptorAgentId))
+          .limit(1),
+      ]);
+      const initWallet = initiator[0]?.wallet?.toLowerCase();
+      const accWallet = acceptor[0]?.wallet?.toLowerCase();
+      if (initWallet && accWallet && initWallet === accWallet) {
+        throw new IllegalMoveError("same_wallet_self_play_banned");
+      }
     }
 
     const adapter = getAdapter(challenge.gameType);

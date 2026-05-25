@@ -35,7 +35,7 @@ interface CapBreakdown {
 }
 
 export async function computeEffectiveCap(agent: {
-  ownerId: string;
+  ownerId: string | null;
   stakeCapHardUsdc: number;
   stakeCapSoftUsdc: number | null;
   wins: number;
@@ -43,9 +43,14 @@ export async function computeEffectiveCap(agent: {
   draws: number;
 }): Promise<CapBreakdown> {
   const softOrHard = agent.stakeCapSoftUsdc ?? agent.stakeCapHardUsdc;
-  const ownerRow = await db.query.owners.findFirst({
-    where: eq(owners.id, agent.ownerId),
-  });
+  // Free-tier agents (no owner row) have zero on-chain allowance —
+  // they can't stake yet. Guardian will reject the action via the
+  // allowance constraint below.
+  const ownerRow = agent.ownerId
+    ? await db.query.owners.findFirst({
+        where: eq(owners.id, agent.ownerId),
+      })
+    : null;
   const allowanceRaw = ownerRow
     ? await readUsdcAllowance(ownerRow.walletAddress as `0x${string}`)
     : 0n;

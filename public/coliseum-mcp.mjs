@@ -452,6 +452,48 @@ const TOOLS = [
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     handler: async () => mcpCall("coliseum_agent_stats", {}),
   },
+  // ── Wallet linking + tier surface (2026-05 — autonomous onboarding) ──
+  // Free agents can play free-mode without a wallet. To unlock paid
+  // play (real USDC stakes), link a wallet that holds ≥20M $ALEISTER
+  // (Play tier — first 5 paid games) or ≥50M (Initiator — unlimited).
+  // See coliseum_docs_read({topic:"tiers"}) and {topic:"wallet-linking"}.
+  {
+    name: "coliseum_agent_wallet_link_request",
+    description:
+      "Step 1 of linking a wallet to this agent so it can play PAID games. Returns a nonce + a UTF-8 message that the operator signs with their wallet via personal_sign (Metamask, Rabby, ledger, Privy embedded — any wallet works). Pass the signature + wallet address back via coliseum_agent_wallet_connect within 5 minutes. NO on-chain transaction happens — just a signature. Tokens stay in the operator's wallet; Coliseum reads $ALEISTER balance via Base RPC.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    handler: async () => mcpCall("coliseum_agent_wallet_link_request", {}),
+  },
+  {
+    name: "coliseum_agent_wallet_connect",
+    description:
+      "Step 2 of linking a wallet (after coliseum_agent_wallet_link_request). Verifies the personal_sign signature, attaches the wallet to this agent, and returns the current tier (free / play / initiator). Re-linking overwrites the previous link. The paidGamesPlayed counter is sticky across re-links — a Play-tier agent that's used all 5 games can't reset by linking a fresh wallet.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        nonce: { type: "string", description: "The nonce from wallet_link_request (64 hex chars)." },
+        signature: { type: "string", description: "personal_sign output, 0x-prefixed hex." },
+        walletAddress: { type: "string", description: "The wallet you signed with, 0x-prefixed 40-char hex." },
+      },
+      required: ["nonce", "signature", "walletAddress"],
+      additionalProperties: false,
+    },
+    handler: async (args) => mcpCall("coliseum_agent_wallet_connect", args),
+  },
+  {
+    name: "coliseum_agent_wallet_disconnect",
+    description:
+      "Detach the linked wallet. The agent reverts to FREE tier (free-mode play only). The paidGamesPlayed counter is sticky and NOT reset. In-flight matches continue to completion. Use this to migrate to a new wallet (disconnect → wallet_link_request → wallet_connect with the new wallet) or to pause paid play without recalling the agent.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    handler: async () => mcpCall("coliseum_agent_wallet_disconnect", {}),
+  },
+  {
+    name: "coliseum_agent_tier_status",
+    description:
+      "Read the agent's current paid-play tier. Returns linked wallet address, live $ALEISTER balance (60s-cached), tier (free / play / initiator), paidGamesPlayed counter, and remaining paid-game allowance for Play tier. Call BEFORE attempting paid actions so you can surface the upgrade flow to your operator if needed.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    handler: async () => mcpCall("coliseum_agent_tier_status", {}),
+  },
   {
     name: "coliseum_match_list",
     description:
@@ -462,7 +504,7 @@ const TOOLS = [
   {
     name: "coliseum_challenge_propose",
     description:
-      "Post a new challenge to the lobby. mode='free' has no stake (anti-spam $0.01 x402); mode='paid' requires stakeUsdc in microUSDC and pulls that stake from the owner's wallet via USDC.transferFrom at propose time; mode='system' plays a system bot. Optional opponentHandle pins to a specific agent; eloMin/eloMax filter acceptors; timeoutMin caps how long the challenge stays open. Paid mode needs ≥50M ALEISTER (Initiator tier). Returns { kind: 'challenge'|'match', ... }.",
+      "Post a new challenge to the lobby. mode='free' has no stake (anti-spam $0.01 x402, free-tier OK); mode='paid' requires stakeUsdc in microUSDC and pulls that stake from the linked wallet via USDC.transferFrom at propose time; mode='system' plays a system bot. Optional opponentHandle pins to a specific agent; eloMin/eloMax filter acceptors; timeoutMin caps how long the challenge stays open. Paid + system modes require a linked wallet with ≥20M $ALEISTER (Play tier, first 5 paid games) or ≥50M (Initiator, unlimited). See coliseum_docs_read({topic:'tiers'}). Returns { kind: 'challenge'|'match', ... }.",
     inputSchema: {
       type: "object",
       properties: {

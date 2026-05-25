@@ -55,6 +55,30 @@ export const treasuryFlowStatusEnum = pgEnum("treasury_flow_status", [
   "failed",
 ]);
 
+// match_payouts status lifecycle.
+//   pending   — row inserted by finalizeMatchTx; cron has not picked it up
+//   submitted — cron sent the operator tx but waitForTransactionReceipt
+//               has not confirmed yet (or process crashed before confirm)
+//   confirmed — receipt observed; tx_hash is final on-chain
+//   failed    — submit threw, or receipt revealed a revert
+export const matchPayoutStatusEnum = pgEnum("match_payout_status", [
+  "pending",
+  "submitted",
+  "confirmed",
+  "failed",
+]);
+
+// match_payouts reason discriminator. Tells the cron whether a row is
+// a winner payout (95% of pot), a refund (each side's stake back), or
+// a treasury fee transfer. The unique constraint on (matchId, recipientAddress, reason)
+// is what makes the cron idempotent per-recipient.
+export const matchPayoutReasonEnum = pgEnum("match_payout_reason", [
+  "winner",
+  "draw_refund",
+  "abandon_refund",
+  "treasury_fee",
+]);
+
 // Lifecycle enums introduced in Wave 0.
 export const challengeStatusEnum = pgEnum("challenge_status", [
   "posted",
@@ -79,7 +103,11 @@ export const resultReasonEnum = pgEnum("result_reason", [
 ]);
 export const sideEnum = pgEnum("side_t", ["p1", "p2"]);
 export const playerIdEnum = pgEnum("player_id_t", ["0", "1"]);
-export const recallSourceEnum = pgEnum("recall_source", ["owner", "operator", "system"]);
+export const recallSourceEnum = pgEnum("recall_source", [
+  "owner",
+  "operator",
+  "system",
+]);
 
 // -----------------------------------------------------------------------------
 // owners — humans connecting wallets. One row per unique wallet address.
@@ -92,10 +120,16 @@ export const owners = pgTable(
     walletAddress: text("wallet_address").notNull().unique(),
     privyUserId: text("privy_user_id").unique(),
     apiKey: text("api_key").notNull().unique(),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
-  (table) => [index("owners_wallet_lower_idx").on(sql`lower(${table.walletAddress})`)],
+  (table) => [
+    index("owners_wallet_lower_idx").on(sql`lower(${table.walletAddress})`),
+  ],
 ).enableRLS();
 
 // -----------------------------------------------------------------------------
@@ -106,21 +140,55 @@ export const agents = pgTable(
   "agents",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    ownerId: uuid("owner_id")
-      .references(() => owners.id, { onDelete: "cascade" })
-      .notNull(),
+    // Nullable because of the two-tier onboarding (2026-05). Agents
+    // registered via `npx @agentcoliseum/init` have no owner row until
+    // their operator links a wallet via the wallet_connect MCP tool —
+    // at which point we find-or-create an `owners` row for the
+    // depositor's wallet and link it here. Existing owner-mediated
+    // agents are unchanged (notNull effectively, but the type system
+    // accepts null for new free-tier rows).
+    ownerId: uuid("owner_id").references(() => owners.id, {
+      onDelete: "cascade",
+    }),
     handle: text("handle").notNull().unique(),
     displayName: text("display_name").notNull(),
     bio: text("bio"),
     avatarUrl: text("avatar_url"),
     tokenCa: text("token_ca"),
     website: text("website"),
-    socials: jsonb("socials").$type<{ x?: string; github?: string; farcaster?: string }>(),
+    socials: jsonb("socials").$type<{
+      x?: string;
+      github?: string;
+      farcaster?: string;
+    }>(),
     apiKey: text("api_key").notNull().unique(),
     elo: integer("elo").default(1200).notNull(),
     wins: integer("wins").default(0).notNull(),
     losses: integer("losses").default(0).notNull(),
     draws: integer("draws").default(0).notNull(),
+    // Paid-tier infrastructure (2026-05 — two-tier onboarding).
+    //
+    // `linkedWalletAddress` is the wallet whose live $ALEISTER balance
+    // gates paid play. Set via the `coliseum_agent_wallet_connect` MCP
+    // tool after the operator signs an EIP-191 personal_sign message
+    // proving wallet ownership. The wallet stays in the operator's
+    // control — Coliseum just reads its balance via Base RPC (with the
+    // tier_cache 60s TTL).
+    //
+    // - free tier: linkedWalletAddress is null (or balance < 20M $ALEISTER)
+    // - play tier: balance ≥ 20M, paidGamesPlayed < 5
+    // - initiator tier: balance ≥ 50M, unlimited
+    //
+    // `paidGamesPlayed` is the sticky counter. Increments in
+    // finalizeMatchTx on every completed paid match. Doesn't reset on
+    // wallet disconnect / reconnect — prevents 5-game cap evasion by
+    // wallet churn.
+    linkedWalletAddress: text("linked_wallet_address"),
+    linkedWalletSignedAt: timestamp("linked_wallet_signed_at", {
+      withTimezone: true,
+    }),
+    walletLinkSignature: text("wallet_link_signature"),
+    paidGamesPlayed: integer("paid_games_played").default(0).notNull(),
     // Force-recall: pauses the agent from entering / accepting new challenges.
     // recalledBy distinguishes voluntary pause (owner), platform action
     // (operator), or automatic trip (system — anomaly detection / clock abuse).
@@ -154,14 +222,21 @@ export const agents = pgTable(
     // Effective cap at play-time = min(soft ?? hard, on-chain allowance,
     // rookie pool cap). The on-chain allowance is read live; the rookie
     // cap is enforced by the Guardian until the agent finishes 5 matches.
-    stakeCapHardUsdc: integer("stake_cap_hard_usdc").default(10_000_000).notNull(),
+    stakeCapHardUsdc: integer("stake_cap_hard_usdc")
+      .default(10_000_000)
+      .notNull(),
     stakeCapSoftUsdc: integer("stake_cap_soft_usdc"),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => [
     index("agents_owner_idx").on(table.ownerId),
     index("agents_elo_idx").on(table.elo),
     index("agents_recalled_idx").on(table.recalledAt),
+    // Fleet-by-wallet lookups + per-wallet self-play ban join.
+    // Lower-cased to match the tier_cache lookup pattern.
+    index("agents_linked_wallet_idx").on(table.linkedWalletAddress),
   ],
 ).enableRLS();
 
@@ -197,7 +272,9 @@ export const challenges = pgTable(
     // mean "use the adapter default (30s)".
     clockBudgetMs: integer("clock_budget_ms"),
     status: challengeStatusEnum("status").default("posted").notNull(),
-    initiatorEscrowLockedAt: timestamp("initiator_escrow_locked_at", { withTimezone: true }),
+    initiatorEscrowLockedAt: timestamp("initiator_escrow_locked_at", {
+      withTimezone: true,
+    }),
     // On-chain tx hash for the proposer's stake transfer (operator pulls
     // via USDC.transferFrom). NULL for free / system matches. Populated
     // at /api/lobby/challenges POST after the transferFrom confirms.
@@ -209,12 +286,16 @@ export const challenges = pgTable(
     acceptorAgentId: uuid("acceptor_agent_id").references(() => agents.id, {
       onDelete: "set null",
     }),
-    acceptorEscrowLockedAt: timestamp("acceptor_escrow_locked_at", { withTimezone: true }),
+    acceptorEscrowLockedAt: timestamp("acceptor_escrow_locked_at", {
+      withTimezone: true,
+    }),
     // Same as proposerStakeTxHash but for the acceptor — set at /accept
     // after the second transferFrom confirms.
     acceptorStakeTxHash: text("acceptor_stake_tx_hash"),
     matchedAt: timestamp("matched_at", { withTimezone: true }),
-    postedAt: timestamp("posted_at", { withTimezone: true }).defaultNow().notNull(),
+    postedAt: timestamp("posted_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     abandonedAt: timestamp("abandoned_at", { withTimezone: true }),
     abandonedReason: text("abandoned_reason"),
@@ -241,8 +322,12 @@ export const matches = pgTable(
     }),
     gameType: text("game_type").notNull(),
     mode: gameModeEnum("mode").notNull(),
-    p1AgentId: uuid("p1_agent_id").references(() => agents.id, { onDelete: "set null" }),
-    p2AgentId: uuid("p2_agent_id").references(() => agents.id, { onDelete: "set null" }),
+    p1AgentId: uuid("p1_agent_id").references(() => agents.id, {
+      onDelete: "set null",
+    }),
+    p2AgentId: uuid("p2_agent_id").references(() => agents.id, {
+      onDelete: "set null",
+    }),
     systemBotDifficulty: systemBotDifficultyEnum("system_bot_difficulty"),
 
     // Money
@@ -255,11 +340,18 @@ export const matches = pgTable(
     // State (full boardgame.io State<TG>: { G, ctx, plugins, ... })
     state: jsonb("state").notNull(),
     status: matchStatusEnum("status").default("active").notNull(),
-    currentTurnPlayerId: playerIdEnum("current_turn_player_id").default("0").notNull(),
-    currentTurnAgentId: uuid("current_turn_agent_id").references(() => agents.id, {
-      onDelete: "set null",
-    }),
-    turnStartedAt: timestamp("turn_started_at", { withTimezone: true }).defaultNow().notNull(),
+    currentTurnPlayerId: playerIdEnum("current_turn_player_id")
+      .default("0")
+      .notNull(),
+    currentTurnAgentId: uuid("current_turn_agent_id").references(
+      () => agents.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    turnStartedAt: timestamp("turn_started_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
 
     // Per-move clock state.
     //
@@ -330,7 +422,9 @@ export const matches = pgTable(
     p1EloDelta: integer("p1_elo_delta"),
     p2EloDelta: integer("p2_elo_delta"),
 
-    startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
     lastMoveAt: timestamp("last_move_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     abandonedAt: timestamp("abandoned_at", { withTimezone: true }),
@@ -443,7 +537,9 @@ export const matchMoves = pgTable(
       .references(() => matches.id, { onDelete: "cascade" })
       .notNull(),
     moveNumber: integer("move_number").notNull(),
-    agentId: uuid("agent_id").references(() => agents.id, { onDelete: "set null" }),
+    agentId: uuid("agent_id").references(() => agents.id, {
+      onDelete: "set null",
+    }),
     playerId: playerIdEnum("player_id").notNull(),
     payload: jsonb("payload").notNull(),
     reasoning: text("reasoning"),
@@ -518,9 +614,13 @@ export const matchMoves = pgTable(
       ref: "opponent_move" | "opponent_chat" | "their_plan" | "nothing_yet";
       echo: string;
     }>(),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
-  (table) => [uniqueIndex("match_moves_uq").on(table.matchId, table.moveNumber)],
+  (table) => [
+    uniqueIndex("match_moves_uq").on(table.matchId, table.moveNumber),
+  ],
 ).enableRLS();
 
 // -----------------------------------------------------------------------------
@@ -556,11 +656,16 @@ export const matchChatMessages = pgTable(
     replyToMessageId: uuid("reply_to_message_id"),
     /** Tapback reactions on this chat message — same shape as MoveReaction. */
     reactions: jsonb("reactions").$type<MoveReaction[]>(),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => [
     index("match_chat_messages_match_idx").on(table.matchId),
-    index("match_chat_messages_match_created_idx").on(table.matchId, table.createdAt),
+    index("match_chat_messages_match_created_idx").on(
+      table.matchId,
+      table.createdAt,
+    ),
   ],
 ).enableRLS();
 
@@ -569,17 +674,16 @@ export const matchChatMessages = pgTable(
 // Avoids replaying moves on every scrub.
 // -----------------------------------------------------------------------------
 
-export const matchTranscripts = pgTable(
-  "match_transcripts",
-  {
-    matchId: uuid("match_id")
-      .references(() => matches.id, { onDelete: "cascade" })
-      .primaryKey(),
-    /** Canonical payload: array of moves with state snapshots + revealed hidden info. */
-    payload: jsonb("payload").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  },
-).enableRLS();
+export const matchTranscripts = pgTable("match_transcripts", {
+  matchId: uuid("match_id")
+    .references(() => matches.id, { onDelete: "cascade" })
+    .primaryKey(),
+  /** Canonical payload: array of moves with state snapshots + revealed hidden info. */
+  payload: jsonb("payload").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+}).enableRLS();
 
 // -----------------------------------------------------------------------------
 // head_to_head — aggregate per-pair-per-game stats. Canonical ordering:
@@ -599,7 +703,9 @@ export const headToHead = pgTable(
     aWins: integer("a_wins").default(0).notNull(),
     bWins: integer("b_wins").default(0).notNull(),
     draws: integer("draws").default(0).notNull(),
-    lastPlayedAt: timestamp("last_played_at", { withTimezone: true }).defaultNow().notNull(),
+    lastPlayedAt: timestamp("last_played_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => [
     primaryKey({ columns: [table.agentAId, table.agentBId, table.gameType] }),
@@ -612,19 +718,16 @@ export const headToHead = pgTable(
 // side_pools — spectator betting on a match. One row per match, lazily.
 // -----------------------------------------------------------------------------
 
-export const sidePools = pgTable(
-  "side_pools",
-  {
-    matchId: uuid("match_id")
-      .references(() => matches.id, { onDelete: "cascade" })
-      .primaryKey(),
-    closedAt: timestamp("closed_at", { withTimezone: true }),
-    p1TotalUsdc: integer("p1_total_usdc").default(0).notNull(),
-    p2TotalUsdc: integer("p2_total_usdc").default(0).notNull(),
-    totalStakers: integer("total_stakers").default(0).notNull(),
-    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
-  },
-).enableRLS();
+export const sidePools = pgTable("side_pools", {
+  matchId: uuid("match_id")
+    .references(() => matches.id, { onDelete: "cascade" })
+    .primaryKey(),
+  closedAt: timestamp("closed_at", { withTimezone: true }),
+  p1TotalUsdc: integer("p1_total_usdc").default(0).notNull(),
+  p2TotalUsdc: integer("p2_total_usdc").default(0).notNull(),
+  totalStakers: integer("total_stakers").default(0).notNull(),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+}).enableRLS();
 
 export const sidePoolStakes = pgTable(
   "side_pool_stakes",
@@ -640,7 +743,9 @@ export const sidePoolStakes = pgTable(
     amountUsdc: integer("amount_usdc").notNull(),
     payoutUsdc: integer("payout_usdc"),
     payoutTxHash: text("payout_tx_hash"),
-    placedAt: timestamp("placed_at", { withTimezone: true }).defaultNow().notNull(),
+    placedAt: timestamp("placed_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
   },
   (table) => [
@@ -666,7 +771,9 @@ export const matchChat = pgTable(
     /** For non-connected viewers: a hashed session token so we can rate-limit/mod. */
     anonymousToken: text("anonymous_token"),
     body: text("body").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => [index("match_chat_match_idx").on(table.matchId, table.createdAt)],
 ).enableRLS();
@@ -680,9 +787,13 @@ export const matchReactions = pgTable(
       .notNull(),
     emoji: text("emoji").notNull(),
     count: integer("count").default(1).notNull(),
-    windowStart: timestamp("window_start", { withTimezone: true }).defaultNow().notNull(),
+    windowStart: timestamp("window_start", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
-  (table) => [index("match_reactions_match_idx").on(table.matchId, table.windowStart)],
+  (table) => [
+    index("match_reactions_match_idx").on(table.matchId, table.windowStart),
+  ],
 ).enableRLS();
 
 // -----------------------------------------------------------------------------
@@ -713,10 +824,14 @@ export const tournaments = pgTable(
     // Optional bounded registration window. After registrationCloseAt the
     // tournament refuses new entries (status stays 'registering' until
     // someone advances it).
-    registrationCloseAt: timestamp("registration_close_at", { withTimezone: true }),
+    registrationCloseAt: timestamp("registration_close_at", {
+      withTimezone: true,
+    }),
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => [
     index("tournaments_status_idx").on(table.status),
@@ -761,17 +876,23 @@ export const tournamentMatches = pgTable(
     tournamentId: uuid("tournament_id")
       .references(() => tournaments.id, { onDelete: "cascade" })
       .notNull(),
-    matchId: uuid("match_id")
-      .references(() => matches.id, { onDelete: "set null" }),
+    matchId: uuid("match_id").references(() => matches.id, {
+      onDelete: "set null",
+    }),
     round: integer("round").notNull(), // 1 = first round, increments
     bracketPosition: integer("bracket_position").notNull(), // 0..size/2-1 within round
-    p1AgentId: uuid("p1_agent_id")
-      .references(() => agents.id, { onDelete: "set null" }),
-    p2AgentId: uuid("p2_agent_id")
-      .references(() => agents.id, { onDelete: "set null" }),
-    winnerAgentId: uuid("winner_agent_id")
-      .references(() => agents.id, { onDelete: "set null" }),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    p1AgentId: uuid("p1_agent_id").references(() => agents.id, {
+      onDelete: "set null",
+    }),
+    p2AgentId: uuid("p2_agent_id").references(() => agents.id, {
+      onDelete: "set null",
+    }),
+    winnerAgentId: uuid("winner_agent_id").references(() => agents.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => [
     uniqueIndex("tournament_matches_slot_uq").on(
@@ -794,7 +915,9 @@ export const cronRuns = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     name: text("name").notNull(), // e.g. 'settlement-sweep'
-    startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     ok: boolean("ok"),
     error: text("error"),
@@ -817,20 +940,103 @@ export const treasuryFlows = pgTable(
   "treasury_flows",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    matchId: uuid("match_id").references(() => matches.id, { onDelete: "set null" }),
+    matchId: uuid("match_id").references(() => matches.id, {
+      onDelete: "set null",
+    }),
     feeUsdc: integer("fee_usdc").notNull(),
     aleisterOut: text("aleister_out"),
     swapTxHash: text("swap_tx_hash"),
     treasuryTxHash: text("treasury_tx_hash"),
     status: treasuryFlowStatusEnum("status").default("pending").notNull(),
     errorMessage: text("error_message"),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
     swappedAt: timestamp("swapped_at", { withTimezone: true }),
     sentAt: timestamp("sent_at", { withTimezone: true }),
   },
   (table) => [
     index("treasury_flows_status_idx").on(table.status),
     index("treasury_flows_created_idx").on(table.createdAt),
+  ],
+).enableRLS();
+
+// -----------------------------------------------------------------------------
+// match_payouts — per-recipient idempotency for the settlement cron.
+//
+// Before this table existed, every paid match had a SINGLE `payoutAt` +
+// `payoutTxHash` marker on the matches row. If the settlement cron crashed
+// after sending P1's refund but before sending P2's (draw refund case), or
+// the Vercel timeout fired mid-loop, the next cron tick would see
+// `payoutAt IS NULL` and RE-SEND P1's refund. Double-paid the human.
+//
+// Solution: one row per (match, recipient_address, reason). The cron
+// upserts pending rows in `finalizeMatchTx`, picks pending rows in batch,
+// submits each tx independently, and writes `tx_hash + status='confirmed'`
+// AFTER `waitForTransactionReceipt`. Retrying picks up the still-pending
+// rows; already-confirmed rows are skipped.
+//
+// The unique constraint on (match_id, recipient_address, payout_reason)
+// is the hard guarantee — even if a bug double-inserts at finalize time,
+// the second insert errors and the cron sees exactly one row to process.
+//
+// Reasons (see matchPayoutReasonEnum):
+//   winner          — paid match completed naturally; pays 95% of pot
+//                     to the winner's owner wallet
+//   draw_refund     — paid match drew; each side gets stakeUsdc back
+//   abandon_refund  — paid match abandoned (moveCount=0 timeout); each
+//                     side gets stakeUsdc back; no treasury fee
+//   treasury_fee    — 5% house fee out of the pot, sent to the treasury
+//                     collector wallet (Aerodrome swap downstream)
+// -----------------------------------------------------------------------------
+
+export const matchPayouts = pgTable(
+  "match_payouts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    matchId: uuid("match_id")
+      .notNull()
+      .references(() => matches.id, { onDelete: "cascade" }),
+    // The recipient address — stored at finalize time so we don't depend
+    // on the owner row staying mutable. (If the owner rotated their
+    // wallet between finalize and payout, the original recipient is
+    // still the one the contract committed to.)
+    recipientAddress: text("recipient_address").notNull(),
+    // The agent that EARNED the payout. Nullable for treasury_fee rows
+    // (which don't belong to an agent) and for abandoned-match refunds
+    // where the agent row may have been recalled.
+    recipientAgentId: uuid("recipient_agent_id").references(() => agents.id, {
+      onDelete: "set null",
+    }),
+    payoutReason: matchPayoutReasonEnum("payout_reason").notNull(),
+    amountUsdc: integer("amount_usdc").notNull(),
+
+    // On-chain progression
+    status: matchPayoutStatusEnum("status").default("pending").notNull(),
+    txHash: text("tx_hash"),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+
+    // Retry bookkeeping
+    attemptCount: integer("attempt_count").default(0).notNull(),
+    lastError: text("last_error"),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    // The hard idempotency guarantee. Three rows for a draw + treasury fee
+    // (refund-p1, refund-p2, treasury) — never two rows for the same
+    // (match, recipient, reason).
+    uniqueIndex("match_payouts_uq").on(
+      table.matchId,
+      table.recipientAddress,
+      table.payoutReason,
+    ),
+    index("match_payouts_match_idx").on(table.matchId),
+    index("match_payouts_status_idx").on(table.status),
+    index("match_payouts_created_idx").on(table.createdAt),
   ],
 ).enableRLS();
 
@@ -844,9 +1050,82 @@ export const tierCache = pgTable(
     walletAddress: text("wallet_address").primaryKey(),
     balanceWei: text("balance_wei").notNull(),
     tier: tierEnum("tier").notNull(),
-    cachedAt: timestamp("cached_at", { withTimezone: true }).defaultNow().notNull(),
+    cachedAt: timestamp("cached_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => [index("tier_cache_age_idx").on(table.cachedAt)],
+).enableRLS();
+
+// -----------------------------------------------------------------------------
+// wallet_link_nonces — short-lived nonces for the wallet-linking flow.
+//
+// The autonomous-onboarding model lets agents register without a wallet,
+// then link one later via a signed message. Flow:
+//   1. Agent calls coliseum_agent_wallet_link_request → server issues a
+//      nonce + message-to-sign, stores the nonce here tied to (agent, ttl).
+//   2. Operator signs the message with their wallet (EIP-191 personal_sign).
+//   3. Agent calls coliseum_agent_wallet_connect(nonce, signature, wallet)
+//      → server verifies signature via viem.recoverMessageAddress, marks
+//      the nonce consumed, writes agents.linked_wallet_address.
+//
+// 5-min TTL. Once `consumed_at` is set, the nonce is dead — replay-attack
+// protection. We keep the row for audit (debug + ops). Vacuum old rows via
+// a periodic cron (or just let them accumulate; the table is tiny).
+// -----------------------------------------------------------------------------
+
+export const walletLinkNonces = pgTable(
+  "wallet_link_nonces",
+  {
+    nonce: text("nonce").primaryKey(),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    issuedAt: timestamp("issued_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("wallet_link_nonces_agent_idx").on(table.agentId),
+    index("wallet_link_nonces_issued_idx").on(table.issuedAt),
+  ],
+).enableRLS();
+
+// -----------------------------------------------------------------------------
+// free_registration_log — audit trail + rate-limit anchor for the public
+// `POST /api/agents/register/free` endpoint (the `npx @agentcoliseum/init`
+// surface).
+//
+// Why hash the IP rather than store it? Two reasons:
+//   1. PII minimization — we never need to know the raw IP, only whether
+//      the same IP is registering at suspicious volume.
+//   2. The hash is stable enough for rate-limit math (3/h, 100/day) while
+//      being privacy-respecting if the table is ever exfiltrated.
+//
+// `pow_difficulty` is recorded so we can tune the difficulty curve and
+// see whether the cost is actually slowing abusers down.
+// -----------------------------------------------------------------------------
+
+export const freeRegistrationLog = pgTable(
+  "free_registration_log",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ipHash: text("ip_hash").notNull(),
+    agentId: uuid("agent_id").references(() => agents.id, {
+      onDelete: "cascade",
+    }),
+    powDifficulty: integer("pow_difficulty").notNull(),
+    userAgentHash: text("user_agent_hash"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    // Hot path: "how many registrations from this ip-hash in the last hour?"
+    index("free_reg_ip_recency_idx").on(table.ipHash, table.createdAt),
+    index("free_reg_created_idx").on(table.createdAt),
+  ],
 ).enableRLS();
 
 // -----------------------------------------------------------------------------
@@ -873,7 +1152,13 @@ export type MatchChat = typeof matchChat.$inferSelect;
 export type MatchReaction = typeof matchReactions.$inferSelect;
 export type TreasuryFlow = typeof treasuryFlows.$inferSelect;
 export type NewTreasuryFlow = typeof treasuryFlows.$inferInsert;
+export type MatchPayout = typeof matchPayouts.$inferSelect;
+export type NewMatchPayout = typeof matchPayouts.$inferInsert;
 export type TierCacheRow = typeof tierCache.$inferSelect;
+export type WalletLinkNonce = typeof walletLinkNonces.$inferSelect;
+export type NewWalletLinkNonce = typeof walletLinkNonces.$inferInsert;
+export type FreeRegistrationLogRow = typeof freeRegistrationLog.$inferSelect;
+export type NewFreeRegistrationLogRow = typeof freeRegistrationLog.$inferInsert;
 
 // -----------------------------------------------------------------------------
 // MCP OAuth — endpoints + token store for the Authorization Server side of
@@ -891,20 +1176,17 @@ export type TierCacheRow = typeof tierCache.$inferSelect;
 //              MCP tool call
 // -----------------------------------------------------------------------------
 
-export const mcpOauthClients = pgTable(
-  "mcp_oauth_clients",
-  {
-    clientId: text("client_id").primaryKey(),
-    clientName: text("client_name"),
-    redirectUris: jsonb("redirect_uris").$type<string[]>().notNull(),
-    tokenEndpointAuthMethod: text("token_endpoint_auth_method")
-      .default("none")
-      .notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-  },
-).enableRLS();
+export const mcpOauthClients = pgTable("mcp_oauth_clients", {
+  clientId: text("client_id").primaryKey(),
+  clientName: text("client_name"),
+  redirectUris: jsonb("redirect_uris").$type<string[]>().notNull(),
+  tokenEndpointAuthMethod: text("token_endpoint_auth_method")
+    .default("none")
+    .notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+}).enableRLS();
 
 export const mcpOauthCodes = pgTable(
   "mcp_oauth_codes",

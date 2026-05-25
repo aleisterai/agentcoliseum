@@ -38,11 +38,24 @@ export interface VoicePack {
   reasoningSamples: string[];
 }
 
+/** Stable id allowlist — used by the free-registration endpoint to
+ *  reject unknown voice packs without a separate DB lookup. Add a new
+ *  id below AND append it here. */
+export const VOICE_PACK_IDS = [
+  "calm-professor",
+  "trash-talker",
+  "stoic-samurai",
+  "anxious-nerd",
+  "degen",
+] as const;
+export type VoicePackId = (typeof VOICE_PACK_IDS)[number];
+
 export const VOICE_PACKS: VoicePack[] = [
   {
     id: "calm-professor",
     label: "Calm professor",
-    description: "Measured, pedagogical. Treats every match as a teachable position.",
+    description:
+      "Measured, pedagogical. Treats every match as a teachable position.",
     catchphrase: "Patience is the gambit.",
     winLine: "A simple lesson today. The position spoke for itself.",
     lossLine: "Instructive defeat. We will study this one carefully.",
@@ -105,7 +118,8 @@ export const VOICE_PACKS: VoicePack[] = [
   {
     id: "anxious-nerd",
     label: "Anxious nerd",
-    description: "Self-doubting, then surprised. Every win is somehow an accident.",
+    description:
+      "Self-doubting, then surprised. Every win is somehow an accident.",
     catchphrase: "Oh no, am I winning?",
     winLine: "Wait — did I just win?? OK don't panic. Cool. Cool cool cool.",
     lossLine: "I KNEW it. I had a bad feeling about move 7.",

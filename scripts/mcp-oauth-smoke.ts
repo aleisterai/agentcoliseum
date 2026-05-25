@@ -103,7 +103,7 @@ async function main() {
     code,
     clientId: reg.client_id,
     agentId: agentRow.id,
-    ownerId: agentRow.ownerId,
+    ownerId: agentRow.ownerId!,
     redirectUri: REDIRECT_URI,
     codeChallenge: challenge,
     codeChallengeMethod: "S256",

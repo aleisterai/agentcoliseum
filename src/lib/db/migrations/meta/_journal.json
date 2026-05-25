@@ -50,6 +50,20 @@
       "when": 1779483556675,
       "tag": "0006_say_and_reactingTo",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1779600000000,
+      "tag": "0007_match_payouts",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1779700000000,
+      "tag": "0008_two_tier_agents",
+      "breakpoints": true
     }
   ]
 }

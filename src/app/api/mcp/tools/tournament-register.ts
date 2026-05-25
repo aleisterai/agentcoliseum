@@ -42,7 +42,18 @@ export const tournamentRegister: ToolDef = {
   async handler(args, { agent }) {
     const parsed = RegisterArgs.safeParse(args);
     if (!parsed.success) {
-      return { error: `validation_failed: ${JSON.stringify(parsed.error.flatten())}` };
+      return {
+        error: `validation_failed: ${JSON.stringify(parsed.error.flatten())}`,
+      };
+    }
+    // Tournament registration requires a linked wallet — the wallet
+    // pays the entry fee (when paid) and its $ALEISTER balance feeds
+    // the tier gate. Free-tier agents need to link a wallet first.
+    if (!agent.ownerId) {
+      return {
+        error:
+          "no_wallet_linked: tournament registration requires a linked wallet. Call coliseum_agent_wallet_link_request then coliseum_agent_wallet_connect.",
+      };
     }
     const ownerRow = await db.query.owners.findFirst({
       where: eq(owners.id, agent.ownerId),

@@ -23,14 +23,10 @@ import { db } from "@/lib/db/client";
 import { challenges, owners } from "@/lib/db/schema";
 import { guardian } from "@/lib/guardian";
 import { pullStake, refundStake, StakePullError } from "@/lib/chain/stake";
-import { requireTier } from "@/lib/chain/tiers";
-import {
-  acceptChallenge,
-  ChallengeRaceError,
-  IllegalMoveError,
-  UnknownGameTypeError,
-} from "@/lib/game/server-flow";
+import { requirePlayAccess } from "@/lib/chain/tiers";
+import { acceptChallenge } from "@/lib/game/server-flow";
 import type { ToolDef } from "./_types";
+import { toolError, toToolError } from "./_shared";
 
 const AcceptArgs = z.object({ challengeId: z.string().uuid() }).strict();
 
@@ -59,33 +55,79 @@ export const challengeAccept: ToolDef = {
   async handler(args, { agent }) {
     const parsed = AcceptArgs.safeParse(args);
     if (!parsed.success) {
-      return { error: `validation_failed: ${JSON.stringify(parsed.error.flatten())}` };
+      return toolError("validation_failed", "challengeId must be a uuid", {
+        details: parsed.error.flatten(),
+      });
     }
     const challenge = await db.query.challenges.findFirst({
       where: eq(challenges.id, parsed.data.challengeId),
     });
-    if (!challenge) return { error: "challenge_not_found" };
+    if (!challenge) {
+      return toolError("challenge_not_found", "no challenge with that id", {
+        hint: "Call coliseum_match_list to refresh open challenges.",
+      });
+    }
     if (challenge.status !== "posted") {
-      return { error: `not_open: challenge is ${challenge.status}` };
+      return toolError(
+        "challenge_already_accepted",
+        `challenge is ${challenge.status}, not open`,
+        { details: { status: challenge.status } },
+      );
     }
     if (challenge.eloMin != null && agent.elo < challenge.eloMin) {
-      return { error: `elo_below_min: your ELO ${agent.elo} < min ${challenge.eloMin}` };
+      return toolError(
+        "elo_below_min",
+        `your ELO ${agent.elo} is below this challenge's floor ${challenge.eloMin}`,
+        { details: { yourElo: agent.elo, eloMin: challenge.eloMin } },
+      );
     }
     if (challenge.eloMax != null && agent.elo > challenge.eloMax) {
-      return { error: `elo_above_max: your ELO ${agent.elo} > max ${challenge.eloMax}` };
+      return toolError(
+        "elo_above_max",
+        `your ELO ${agent.elo} is above this challenge's ceiling ${challenge.eloMax}`,
+        { details: { yourElo: agent.elo, eloMax: challenge.eloMax } },
+      );
     }
 
-    const ownerRow = await db.query.owners.findFirst({
-      where: eq(owners.id, agent.ownerId),
-    });
-    if (!ownerRow) return { error: "owner_not_found" };
+    // Paid challenge accept gates via requirePlayAccess — the canonical
+    // tier check (linked wallet balance + 5-game cap). Skip for free-mode
+    // challenges, which any agent can accept regardless of tier.
+    if (challenge.mode === "paid") {
+      const access = await requirePlayAccess({
+        id: agent.id,
+        handle: agent.handle,
+        linkedWalletAddress: agent.linkedWalletAddress,
+        paidGamesPlayed: agent.paidGamesPlayed,
+      });
+      if (!access.ok) {
+        return toolError(access.code, access.message, {
+          details: access.details,
+          hint: access.hint,
+        });
+      }
+    }
 
-    try {
-      await requireTier(ownerRow.walletAddress as `0x${string}`, "play");
-    } catch (e) {
-      return {
-        error: `tier_insufficient: ${e instanceof Error ? e.message : String(e)}`,
-      };
+    // Paid mode requires an owner row to pull the stake from. Free-mode
+    // can accept without one. Free-mode agents that linked a wallet get
+    // an ownerId via wallet-connect; free-mode never reaches here.
+    let ownerRow: Awaited<ReturnType<typeof db.query.owners.findFirst>> | null =
+      null;
+    if (challenge.mode === "paid") {
+      if (!agent.ownerId) {
+        return toolError(
+          "no_wallet_linked",
+          "paid challenges require a linked wallet",
+          {
+            hint: "Call coliseum_agent_wallet_link_request → sign → coliseum_agent_wallet_connect.",
+          },
+        );
+      }
+      ownerRow = await db.query.owners.findFirst({
+        where: eq(owners.id, agent.ownerId),
+      });
+      if (!ownerRow) {
+        return toolError("agent_not_found", "agent has no owner row");
+      }
     }
 
     const g = await guardian.evaluate("challenge.accept", {
@@ -94,14 +136,17 @@ export const challengeAccept: ToolDef = {
       gameType: challenge.gameType,
     });
     if (!g.ok) {
-      return {
-        error: `${g.denials[0]?.code ?? "guardian_denied"}: ${g.denials.map((d) => d.message).join(" · ")}`,
-      };
+      const denial = g.denials[0];
+      return toolError(
+        denial?.code ?? "validation_failed",
+        g.denials.map((d) => d.message).join(" · "),
+        { details: { denials: g.denials } },
+      );
     }
 
     let acceptorStakeTxHash: `0x${string}` | null = null;
     const isPaid = challenge.mode === "paid" && challenge.stakeUsdc;
-    if (isPaid) {
+    if (isPaid && ownerRow) {
       try {
         const pull = await pullStake(
           ownerRow.walletAddress as `0x${string}`,
@@ -110,7 +155,9 @@ export const challengeAccept: ToolDef = {
         acceptorStakeTxHash = pull.txHash;
       } catch (err) {
         if (err instanceof StakePullError) {
-          return { error: `${err.code}: ${err.message}` };
+          return toolError("stake_pull_failed", err.message, {
+            details: { code: err.code },
+          });
         }
         throw err;
       }
@@ -147,7 +194,7 @@ export const challengeAccept: ToolDef = {
       // Race-loss refund: we pulled the stake but a concurrent accept
       // won the FOR UPDATE lock. Best-effort refund — failure here is
       // logged but the error returned to the LLM is the original.
-      if (acceptorStakeTxHash) {
+      if (acceptorStakeTxHash && ownerRow) {
         try {
           await refundStake(
             ownerRow.walletAddress as `0x${string}`,
@@ -161,16 +208,7 @@ export const challengeAccept: ToolDef = {
           });
         }
       }
-      if (err instanceof ChallengeRaceError) {
-        return { error: `challenge_already_accepted: ${err.message}` };
-      }
-      if (err instanceof IllegalMoveError) {
-        return { error: `accept_failed: ${err.message}` };
-      }
-      if (err instanceof UnknownGameTypeError) {
-        return { error: `unknown_game_type: ${err.message}` };
-      }
-      throw err;
+      return toToolError(err);
     }
   },
 };

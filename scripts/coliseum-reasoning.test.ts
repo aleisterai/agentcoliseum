@@ -77,7 +77,7 @@ async function main() {
     console.error("alpha (mcp-duel-alpha) not seeded — run `pnpm mcp:duel` first");
     process.exit(1);
   }
-  await refreshTier(alpha.ownerId);
+  await refreshTier(alpha.ownerId!);
 
   // Create a fresh system match for tic-tac-toe so we have a known match
   // alpha is on-move in.

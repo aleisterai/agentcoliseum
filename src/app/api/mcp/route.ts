@@ -28,6 +28,7 @@ import {
 } from "@/lib/guardian/rate-limit";
 import { TOKEN_PREFIX as OAUTH_TOKEN_PREFIX } from "@/lib/mcp-oauth";
 import { TOOLS, TOOLS_BY_NAME } from "./tools";
+import { requirePlayAccess } from "@/lib/chain/tiers";
 import type { Agent } from "@/lib/db/schema";
 
 export const dynamic = "force-dynamic";
@@ -57,7 +58,8 @@ function err(
 }
 
 function bearerFrom(req: Request): string | null {
-  const h = req.headers.get("authorization") ?? req.headers.get("Authorization");
+  const h =
+    req.headers.get("authorization") ?? req.headers.get("Authorization");
   if (!h) return null;
   const [scheme, token] = h.split(" ", 2);
   if (!scheme || scheme.toLowerCase() !== "bearer" || !token) return null;
@@ -91,9 +93,16 @@ async function lookupAgent(token: string): Promise<Agent | null> {
       ),
     });
     if (!row) return null;
-    return (await db.query.agents.findFirst({ where: eq(agents.id, row.agentId) })) ?? null;
+    return (
+      (await db.query.agents.findFirst({
+        where: eq(agents.id, row.agentId),
+      })) ?? null
+    );
   }
-  return (await db.query.agents.findFirst({ where: eq(agents.apiKey, token) })) ?? null;
+  return (
+    (await db.query.agents.findFirst({ where: eq(agents.apiKey, token) })) ??
+    null
+  );
 }
 
 const InitializeParams = z
@@ -199,6 +208,44 @@ export async function POST(req: NextRequest) {
         if (!tool) {
           return err(body.id, -32602, `unknown tool: ${name}`);
         }
+
+        // Paid-play tier gate (two-tier onboarding, 2026-05). Tools
+        // that mutate paid-mode state declare `paidPlayRequired:
+        // true`. Some allow a free-mode bypass via `freeModeArgs`
+        // (challenge_propose with mode='free', match_move on a
+        // free-mode match) — if the inspector returns true, the
+        // gate is skipped.
+        if (tool.paidPlayRequired) {
+          const isFreeMode = tool.freeModeArgs?.(argsRaw) ?? false;
+          if (!isFreeMode) {
+            const access = await requirePlayAccess({
+              id: agent.id,
+              handle: agent.handle,
+              linkedWalletAddress: agent.linkedWalletAddress,
+              paidGamesPlayed: agent.paidGamesPlayed,
+            });
+            if (!access.ok) {
+              // Surface as a normal tool result (not a JSON-RPC error)
+              // so the LLM sees a structured envelope it can branch on,
+              // not an opaque protocol error.
+              const denial = {
+                ok: false,
+                error: {
+                  code: access.code,
+                  message: access.message,
+                  details: access.details,
+                  hint: access.hint,
+                },
+              };
+              return ok(body.id, {
+                content: [
+                  { type: "text", text: JSON.stringify(denial, null, 2) },
+                ],
+              });
+            }
+          }
+        }
+
         const result = await tool.handler(argsRaw, { agent });
         return ok(body.id, {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

@@ -1,0 +1,46 @@
+{
+  "name": "@agentcoliseum/init",
+  "version": "0.1.0",
+  "description": "One-command autonomous agent registration on Agent Coliseum. Mints a free-tier credential, solves the PoW challenge, writes the MCP config into your Claude Desktop / Cursor configs. Zero clicks, zero wallet.",
+  "keywords": [
+    "agentcoliseum",
+    "agent",
+    "mcp",
+    "claude",
+    "coliseum",
+    "aleister"
+  ],
+  "homepage": "https://agentcoliseum.xyz",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aleisterai/agentcoliseum.git",
+    "directory": "packages/coliseum-init"
+  },
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "coliseum-init": "./bin/coliseum-init.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build",
+    "dev": "node --experimental-strip-types --no-warnings src/index.ts"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "prompts": "^2.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/prompts": "^2.4.9",
+    "typescript": "^5.0.0"
+  }
+}

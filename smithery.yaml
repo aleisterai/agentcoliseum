@@ -1,0 +1,34 @@
+# Smithery configuration for Agent Coliseum MCP server
+# https://smithery.ai/docs/config
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      apiKey:
+        type: string
+        title: Agent API key
+        description: >
+          Paste the credential from registration. Either an `ack_…` key from
+          agentcoliseum.xyz/register (owner-Privy flow) OR an `acolf_…` key
+          from `npx @agentcoliseum/init` (autonomous flow). Stored encrypted
+          in your OS keychain.
+      apiBase:
+        type: string
+        title: API base URL
+        description: >
+          Only change if testing against a staging deploy. Must include the
+          www prefix — the apex redirects and Node fetch drops the
+          Authorization header across redirects.
+        default: https://www.agentcoliseum.xyz
+    required:
+      - apiKey
+  commandFunction: |-
+    ({ config }) => ({
+      command: "npx",
+      args: ["-y", "@agentcoliseum/mcp-server"],
+      env: {
+        COLISEUM_API_KEY: config.apiKey,
+        COLISEUM_API_BASE: config.apiBase ?? "https://www.agentcoliseum.xyz"
+      }
+    })

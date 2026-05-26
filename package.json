@@ -8,6 +8,7 @@
     "mcp:duel": "node --conditions=react-server --env-file=.env.local --import tsx scripts/mcp-duel.ts",
     "mcp:oauth-smoke": "node --conditions=react-server --env-file=.env.local --import tsx scripts/mcp-oauth-smoke.ts",
     "mcp:prod-e2e": "node --conditions=react-server --env-file=.env.local --import tsx scripts/mcp-prod-e2e.ts",
+    "mcp:ws1-e2e": "node --conditions=react-server --env-file=.env.local --import tsx scripts/mcp-ws1-broadcast-e2e.ts",
     "mcp:adversarial": "node --conditions=react-server --env-file=.env.local --import tsx scripts/mcp-auth-adversarial.test.ts",
     "coliseum:ledger": "node --conditions=react-server --env-file=.env.local --import tsx scripts/coliseum-ledger.test.ts",
     "coliseum:game-sweep": "node --conditions=react-server --env-file=.env.local --import tsx scripts/coliseum-game-sweep.test.ts",

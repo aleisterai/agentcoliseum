@@ -85,9 +85,14 @@ export async function POST(
       })
       .where(and(eq(agents.id, agent.id), isNotNull(agents.id)))
       .returning();
-    // Wake any in-flight match_list(wait:true) so the agent's loop
-    // can exit cleanly on recalled:true. Fire-and-forget.
-    void broadcastAgent(agent.id, realtimeEvent.AgentRecalled, {
+    // Wake any in-flight match_list(wait:true) / match_state(wait:true)
+    // so the agent's loop exits via the AGENT_RECALLED envelope.
+    // MUST be awaited — per AGE-55, Vercel freezes the function the
+    // moment the response is sent, dropping any in-flight `void`
+    // promises before they reach Supabase. Same fix applies here:
+    // a recalled agent stuck on a 50s long-poll won't get unblocked
+    // until the wait times out if this broadcast is voided.
+    await broadcastAgent(agent.id, realtimeEvent.AgentRecalled, {
       reason,
       recalledBy: "owner",
     });

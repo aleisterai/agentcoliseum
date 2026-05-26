@@ -95,14 +95,19 @@ async function handleRefundCron({
         ),
       );
     freeAbandoned = freeStale.length;
-    // Wake any match_list(wait:true) the proposer has open so the agent loop
-    // can stop waiting for an accept that will never come. Fire-and-forget.
-    for (const c of freeStale) {
-      void broadcastAgent(c.initiatorAgentId, realtimeEvent.ChallengeExpired, {
-        challengeId: c.id,
-        gameType: c.gameType,
-      } satisfies ChallengeExpiredPayload);
-    }
+    // Wake any match_list(wait:true) the proposer has open so the agent
+    // loop can stop waiting for an accept that will never come. MUST
+    // be awaited (per AGE-55): cron handlers are also serverless
+    // functions on Vercel and a voided broadcast gets dropped when the
+    // handler returns.
+    await Promise.all(
+      freeStale.map((c) =>
+        broadcastAgent(c.initiatorAgentId, realtimeEvent.ChallengeExpired, {
+          challengeId: c.id,
+          gameType: c.gameType,
+        } satisfies ChallengeExpiredPayload),
+      ),
+    );
   }
 
   // Pass B — paid challenges. These need an on-chain refund first.
@@ -194,9 +199,10 @@ async function handleRefundCron({
         })
         .where(eq(challenges.id, c.id));
 
-      // Wake the proposer's match_list(wait:true) so they know
-      // to stop expecting an accept. Fire-and-forget.
-      void broadcastAgent(c.initiatorAgentId, realtimeEvent.ChallengeExpired, {
+      // Wake the proposer's match_list(wait:true). Awaited (per
+      // AGE-55) so Vercel doesn't drop the broadcast when the cron
+      // handler returns.
+      await broadcastAgent(c.initiatorAgentId, realtimeEvent.ChallengeExpired, {
         challengeId: c.id,
         gameType: c.gameType,
       } satisfies ChallengeExpiredPayload);

@@ -301,12 +301,6 @@ export async function acceptChallenge(
   //   2. Proposer's agent channel — wake their match_list(wait:true);
   //      they now have an active match to play.
   //   3. Acceptor's agent channel — same wake-up for the other side.
-  void broadcastLobby(realtimeEvent.GameJoined, {
-    id: match.id,
-    challengeId: input.challengeId,
-    gameType: match.gameType,
-    mode: match.mode as "free" | "paid",
-  } satisfies LobbyGameJoinedPayload);
   const acceptedPayload: ChallengeAcceptedPayload = {
     challengeId: input.challengeId,
     matchId: match.id,
@@ -318,8 +312,17 @@ export async function acceptChallenge(
     gameType: match.gameType,
     mode: match.mode as "free" | "paid" | "system",
   };
-  // Await all broadcasts before returning — Vercel kills detached promises on exit.
+  // Await all broadcasts before returning — Vercel kills detached
+  // promises on exit (per AGE-55). GameJoined on the lobby channel
+  // was previously voided here — folded into Promise.all so the
+  // lobby UI's spectator retirement event isn't dropped.
   const broadcastTasks: Promise<void>[] = [
+    broadcastLobby(realtimeEvent.GameJoined, {
+      id: match.id,
+      challengeId: input.challengeId,
+      gameType: match.gameType,
+      mode: match.mode as "free" | "paid",
+    } satisfies LobbyGameJoinedPayload),
     broadcastAgent(input.acceptorAgentId, realtimeEvent.MatchActivated, activatedPayload),
   ];
   if (match.p1AgentId) {

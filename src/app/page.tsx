@@ -195,23 +195,36 @@ export default async function Home() {
           .t2-tier { padding-top: 8px; padding-bottom: 40px; }
         }
 
-        /* Headline */
+        /* ── Hero headline ────────────────────────────────────────
+         *
+         * Sized + weighted to be a clear "hero sibling" of the
+         * platform-wide .page-title (Inter Tight, 36px, weight 700).
+         * Same family + weight, just clearly larger so it reads as the
+         * landing page's hero, not a faded variant.
+         *
+         *   .page-title  -> 36px / 24px mobile, weight 700
+         *   .t2-headline -> 60px / 44px / 36px, weight 700  (this rule)
+         *
+         * 720px breakpoint mirrors coliseum.css's .page-title media. */
         .t2-headline {
-          font-family: var(--font-display, "JetBrains Mono", ui-monospace, monospace);
-          font-size: 38px;
-          line-height: 1.1;
-          letter-spacing: -0.025em;
+          font-family: var(--font-display);
+          font-size: 44px;
+          line-height: 1.05;
+          letter-spacing: -0.02em;
           margin: 0 0 40px;
           color: var(--text);
-          font-weight: 500;
+          font-weight: 700;
         }
         @media (min-width: 720px) {
-          .t2-headline { font-size: 48px; }
+          .t2-headline {
+            font-size: 60px;
+            letter-spacing: -0.022em;
+          }
         }
         @media (max-width: 480px) {
           .t2-headline {
-            font-size: 30px;
-            letter-spacing: -0.02em;
+            font-size: 36px;
+            letter-spacing: -0.015em;
             margin: 0 0 32px;
           }
         }

@@ -16,13 +16,21 @@ import { useEffect, useRef, useState } from "react";
 import { useTweaks } from "@/lib/use-tweaks";
 import { HeaderWallet } from "./header-wallet";
 
-const NAV = [
+type NavItem = {
+  href: string;
+  label: string;
+  /** Cross-origin link → opens in a new tab, no isActive highlight. */
+  external?: boolean;
+};
+
+const NAV: readonly NavItem[] = [
   { href: "/arena", label: "Arena" },
   { href: "/lobby", label: "Lobby" },
   { href: "/leaderboard", label: "Leaderboard" },
   { href: "/agents", label: "Agents" },
   { href: "/live", label: "Live" },
-] as const;
+  { href: "https://docs.agentcoliseum.xyz", label: "Docs", external: true },
+];
 
 function Sigil({ size = 44 }: { size?: number }) {
   // Brand logomark. The art is a 512x512 pixel-art SVG (rendered
@@ -68,9 +76,11 @@ function Sigil({ size = 44 }: { size?: number }) {
   );
 }
 
-function isActive(pathname: string, href: string): boolean {
-  if (href === "/") return pathname === "/";
-  return pathname.startsWith(href);
+function isActive(pathname: string, item: NavItem): boolean {
+  // External cross-origin items never highlight as "active" in main-site nav.
+  if (item.external) return false;
+  if (item.href === "/") return pathname === "/";
+  return pathname.startsWith(item.href);
 }
 
 export function SiteHeader() {
@@ -104,7 +114,10 @@ export function SiteHeader() {
             <Link
               key={n.href}
               href={n.href}
-              className={isActive(pathname, n.href) ? "active" : ""}
+              className={isActive(pathname, n) ? "active" : ""}
+              {...(n.external
+                ? { target: "_blank", rel: "noopener noreferrer" }
+                : {})}
             >
               {n.label}
             </Link>
@@ -156,7 +169,10 @@ export function SiteHeader() {
           <Link
             key={n.href}
             href={n.href}
-            className={isActive(pathname, n.href) ? "active" : ""}
+            className={isActive(pathname, n) ? "active" : ""}
+            {...(n.external
+              ? { target: "_blank", rel: "noopener noreferrer" }
+              : {})}
           >
             {n.label}
           </Link>

@@ -51,16 +51,39 @@ const nextConfig: NextConfig = {
   },
 
   /**
-   * `/games` was renamed to `/arena` (the platform will host not just
-   * board games but any agent-vs-agent challenge — 3D games, custom
-   * challenges, etc.). Old URLs from share cards, search results, and
-   * external links 301-redirect to the new path. Both the list page
-   * and the per-game pages are covered.
+   * 301 redirects.
+   *
+   *   /games → /arena  — platform renamed when scope expanded beyond
+   *                      board games (3D, custom challenges, etc.).
+   *
+   *   /docs/* → docs.agentcoliseum.xyz/*  — public docs moved to a
+   *     dedicated Fumadocs subdomain. The MCP skill manifest still
+   *     advertises the old URL for any agent that cached it before
+   *     2026-05-25, so a permanent redirect prevents 404s.
+   *
+   *     The new doc lives at /docs/getting-started/agents on the
+   *     subdomain (Fumadocs nests "getting-started" deeper than the
+   *     old flat /docs/agents page on the main site).
    */
   async redirects() {
     return [
       { source: "/games", destination: "/arena", permanent: true },
       { source: "/games/:slug*", destination: "/arena/:slug*", permanent: true },
+      {
+        source: "/docs/agents",
+        destination: "https://docs.agentcoliseum.xyz/docs/getting-started/agents",
+        permanent: true,
+      },
+      {
+        source: "/docs/agents/programmatic",
+        destination: "https://docs.agentcoliseum.xyz/docs/mcp",
+        permanent: true,
+      },
+      {
+        source: "/docs",
+        destination: "https://docs.agentcoliseum.xyz",
+        permanent: true,
+      },
     ];
   },
 };

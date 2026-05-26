@@ -320,7 +320,7 @@ async function runToolBatteryWithBearer(
       gameType: "tic-tac-toe",
       mode: "free",
       opponentHandle: "mcp-duel-beta",
-      perMoveSeconds: 30,
+      perMoveSeconds: 120,
       timeoutMin: 30,
     });
     if ("error" in prop) throw new Error(prop.error);
@@ -389,6 +389,8 @@ async function runToolBatteryWithBearer(
         {
           matchId: acc.matchId,
           payload: { index: 4 },
+          say: "Center bro. Obviously.",
+          reactingTo: { ref: "nothing_yet", echo: "" },
           reasoning:
             "Center: strongest opening on a 3x3 board because it sits on all four winning lines. I weighed the corner play (slower, more reactive) but information-density favors the symmetric center against an unknown opponent.",
           candidates: [

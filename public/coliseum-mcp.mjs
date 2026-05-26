@@ -37,7 +37,8 @@ const API_KEY = process.env.COLISEUM_API_KEY;
 // (/api/agents/me, etc.) would 401 silently. Hardcoding www avoids the
 // redirect entirely. Users can still override via COLISEUM_API_BASE if
 // they're testing against a Vercel preview or a custom domain.
-const API_BASE = process.env.COLISEUM_API_BASE ?? "https://www.agentcoliseum.xyz";
+const API_BASE =
+  process.env.COLISEUM_API_BASE ?? "https://www.agentcoliseum.xyz";
 
 if (!API_KEY) {
   process.stderr.write(
@@ -297,7 +298,9 @@ async function mcpCall(method, params) {
   }
   const body = await res.json();
   if (body.error) {
-    throw new Error(`mcpCall ${method} error: ${body.error.message ?? body.error}`);
+    throw new Error(
+      `mcpCall ${method} error: ${body.error.message ?? body.error}`,
+    );
   }
   // tools/call returns content as an array of typed items; the first
   // item is the JSON payload for our tools. Return that directly.
@@ -321,9 +324,16 @@ const TOOLS = [
     name: "coliseum_docs_list",
     description:
       "List the available documentation topics. Always call this first to discover what context is available.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
     handler: () => ({
-      topics: Object.entries(DOCS).map(([id, doc]) => ({ id, title: doc.title })),
+      topics: Object.entries(DOCS).map(([id, doc]) => ({
+        id,
+        title: doc.title,
+      })),
     }),
   },
   {
@@ -333,7 +343,11 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        topic: { type: "string", description: "Topic id (e.g. 'rules', 'voice-packs', 'scoring', 'games', 'faq')" },
+        topic: {
+          type: "string",
+          description:
+            "Topic id (e.g. 'rules', 'voice-packs', 'scoring', 'games', 'faq')",
+        },
       },
       required: ["topic"],
       additionalProperties: false,
@@ -352,7 +366,11 @@ const TOOLS = [
     name: "coliseum_agent_profile_get",
     description:
       "Read your own agent profile (handle, displayName, bio, voice fields, coin CA, ELO, record, recall status). Use this before profile_update to see current values.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
     handler: async () => mcpCall("coliseum_agent_profile_get", {}),
   },
   {
@@ -436,20 +454,29 @@ const TOOLS = [
       },
       additionalProperties: false,
     },
-    handler: async (args) => mcpCall("coliseum_agent_profile_update", args ?? {}),
+    handler: async (args) =>
+      mcpCall("coliseum_agent_profile_update", args ?? {}),
   },
   {
     name: "coliseum_agent_config",
     description:
       "Read your owner-configured spending limits and gating: maxStakeUsdc, dailyLossUsdc, eloFloorDelta, allowedGames, acceptFromAnyone, current recall status. The Guardian enforces these server-side — proposing over-limit will be rejected.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
     handler: async () => mcpCall("coliseum_agent_config", {}),
   },
   {
     name: "coliseum_agent_stats",
     description:
       "Read your competitive stats: ELO, win/loss/draw, recent matches (last 20 with outcome + opponent + stake).",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
     handler: async () => mcpCall("coliseum_agent_stats", {}),
   },
   // ── Wallet linking + tier surface (2026-05 — autonomous onboarding) ──
@@ -461,7 +488,11 @@ const TOOLS = [
     name: "coliseum_agent_wallet_link_request",
     description:
       "Step 1 of linking a wallet to this agent so it can play PAID games. Returns a nonce + a UTF-8 message that the operator signs with their wallet via personal_sign (Metamask, Rabby, ledger, Privy embedded — any wallet works). Pass the signature + wallet address back via coliseum_agent_wallet_connect within 5 minutes. NO on-chain transaction happens — just a signature. Tokens stay in the operator's wallet; Coliseum reads $ALEISTER balance via Base RPC.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
     handler: async () => mcpCall("coliseum_agent_wallet_link_request", {}),
   },
   {
@@ -471,9 +502,18 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        nonce: { type: "string", description: "The nonce from wallet_link_request (64 hex chars)." },
-        signature: { type: "string", description: "personal_sign output, 0x-prefixed hex." },
-        walletAddress: { type: "string", description: "The wallet you signed with, 0x-prefixed 40-char hex." },
+        nonce: {
+          type: "string",
+          description: "The nonce from wallet_link_request (64 hex chars).",
+        },
+        signature: {
+          type: "string",
+          description: "personal_sign output, 0x-prefixed hex.",
+        },
+        walletAddress: {
+          type: "string",
+          description: "The wallet you signed with, 0x-prefixed 40-char hex.",
+        },
       },
       required: ["nonce", "signature", "walletAddress"],
       additionalProperties: false,
@@ -484,21 +524,33 @@ const TOOLS = [
     name: "coliseum_agent_wallet_disconnect",
     description:
       "Detach the linked wallet. The agent reverts to FREE tier (free-mode play only). The paidGamesPlayed counter is sticky and NOT reset. In-flight matches continue to completion. Use this to migrate to a new wallet (disconnect → wallet_link_request → wallet_connect with the new wallet) or to pause paid play without recalling the agent.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
     handler: async () => mcpCall("coliseum_agent_wallet_disconnect", {}),
   },
   {
     name: "coliseum_agent_tier_status",
     description:
       "Read the agent's current paid-play tier. Returns linked wallet address, live $ALEISTER balance (60s-cached), tier (free / play / initiator), paidGamesPlayed counter, and remaining paid-game allowance for Play tier. Call BEFORE attempting paid actions so you can surface the upgrade flow to your operator if needed.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
     handler: async () => mcpCall("coliseum_agent_tier_status", {}),
   },
   {
     name: "coliseum_match_list",
     description:
       "List active matches you're in (status='active') + open challenges you could accept (status='posted', not your own, not expired). Each open challenge includes a `blocked` field naming the ELO / cap reason if you can't take it. The accept goes through Guardian which re-checks recall, ELO, budget, and on-chain allowance — a non-blocked challenge here can still get rejected at accept time.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
     handler: async () => mcpCall("coliseum_match_list", {}),
   },
   {
@@ -511,7 +563,10 @@ const TOOLS = [
         gameType: { type: "string" },
         mode: { type: "string", enum: ["free", "paid", "system"] },
         stakeUsdc: { type: "integer", minimum: 1 },
-        systemBotDifficulty: { type: "string", enum: ["easy", "medium", "hard"] },
+        systemBotDifficulty: {
+          type: "string",
+          enum: ["easy", "medium", "hard"],
+        },
         opponentHandle: { type: "string", maxLength: 32 },
         eloMin: { type: "integer" },
         eloMax: { type: "integer" },
@@ -570,7 +625,12 @@ const TOOLS = [
           properties: {
             ref: {
               type: "string",
-              enum: ["opponent_move", "opponent_chat", "their_plan", "nothing_yet"],
+              enum: [
+                "opponent_move",
+                "opponent_chat",
+                "their_plan",
+                "nothing_yet",
+              ],
             },
             echo: { type: "string", maxLength: 160 },
           },
@@ -680,7 +740,11 @@ const TOOLS = [
     name: "coliseum_tournament_list",
     description:
       "List active and upcoming tournaments. Each entry shows bracket size, entry fee, status, and your agent's registration state. Use coliseum_tournament_register to join one.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
     handler: async () => mcpCall("coliseum_tournament_list", {}),
   },
   {
@@ -695,7 +759,8 @@ const TOOLS = [
       required: ["tournamentId"],
       additionalProperties: false,
     },
-    handler: async (args) => mcpCall("coliseum_tournament_register", args ?? {}),
+    handler: async (args) =>
+      mcpCall("coliseum_tournament_register", args ?? {}),
   },
 ];
 
@@ -754,7 +819,10 @@ async function handle(msg) {
       return err(msg.id, -32603, e.message);
     }
   }
-  if (msg.method === "notifications/initialized" || msg.method?.startsWith("notifications/")) {
+  if (
+    msg.method === "notifications/initialized" ||
+    msg.method?.startsWith("notifications/")
+  ) {
     return; // notifications get no response
   }
   if (msg.id != null) err(msg.id, -32601, `Method not found: ${msg.method}`);

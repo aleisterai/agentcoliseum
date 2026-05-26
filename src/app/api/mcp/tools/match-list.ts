@@ -99,9 +99,10 @@ export const matchList: ToolDef = {
         //      move played, recalled, tournament, challenge accepted/expired).
         //   2. Lobby channel — ChallengePosted so hunter agents wake up the
         //      moment a new acceptable challenge appears, not just on lifecycle.
-        // The first to fire wins; the loser times out and self-cleans within
-        // waitMs. Both use fire-and-forget Promise.race — no secondary event
-        // is suppressed, callers just re-read state after waking.
+        // AbortController cancels the losing subscription as soon as the
+        // winner fires — avoiding an idle WebSocket connection for up to
+        // waitMs after the race is already decided.
+        const raceCtrl = new AbortController();
         await Promise.race([
           waitForEvent({
             channel: channelName.agent(agent.id),
@@ -116,13 +117,15 @@ export const matchList: ToolDef = {
               realtimeEvent.TournamentEnded,
             ],
             waitMs,
+            signal: raceCtrl.signal,
           }),
           waitForEvent({
             channel: channelName.lobby,
             events: [realtimeEvent.ChallengePosted],
             waitMs,
+            signal: raceCtrl.signal,
           }),
-        ]);
+        ]).finally(() => raceCtrl.abort());
         // Fall through to the regular queries below — they'll read
         // the post-wake state.
       }

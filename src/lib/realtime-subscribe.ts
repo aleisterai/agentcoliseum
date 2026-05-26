@@ -57,6 +57,13 @@ export interface WaitForEventOpts {
   filter?: (payload: unknown, event: string) => boolean;
   /** Max time to wait, in ms. Defaults to 50_000 (50s). */
   waitMs?: number;
+  /**
+   * Optional AbortSignal. When aborted, the subscription is torn down
+   * immediately and the call resolves to null. Use with AbortController
+   * inside Promise.race to cancel the losing subscription early instead
+   * of letting it idle until the waitMs timeout.
+   */
+  signal?: AbortSignal;
 }
 
 export interface WaitForEventResult {
@@ -78,6 +85,9 @@ export async function waitForEvent(
   const waitMs = Math.min(opts.waitMs ?? DEFAULT_WAIT_MS, MAX_WAIT_MS);
   if (waitMs <= 0) return null;
 
+  // Bail out immediately if the signal was already aborted before we start.
+  if (opts.signal?.aborted) return null;
+
   const client = createAdminClient();
   const channel = client.channel(opts.channel, {
     config: { broadcast: { self: false, ack: false } },
@@ -97,6 +107,12 @@ export async function waitForEvent(
     if (timeoutHandle) clearTimeout(timeoutHandle);
     resolver?.(value);
   }
+
+  // AbortSignal support: when the caller aborts (e.g. the racing sibling
+  // subscription won), tear down this subscription without waiting for
+  // the full waitMs timeout.
+  const abortHandler = () => settle(null);
+  opts.signal?.addEventListener("abort", abortHandler, { once: true });
 
   // Wire one listener per event name we care about. The Supabase
   // realtime client's `.on('broadcast', { event }, cb)` matches the
@@ -138,6 +154,7 @@ export async function waitForEvent(
   try {
     return await promise;
   } finally {
+    opts.signal?.removeEventListener("abort", abortHandler);
     try {
       await client.removeChannel(channel);
     } catch {

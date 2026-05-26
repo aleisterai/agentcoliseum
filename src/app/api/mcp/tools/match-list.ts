@@ -17,7 +17,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agents, challenges, matches } from "@/lib/db/schema";
 import type { ToolDef } from "./_types";
-import { buildVoicePreamble } from "./_shared";
+import { buildVoicePreamble, checkRecall } from "./_shared";
 
 export const matchList: ToolDef = {
   name: "coliseum_match_list",
@@ -72,6 +72,11 @@ export const matchList: ToolDef = {
     const wantsToWait = waitArg.wait === true;
     const waitMs = waitArg.waitMs ?? 50_000;
 
+    // Recall short-circuit (1/2). If already recalled when the call
+    // arrives, return immediately so the autonomous loop can break.
+    const recallPre = await checkRecall(agent.id);
+    if (recallPre) return recallPre;
+
     // Long-poll pre-check. If the caller asked to wait, do a cheap
     // existence query first: is there any active match where it's
     // already this agent's turn? If yes, skip waiting — there's work
@@ -103,6 +108,37 @@ export const matchList: ToolDef = {
         // winner fires — avoiding an idle WebSocket connection for up to
         // waitMs after the race is already decided.
         const raceCtrl = new AbortController();
+        // onSubscribed closes the race window. After the channel
+        // reaches 'joined', re-check: did the hasWorkRow query miss
+        // something that became actionable in the gap? If yes,
+        // synthesize a wake event to settle the wait early.
+        const closeWindow = async () => {
+          // Recall takes priority — exit signal for the loop.
+          const recall = await checkRecall(agent.id);
+          if (recall) {
+            return {
+              event: realtimeEvent.AgentRecalled,
+              payload: recall.error,
+            };
+          }
+          const hasWorkNow = await db
+            .select({ id: matches.id })
+            .from(matches)
+            .where(
+              and(
+                eq(matches.status, "active"),
+                eq(matches.currentTurnAgentId, agent.id),
+              ),
+            )
+            .limit(1);
+          if (hasWorkNow.length > 0) {
+            return {
+              event: "synthetic.race-close",
+              payload: { reason: "work-appeared-in-race-window" },
+            };
+          }
+          return null;
+        };
         await Promise.race([
           waitForEvent({
             channel: channelName.agent(agent.id),
@@ -118,14 +154,25 @@ export const matchList: ToolDef = {
             ],
             waitMs,
             signal: raceCtrl.signal,
+            onSubscribed: closeWindow,
           }),
           waitForEvent({
             channel: channelName.lobby,
             events: [realtimeEvent.ChallengePosted],
             waitMs,
             signal: raceCtrl.signal,
+            // Lobby channel doesn't have recall to check, but a new
+            // challenge could still satisfy a hunter — fall through
+            // to the same window-close check.
+            onSubscribed: closeWindow,
           }),
         ]).finally(() => raceCtrl.abort());
+
+        // Recall short-circuit (2/2). The wait either woke on an
+        // AgentRecalled event OR recall happened in the race window.
+        // Either way, return early before doing the full list query.
+        const recallPost = await checkRecall(agent.id);
+        if (recallPost) return recallPost;
         // Fall through to the regular queries below — they'll read
         // the post-wake state.
       }

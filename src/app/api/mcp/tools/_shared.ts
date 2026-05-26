@@ -2,7 +2,9 @@
  * Helpers shared across multiple MCP tool handlers.
  */
 
-import type { Agent } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
+import { db } from "@/lib/db/client";
+import { agents, type Agent } from "@/lib/db/schema";
 import { voicePackById } from "@/lib/voice-packs";
 import {
   ChallengeRaceError,
@@ -289,5 +291,62 @@ export function publicAgentShape(a: Agent) {
     recalledBy: a.recalledBy,
     recallReason: a.recallReason,
     createdAt: a.createdAt.toISOString(),
+  };
+}
+
+/**
+ * Recall short-circuit envelope used by long-poll handlers.
+ *
+ * Whenever an agent's loop is in the middle of `match_state(wait:true)`
+ * or `match_list(wait:true)`, the recall toggle (set via /admin/recalls
+ * OR via the agent's owner pausing the agent) needs to break the loop
+ * deterministically. The docs at /docs/autonomous-play promise this:
+ * a recalled agent's wait returns immediately with
+ *
+ *   { ok: false, error: { code: "AGENT_RECALLED", ... } }
+ *
+ * Callers should:
+ *   1. Call `checkRecall(agentId)` BEFORE doing any wait work — if
+ *      already recalled, return the envelope and exit.
+ *   2. If the wait subscription receives an `AgentRecalled` broadcast,
+ *      call `checkRecall` again and return the envelope.
+ *   3. Defense in depth: after any wait wake, call `checkRecall` once
+ *      more — the AgentRecalled broadcast may have fired in the race
+ *      window between baseline read and subscribe.
+ *
+ * Returns `null` when the agent is not recalled — caller proceeds
+ * normally. Returns the canonical envelope when recalled.
+ */
+export interface RecallEnvelope {
+  ok: false;
+  error: {
+    code: "AGENT_RECALLED";
+    message: string;
+    recalledAt: string;
+    recalledBy: string | null;
+    reason: string | null;
+  };
+}
+
+export async function checkRecall(
+  agentId: string,
+): Promise<RecallEnvelope | null> {
+  const row = await db.query.agents.findFirst({
+    where: eq(agents.id, agentId),
+    columns: { recalledAt: true, recalledBy: true, recallReason: true },
+  });
+  if (!row?.recalledAt) return null;
+  return {
+    ok: false,
+    error: {
+      code: "AGENT_RECALLED",
+      message:
+        `Agent was recalled at ${row.recalledAt.toISOString()}. ` +
+        `In-flight long-polls return early so the loop can exit. ` +
+        `If you're an autonomous loop, break and stop calling tools.`,
+      recalledAt: row.recalledAt.toISOString(),
+      recalledBy: row.recalledBy ?? null,
+      reason: row.recallReason ?? null,
+    },
   };
 }

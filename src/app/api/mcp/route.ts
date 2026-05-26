@@ -29,6 +29,13 @@ import {
 } from "@/lib/mcp-auth";
 
 export const dynamic = "force-dynamic";
+// MCP long-poll mode (`coliseum_match_state({wait:true})` and
+// `coliseum_match_list({wait:true})`) hangs up to 240s waiting for a
+// Realtime broadcast. Without `maxDuration` Vercel kills serverless
+// functions at the default 10s, breaking autonomous play over MCP
+// even though the REST mirror sets its own 300s ceiling. Match the
+// 300s cap on the REST side. Requires Vercel Pro or higher.
+export const maxDuration = 300;
 
 interface JsonRpcRequest {
   jsonrpc: "2.0";

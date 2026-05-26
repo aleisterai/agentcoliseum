@@ -82,7 +82,7 @@ const StateArgs = z
 
 // computeUrgency now lives in ./_shared so match_move + propose
 // responses can use the same label set.
-import { computeUrgency } from "./_shared";
+import { checkRecall, computeUrgency } from "./_shared";
 
 /**
  * Build the voice context returned in `myVoice` / `opponentVoice`.
@@ -166,6 +166,14 @@ export const matchState: ToolDef = {
     if (!parsed.success) {
       return { error: `validation_failed: ${JSON.stringify(parsed.error.flatten())}` };
     }
+
+    // Recall short-circuit (1/3). If the caller is already recalled
+    // BEFORE we do any work, return the canonical envelope right away.
+    // The autonomous-play docs page promises this contract: a recalled
+    // agent's long-poll returns immediately so its loop can `break`.
+    const recallPre = await checkRecall(agent.id);
+    if (recallPre) return recallPre;
+
     let match = await db.query.matches.findFirst({
       where: eq(matches.id, parsed.data.matchId),
     });
@@ -243,7 +251,39 @@ export const matchState: ToolDef = {
 
       // We can only subscribe to one channel per waitForEvent call.
       // Wake on EITHER channel by racing two promises. Whichever wins,
-      // the loser is dropped (its subscription is cleaned up on return).
+      // the loser is cancelled via AbortController so its WebSocket
+      // tears down within microtask time instead of holding open for
+      // waitMs.
+      const raceCtrl = new AbortController();
+      // `onSubscribed` closes the race window: any broadcast that
+      // fired between the baseline read at line 169 and SUBSCRIBED
+      // here is lost (supabase-js drops broadcasts on channels not
+      // yet 'joined'). After SUBSCRIBED, re-check whether the wait
+      // condition is already satisfied (turn flipped to me OR match
+      // ended). If so, synthesize a wake event so we return without
+      // waiting for a second broadcast we'll never see.
+      const closeRace = async () => {
+        const fresh = await db.query.matches.findFirst({
+          where: eq(matches.id, watchedMatchId),
+          columns: { status: true, currentTurnAgentId: true },
+        });
+        if (!fresh) return null;
+        const terminal =
+          fresh.status === "completed" || fresh.status === "abandoned";
+        const myTurnNow =
+          fresh.status === "active" &&
+          fresh.currentTurnAgentId === agent.id;
+        if (terminal || myTurnNow) {
+          return {
+            event: "synthetic.race-close",
+            payload: {
+              matchId: watchedMatchId,
+              reason: terminal ? "match-terminal" : "my-turn",
+            },
+          };
+        }
+        return null;
+      };
       const ev = await Promise.race([
         waitForEvent({
           channel: matchChannel,
@@ -252,6 +292,8 @@ export const matchState: ToolDef = {
             realtimeEvent.GameEnded,
           ],
           waitMs,
+          signal: raceCtrl.signal,
+          onSubscribed: closeRace,
         }),
         waitForEvent({
           channel: agentChannel,
@@ -275,8 +317,30 @@ export const matchState: ToolDef = {
             return true;
           },
           waitMs,
+          signal: raceCtrl.signal,
+          // The agent-channel branch ALSO needs to recheck for the
+          // race window — recall could have fired in the gap.
+          onSubscribed: async () => {
+            const recall = await checkRecall(agent.id);
+            if (recall) {
+              return {
+                event: realtimeEvent.AgentRecalled,
+                payload: recall.error,
+              };
+            }
+            return closeRace();
+          },
         }),
-      ]);
+      ]).finally(() => raceCtrl.abort());
+
+      // Recall short-circuit (2/3). If the wait wake-up was an
+      // AgentRecalled broadcast on the agent channel, return early
+      // without re-reading match state — the loop should exit, not
+      // process another move.
+      if (ev?.event === "agent.recalled") {
+        const post = await checkRecall(agent.id);
+        if (post) return post;
+      }
 
       // Whether we got an event or timed out, re-read fresh state so
       // the response reflects the moment of return (not the moment of
@@ -284,6 +348,13 @@ export const matchState: ToolDef = {
       match = (await db.query.matches.findFirst({
         where: eq(matches.id, match.id),
       }))!;
+
+      // Recall short-circuit (3/3). Defense in depth: the AgentRecalled
+      // event might have fired in the race window between baseline read
+      // and subscribe, or the broadcast might have failed silently.
+      // Re-read recall state after wake too.
+      const recallPost = await checkRecall(agent.id);
+      if (recallPost) return recallPost;
 
       // Telemetry hook (no-op for now): `ev?.event` is the kind of
       // wake-up, useful for tracking long-poll hit rates.

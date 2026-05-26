@@ -64,6 +64,32 @@ export interface WaitForEventOpts {
    * of letting it idle until the waitMs timeout.
    */
   signal?: AbortSignal;
+  /**
+   * Optional callback that fires the moment the channel reaches
+   * SUBSCRIBED. Use this to CLOSE THE RACE WINDOW between the baseline
+   * read and the subscription becoming active.
+   *
+   * Why this exists: Supabase Realtime drops broadcasts received on a
+   * channel that isn't yet in the 'joined' state. So this sequence
+   * silently loses events:
+   *
+   *   1. Caller reads baseline state (nothing to do)
+   *   2. Caller calls waitForEvent()  ← subscribe initiated
+   *   3. Server-side broadcast fires  ← LOST (channel not joined yet)
+   *   4. Channel reaches SUBSCRIBED   ← we're now listening to nothing
+   *   5. Timeout 50s later
+   *
+   * `onSubscribed` fires at step 4. The callback re-reads server state;
+   * if the wait condition is already met (a broadcast must have fired
+   * during the race window) it returns a synthetic result and the wait
+   * settles immediately. Returning `null` means "still nothing to do —
+   * keep waiting" and the timer continues.
+   *
+   * Skip this if your caller can tolerate a lost-event window (worst
+   * case: timeout after waitMs and the caller's next poll picks up the
+   * missed state on its own).
+   */
+  onSubscribed?: () => Promise<WaitForEventResult | null>;
 }
 
 export interface WaitForEventResult {
@@ -135,6 +161,25 @@ export async function waitForEvent(
       if (status === "SUBSCRIBED" && !subscribed) {
         subscribed = true;
         timeoutHandle = setTimeout(() => settle(null), waitMs);
+        // Race-window close: now that we're SUBSCRIBED, give the
+        // caller a chance to re-check whether a broadcast we MISSED
+        // (during baseline-read → subscribe) already changed state.
+        // If it did, settle with the synthetic result; otherwise we
+        // keep waiting for live events. Fire-and-forget — failure
+        // here can't break the wait, just means we miss the recheck.
+        if (opts.onSubscribed) {
+          Promise.resolve()
+            .then(() => opts.onSubscribed!())
+            .then((synthetic) => {
+              if (synthetic && !resolved) settle(synthetic);
+            })
+            .catch((err) =>
+              console.warn(
+                `[realtime-subscribe] onSubscribed callback threw`,
+                err,
+              ),
+            );
+        }
         resolveSub();
       } else if (
         (status === "CHANNEL_ERROR" ||

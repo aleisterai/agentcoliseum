@@ -320,7 +320,7 @@ async function runToolBatteryWithBearer(
       gameType: "tic-tac-toe",
       mode: "free",
       opponentHandle: "mcp-duel-beta",
-      perMoveSeconds: 30,
+      perMoveSeconds: 120,
       timeoutMin: 30,
     });
     if ("error" in prop) throw new Error(prop.error);

@@ -54,7 +54,31 @@ import { agents, matches, matchChatMessages, matchMoves } from "@/lib/db/schema"
 import { SYSTEM_BOT_VOICE, voicePackById } from "@/lib/voice-packs";
 import type { ToolDef } from "./_types";
 
-const StateArgs = z.object({ matchId: z.string().uuid() }).strict();
+const StateArgs = z
+  .object({
+    matchId: z.string().uuid(),
+    /**
+     * Long-poll mode for autonomous play (2026-05).
+     *
+     * When `wait:true`, the handler does the usual baseline read; if
+     * it's NOT the agent's turn yet (and the match is still active),
+     * it subscribes to the `match:<id>` channel + the calling agent's
+     * `agent:<id>` channel and waits up to `waitMs` (default 50_000)
+     * for any of:
+     *   - opponent move played (`MovePlayed`)
+     *   - match terminal (`GameEnded` on match channel OR
+     *     `MatchEnded` on agent channel)
+     *   - this agent recalled (`AgentRecalled`)
+     *
+     * On wake, the handler re-reads + returns fresh state. Use this
+     * after every `coliseum_match_move` call — the next call hangs
+     * until the opponent moves OR the match ends, then returns
+     * immediately. Eliminates the need to poll on a fixed cadence.
+     */
+    wait: z.boolean().optional(),
+    waitMs: z.number().int().min(0).max(240_000).optional(),
+  })
+  .strict();
 
 // computeUrgency now lives in ./_shared so match_move + propose
 // responses can use the same label set.
@@ -114,6 +138,18 @@ export const matchState: ToolDef = {
     type: "object",
     properties: {
       matchId: { type: "string", format: "uuid" },
+      wait: {
+        type: "boolean",
+        description:
+          "Long-poll mode. If true and it's NOT your turn yet, the call blocks up to `waitMs` until the opponent moves OR the match ends. Use after every move to wake the moment your next turn is ready. No event = timeout returns fresh state anyway.",
+      },
+      waitMs: {
+        type: "integer",
+        minimum: 0,
+        maximum: 240000,
+        description:
+          "Max ms to wait when `wait:true`. Default 50000 (50s). Hard cap 240000 (4 min).",
+      },
     },
     required: ["matchId"],
     additionalProperties: false,
@@ -162,6 +198,96 @@ export const matchState: ToolDef = {
       match = (await db.query.matches.findFirst({
         where: eq(matches.id, match.id),
       }))!;
+    }
+
+    /*
+     * Long-poll wait mode (2026-05). Eliminates polling cadence for
+     * autonomous agents. When `wait:true`, we hang the request up to
+     * `waitMs` (default 50s) IF the match isn't ready for the caller
+     * to act on yet — meaning:
+     *
+     *   • match is active but NOT this agent's turn  (waiting for opponent's move)
+     *   • match is matching/escrowed (waiting to become active)
+     *
+     * If the match is already terminal OR it IS the agent's turn,
+     * return immediately. Same for `wait:false` (default).
+     *
+     * The race window between baseline read and subscribe is handled
+     * by waitForEvent's contract: caller must check state first, only
+     * subscribe if state is unsatisfied. If an event fires in the gap,
+     * the next state-read on wake will already reflect it — we just
+     * timeout normally.
+     */
+    const wantsToWait = parsed.data.wait === true;
+    const matchIsTerminal =
+      match.status === "completed" || match.status === "abandoned";
+    const matchIsActiveAndMyTurn =
+      match.status === "active" && match.currentTurnAgentId === agent.id;
+
+    if (wantsToWait && !matchIsTerminal && !matchIsActiveAndMyTurn) {
+      // Local imports — keeping them inside the conditional keeps the
+      // non-wait code-path's bundle slim and makes the dependency
+      // boundary obvious.
+      const [{ waitForEvent }, { channelName, realtimeEvent }] = await Promise.all([
+        import("@/lib/realtime-subscribe"),
+        import("@/lib/supabase"),
+      ]);
+
+      // Capture into a const so the filter closure below survives the
+      // let-rebinding of `match` after wake — TS narrowing of `match`
+      // doesn't cross async boundaries cleanly.
+      const watchedMatchId = match.id;
+      const matchChannel = channelName.game(watchedMatchId);
+      const agentChannel = channelName.agent(agent.id);
+      const waitMs = parsed.data.waitMs ?? 50_000;
+
+      // We can only subscribe to one channel per waitForEvent call.
+      // Wake on EITHER channel by racing two promises. Whichever wins,
+      // the loser is dropped (its subscription is cleaned up on return).
+      const ev = await Promise.race([
+        waitForEvent({
+          channel: matchChannel,
+          events: [
+            realtimeEvent.MovePlayed,
+            realtimeEvent.GameEnded,
+          ],
+          waitMs,
+        }),
+        waitForEvent({
+          channel: agentChannel,
+          events: [
+            realtimeEvent.MatchActivated,
+            realtimeEvent.MatchEnded,
+            realtimeEvent.AgentRecalled,
+          ],
+          // Filter to events for THIS match where possible so a
+          // MatchActivated/MatchEnded for a sibling match in this
+          // agent's list doesn't wake this per-match wait.
+          filter: (payload, event) => {
+            if (event === realtimeEvent.AgentRecalled) return true;
+            if (
+              typeof payload === "object" &&
+              payload !== null &&
+              "matchId" in payload
+            ) {
+              return (payload as { matchId?: string }).matchId === watchedMatchId;
+            }
+            return true;
+          },
+          waitMs,
+        }),
+      ]);
+
+      // Whether we got an event or timed out, re-read fresh state so
+      // the response reflects the moment of return (not the moment of
+      // the baseline read 50s ago).
+      match = (await db.query.matches.findFirst({
+        where: eq(matches.id, match.id),
+      }))!;
+
+      // Telemetry hook (no-op for now): `ev?.event` is the kind of
+      // wake-up, useful for tracking long-poll hit rates.
+      void ev;
     }
     const opponentId = match.p1AgentId === agent.id ? match.p2AgentId : match.p1AgentId;
     const opponent = opponentId

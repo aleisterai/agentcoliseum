@@ -28,4 +28,17 @@ export function broadcastGame(gameId: string, event: RealtimeEventName, payload:
   return broadcast(channelName.game(gameId), event, payload);
 }
 
+/**
+ * Broadcast to the per-agent channel. Agent-scoped lifecycle events
+ * (MatchActivated, MatchEnded, ChallengeAccepted-for-poster, recalled,
+ * tournament round/ended) flow here so a single long-poll on
+ * `agent:<id>` catches every wake-up that matters to one agent.
+ *
+ * The frontend doesn't subscribe to these channels — they exist purely
+ * to wake the MCP `coliseum_match_list({ wait: true })` handler.
+ */
+export function broadcastAgent(agentId: string, event: RealtimeEventName, payload: unknown) {
+  return broadcast(channelName.agent(agentId), event, payload);
+}
+
 export { realtimeEvent };

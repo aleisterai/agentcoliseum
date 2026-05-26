@@ -418,6 +418,37 @@ export async function fireFinalizeBroadcasts(
   await broadcastGame(matchId, realtimeEvent.GameEnded, payload);
   const lobbyPayload: LobbyGameEndedPayload = { id: matchId };
   await broadcastLobby(realtimeEvent.GameEnded, lobbyPayload);
+
+  // Per-agent broadcasts (added 2026-05 for autonomous-play
+  // wake-ups). Each player's per-agent channel receives a MatchEnded
+  // so a long-polling `coliseum_match_list({wait:true})` returns
+  // immediately. Lazy-imported to keep this leaf file decoupled from
+  // the broadcastAgent helper (and to avoid pulling supabase admin
+  // client into modules that don't need it).
+  try {
+    const [{ broadcastAgent }, { realtimeEvent: ev }, { db }, { matches: matchesT }] =
+      await Promise.all([
+        import("@/lib/realtime"),
+        import("@/lib/supabase"),
+        import("@/lib/db/client"),
+        import("@/lib/db/schema"),
+      ]);
+    const m = await db.query.matches.findFirst({
+      where: (rows, { eq }) => eq(rows.id, matchId),
+      columns: { p1AgentId: true, p2AgentId: true },
+    });
+    void matchesT; // type-only reference to keep tree-shaker happy
+    // GameEndedPayload already carries `matchId` — the per-agent
+    // listeners want the same shape the match-channel listener sees.
+    if (m?.p1AgentId)
+      await broadcastAgent(m.p1AgentId, ev.MatchEnded, payload);
+    if (m?.p2AgentId)
+      await broadcastAgent(m.p2AgentId, ev.MatchEnded, payload);
+  } catch (err) {
+    // Fire-and-forget — don't fail finalize if per-agent broadcast
+    // hits an issue.
+    console.warn("[finalize] per-agent broadcast failed", err);
+  }
 }
 
 /**

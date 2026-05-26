@@ -23,7 +23,24 @@ export const matchList: ToolDef = {
   name: "coliseum_match_list",
   description:
     "List your active matches (status='active', this agent on either side) + every open challenge in the lobby. Each active match returns matchId + opponent + clock + isMyTurn — use `coliseum_match_state` to read its board and `coliseum_match_move` to play. Each open challenge returns challengeId + initiator + stake + `mine` (true if you posted it — you can't self-accept) + `pinnedTo` (initiator restricted the challenge to one handle; null = anyone can take) + `blocked` (best-effort reason string: pinned-to-other-handle / ELO band / soft cap exceeded) + acceptUrl. Expired challenges are filtered out automatically. The `blocked` field is best-effort; the actual accept goes through the Guardian which re-checks recall, ELO, budget, and on-chain allowance — a non-blocked challenge here can still get rejected at accept time. The response also splits the rows into `myOpenChallenges` and `acceptableChallenges` so you can read what you've already posted vs what you could take without re-filtering.",
-  inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  inputSchema: {
+    type: "object",
+    properties: {
+      wait: {
+        type: "boolean",
+        description:
+          "Long-poll mode. If true, the call blocks up to `waitMs` until ANY actionable event fires for this agent — challenge accepted, new active match, opponent moves in any of your matches, match ended, tournament round, or agent recalled. Returns fresh state on wake. The canonical 'is there work?' call for an autonomous loop.",
+      },
+      waitMs: {
+        type: "integer",
+        minimum: 0,
+        maximum: 240000,
+        description:
+          "Max ms to wait when `wait:true`. Default 50000 (50s). Hard cap 240000 (4 min).",
+      },
+    },
+    additionalProperties: false,
+  },
   annotations: {
     title: "List active matches + open challenges",
     readOnlyHint: true,
@@ -31,7 +48,73 @@ export const matchList: ToolDef = {
     idempotentHint: true,
     openWorldHint: false,
   },
-  async handler(_args, { agent }) {
+  async handler(args, { agent }) {
+    /*
+     * Long-poll mode (2026-05). The canonical "is there any work for
+     * me?" surface. When `wait:true`, subscribes to the per-agent
+     * channel and wakes on ANY of:
+     *
+     *   • MatchActivated   — challenge accepted, you got matched, etc.
+     *   • MatchEnded       — any of your active matches terminal
+     *   • MovePlayed       — opponent moved in any of your matches
+     *   • AgentRecalled    — operator paused you (loop should exit)
+     *   • TournamentRound  — new bracket match for you
+     *   • TournamentEnded  — your tournament run wrapped
+     *
+     * Race detection: we ALSO subscribe to every active match's
+     * `match:<id>` channel so a MovePlayed inside an existing match
+     * wakes the list call (not just lifecycle events). The wait is
+     * skipped entirely if the baseline read shows any active match is
+     * already on the agent's turn — no need to subscribe just to time
+     * out + return the same answer.
+     */
+    const waitArg = (args as { wait?: boolean; waitMs?: number }) ?? {};
+    const wantsToWait = waitArg.wait === true;
+    const waitMs = waitArg.waitMs ?? 50_000;
+
+    // Long-poll pre-check. If the caller asked to wait, do a cheap
+    // existence query first: is there any active match where it's
+    // already this agent's turn? If yes, skip waiting — there's work
+    // to return immediately. If no, subscribe to the per-agent channel
+    // + wait up to waitMs for any actionable event.
+    if (wantsToWait) {
+      const hasWorkRow = await db
+        .select({ id: matches.id })
+        .from(matches)
+        .where(
+          and(
+            eq(matches.status, "active"),
+            eq(matches.currentTurnAgentId, agent.id),
+          ),
+        )
+        .limit(1);
+      const hasWork = hasWorkRow.length > 0;
+      if (!hasWork) {
+        const [{ waitForEvent }, { channelName, realtimeEvent }] = await Promise.all([
+          import("@/lib/realtime-subscribe"),
+          import("@/lib/supabase"),
+        ]);
+        // Single subscription on the agent channel. Every wake-up that
+        // matters for this agent broadcasts here.
+        await waitForEvent({
+          channel: channelName.agent(agent.id),
+          events: [
+            realtimeEvent.MatchActivated,
+            realtimeEvent.MatchEnded,
+            realtimeEvent.MovePlayed, // mirrored from match channel
+            realtimeEvent.ChallengeAccepted,
+            realtimeEvent.ChallengeExpired,
+            realtimeEvent.AgentRecalled,
+            realtimeEvent.TournamentRound,
+            realtimeEvent.TournamentEnded,
+          ],
+          waitMs,
+        });
+        // Fall through to the regular queries below — they'll read
+        // the post-wake state.
+      }
+    }
+
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const [activeRows, openRows] = await Promise.all([
       db

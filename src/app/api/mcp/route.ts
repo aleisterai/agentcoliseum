@@ -18,18 +18,15 @@
  * doesn't change.
  */
 import { NextResponse, type NextRequest } from "next/server";
-import { and, eq, gt, isNull } from "drizzle-orm";
 import { z } from "zod";
-import { db } from "@/lib/db/client";
-import { agents, mcpOauthTokens } from "@/lib/db/schema";
-import {
-  checkAndRecord as checkRateLimit,
-  RATE_LIMIT_CONFIG,
-} from "@/lib/guardian/rate-limit";
-import { TOKEN_PREFIX as OAUTH_TOKEN_PREFIX } from "@/lib/mcp-oauth";
 import { TOOLS, TOOLS_BY_NAME } from "./tools";
 import { requirePlayAccess } from "@/lib/chain/tiers";
-import type { Agent } from "@/lib/db/schema";
+import {
+  bearerFrom,
+  checkBearerRateLimit,
+  lookupAgentByToken,
+  stampLastMcpAt,
+} from "@/lib/mcp-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -55,54 +52,6 @@ function err(
     id: id ?? null,
     error: { code, message, data },
   });
-}
-
-function bearerFrom(req: Request): string | null {
-  const h =
-    req.headers.get("authorization") ?? req.headers.get("Authorization");
-  if (!h) return null;
-  const [scheme, token] = h.split(" ", 2);
-  if (!scheme || scheme.toLowerCase() !== "bearer" || !token) return null;
-  return token.trim();
-}
-
-/**
- * Resolve a Bearer token to an agent. Accepts two formats:
- *
- *   - `acoth_…` — OAuth access token minted by /api/mcp/oauth/token.
- *     The token row carries the agentId bound at consent time. We
- *     refuse expired or revoked rows here so the client gets a clean
- *     401 instead of leaking through.
- *
- *   - `ack_…`   — legacy direct agent apiKey, used by Claude Desktop
- *     (.mcpb), Cursor, Claude Code CLI, and the
- *     scripts/mcp-duel.ts harness. No expiry; rotated manually from
- *     the dashboard.
- *
- * Both lookups are single-column primary-key reads, so this stays
- * fast even with the extra branch.
- */
-async function lookupAgent(token: string): Promise<Agent | null> {
-  if (token.startsWith(OAUTH_TOKEN_PREFIX)) {
-    const now = new Date();
-    const row = await db.query.mcpOauthTokens.findFirst({
-      where: and(
-        eq(mcpOauthTokens.accessToken, token),
-        isNull(mcpOauthTokens.revokedAt),
-        gt(mcpOauthTokens.expiresAt, now),
-      ),
-    });
-    if (!row) return null;
-    return (
-      (await db.query.agents.findFirst({
-        where: eq(agents.id, row.agentId),
-      })) ?? null
-    );
-  }
-  return (
-    (await db.query.agents.findFirst({ where: eq(agents.apiKey, token) })) ??
-    null
-  );
 }
 
 const InitializeParams = z
@@ -132,14 +81,15 @@ export async function POST(req: NextRequest) {
   }
 
   // Per-credential rate limit BEFORE the DB lookup. Cheap rejection of
-  // a runaway-LLM looping on the same bearer.
-  const rl = await checkRateLimit(token);
+  // a runaway-LLM looping on the same bearer. Shared with the REST
+  // mirror so an agent that flips between transports can't double-dip.
+  const rl = await checkBearerRateLimit(token);
   if (!rl.allowed) {
     const seconds = Math.ceil(rl.resetMs / 1000);
     return err(
       null,
       -32004,
-      `Rate limit exceeded — ${RATE_LIMIT_CONFIG.max}/${RATE_LIMIT_CONFIG.windowMs / 1000}s. Back off for ~${seconds}s.`,
+      `Rate limit exceeded — ${rl.config.max}/${rl.config.windowMs / 1000}s. Back off for ~${seconds}s.`,
     );
   }
 
@@ -153,7 +103,7 @@ export async function POST(req: NextRequest) {
     return err(body.id, -32600, "Invalid JSON-RPC request");
   }
 
-  const agent = await lookupAgent(token);
+  const agent = await lookupAgentByToken(token);
   if (!agent) {
     return err(body.id, -32002, "Credential not recognized");
   }
@@ -161,11 +111,7 @@ export async function POST(req: NextRequest) {
   // Stamp last-MCP-activity so the owner's manage page shows a fresh
   // "Connected · 2m ago" indicator. Fire-and-forget — a slow write
   // here can't delay the tool response.
-  void db
-    .update(agents)
-    .set({ lastMcpAt: new Date() })
-    .where(eq(agents.id, agent.id))
-    .catch(() => {});
+  stampLastMcpAt(agent.id);
 
   try {
     switch (body.method) {
@@ -253,6 +199,23 @@ export async function POST(req: NextRequest) {
       }
 
       default:
+        // Common-mistake hint: callers (especially cron jobs hand-rolling
+        // JSON-RPC) often pass the tool name AS the method, like
+        //   { "method": "coliseum_match_state", ... }
+        // The MCP envelope requires the tool name in `params.name` and the
+        // method to be `tools/call`. Return a self-correcting error that
+        // walks the operator to the fix instead of just -32601.
+        if (body.method.startsWith("coliseum_")) {
+          return err(
+            body.id,
+            -32601,
+            `'${body.method}' is a tool name, not an RPC method. ` +
+              `Wrap it: {"jsonrpc":"2.0","method":"tools/call","params":{"name":"${body.method}","arguments":{...}},"id":1}. ` +
+              `For curl/cron without the MCP envelope, use the REST mirror: ` +
+              `https://www.agentcoliseum.xyz/api/v1/...  ` +
+              `Docs: https://docs.agentcoliseum.xyz/docs/autonomous-play`,
+          );
+        }
         return err(body.id, -32601, `Method not found: ${body.method}`);
     }
   } catch (e) {

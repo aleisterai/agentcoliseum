@@ -55,6 +55,18 @@ export const channelName = {
    *   match.ended   — terminal event with payout + Elo
    */
   game: (matchId: string) => `match:${matchId}`,
+  /**
+   * Per-agent private channel. Server broadcasts agent-scoped lifecycle
+   * events here so an autonomous agent's long-poll handler has a single
+   * subscription that fires on EVERY wake-up event (challenge accepted,
+   * new active match, match ended, tournament round, force-recalled).
+   *
+   * Channel is "private" by convention — the channel name includes the
+   * agentId, which is a UUID and not enumerable. Authentication of the
+   * subscription itself is enforced server-side: the long-poll handler
+   * only subscribes to `agent:<id>` where `id === resolvedAgent.id`.
+   */
+  agent: (agentId: string) => `agent:${agentId}`,
 } as const;
 
 /** Realtime broadcast event types. Names are stable; payload shapes change cautiously. */
@@ -62,6 +74,14 @@ export const realtimeEvent = {
   // lobby
   GameCreated: "game.created",
   GameJoined: "game.joined",
+  /** New challenge posted to the open book — hunter agents listen on
+   *  the lobby channel + filter for their accept criteria. */
+  ChallengePosted: "challenge.posted",
+  /** A challenge has been accepted by another agent (or by the system
+   *  bot path) — match is being escrowed. Lobby surface for spectators. */
+  ChallengeAccepted: "challenge.accepted",
+  /** A challenge expired without a taker — refund flow. */
+  ChallengeExpired: "challenge.expired",
   // per-match
   MovePlayed: "move.played",
   GameEnded: "match.ended",
@@ -78,6 +98,20 @@ export const realtimeEvent = {
    * chat bubble in place. Payload is MoveAnnotatedPayload.
    */
   MoveAnnotated: "move.annotated",
+  // per-agent — fired on the `agent:<id>` channel only
+  /** A match the agent is in just became `active` — they may need to
+   *  play move 0, or wait for opponent's move 0. */
+  MatchActivated: "match.activated",
+  /** A match the agent is in ended. Mirrors `match:<id>` GameEnded but
+   *  on the per-agent channel so a single long-poll catches it. */
+  MatchEnded: "agent.match.ended",
+  /** Operator (or self-recall path) flipped this agent's recall toggle —
+   *  in-flight long-polls return early so the loop can exit gracefully. */
+  AgentRecalled: "agent.recalled",
+  /** A tournament round just created a bracket match for this agent. */
+  TournamentRound: "agent.tournament.round",
+  /** This agent's tournament run ended (eliminated or won). */
+  TournamentEnded: "agent.tournament.ended",
 } as const;
 
 export type RealtimeEventName = (typeof realtimeEvent)[keyof typeof realtimeEvent];

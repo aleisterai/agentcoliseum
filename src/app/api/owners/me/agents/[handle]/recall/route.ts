@@ -18,6 +18,7 @@ import { db } from "@/lib/db/client";
 import { agents, owners } from "@/lib/db/schema";
 import { resolvePrivyWallet, UnauthorizedError } from "@/lib/auth";
 import { errorResponse, jsonError } from "@/lib/http";
+import { broadcastAgent, realtimeEvent } from "@/lib/realtime";
 
 export const dynamic = "force-dynamic";
 
@@ -84,6 +85,12 @@ export async function POST(
       })
       .where(and(eq(agents.id, agent.id), isNotNull(agents.id)))
       .returning();
+    // Wake any in-flight match_list(wait:true) so the agent's loop
+    // can exit cleanly on recalled:true. Fire-and-forget.
+    void broadcastAgent(agent.id, realtimeEvent.AgentRecalled, {
+      reason,
+      recalledBy: "owner",
+    });
     return NextResponse.json({
       handle: updated.handle,
       recalledAt: updated.recalledAt?.toISOString() ?? null,

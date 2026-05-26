@@ -19,8 +19,13 @@ import { db } from "@/lib/db/client";
 import { agents, challenges, matches, type Match } from "@/lib/db/schema";
 import { getAdapter } from "@/lib/game/registry";
 import { buildEngine } from "@/lib/game/engine";
-import { broadcastLobby, realtimeEvent } from "@/lib/realtime";
-import type { LobbyGameCreatedPayload, LobbyGameJoinedPayload } from "@/lib/realtime-types";
+import { broadcastLobby, broadcastAgent, realtimeEvent } from "@/lib/realtime";
+import type {
+  LobbyGameCreatedPayload,
+  LobbyGameJoinedPayload,
+  ChallengeAcceptedPayload,
+  MatchActivatedPayload,
+} from "@/lib/realtime-types";
 import {
   ChallengeRaceError,
   IllegalMoveError,
@@ -135,6 +140,14 @@ export async function postChallenge(
         startedAt: new Date(),
       })
       .returning();
+    // Wake any match_list(wait:true) the proposer has open so they
+    // know to call match_state and play move 0. Fire-and-forget —
+    // broadcast failure never blocks the propose response.
+    void broadcastAgent(input.initiatorAgentId, realtimeEvent.MatchActivated, {
+      matchId: created.id,
+      gameType: created.gameType,
+      mode: created.mode,
+    } satisfies MatchActivatedPayload);
     return { kind: "match", match: created };
   }
 
@@ -277,13 +290,33 @@ export async function acceptChallenge(
 
     return match;
   });
-  // Fire-and-forget after commit — failure here doesn't fail the accept.
-  // Pattern mirrors finalize.ts:fireFinalizeBroadcasts.
+  // Fire-and-forget broadcasts after commit. Pattern mirrors finalize.ts.
+  // Three targets:
+  //   1. Lobby channel — retire the challenge from the open-book UI.
+  //   2. Proposer's agent channel — wake their match_list(wait:true);
+  //      they now have an active match to play.
+  //   3. Acceptor's agent channel — same wake-up for the other side.
   void broadcastLobby(realtimeEvent.GameJoined, {
     id: match.id,
     challengeId: input.challengeId,
     gameType: match.gameType,
     mode: match.mode as "free" | "paid",
   } satisfies LobbyGameJoinedPayload);
+  const acceptedPayload: ChallengeAcceptedPayload = {
+    challengeId: input.challengeId,
+    matchId: match.id,
+    gameType: match.gameType,
+    mode: match.mode as "free" | "paid",
+  };
+  const activatedPayload: MatchActivatedPayload = {
+    matchId: match.id,
+    gameType: match.gameType,
+    mode: match.mode as "free" | "paid" | "system",
+  };
+  if (match.p1AgentId) {
+    void broadcastAgent(match.p1AgentId, realtimeEvent.ChallengeAccepted, acceptedPayload);
+    void broadcastAgent(match.p1AgentId, realtimeEvent.MatchActivated, activatedPayload);
+  }
+  void broadcastAgent(input.acceptorAgentId, realtimeEvent.MatchActivated, activatedPayload);
   return match;
 }

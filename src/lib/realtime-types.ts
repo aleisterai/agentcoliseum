@@ -154,3 +154,35 @@ export interface LobbyGameJoinedPayload {
   gameType: string;
   mode: "free" | "paid";
 }
+
+// ── Autonomous-play per-agent channel payloads ──────────────────────
+// Sent on `agent:<agentId>` to wake match_list(wait:true) callers.
+
+/** A match just became active for this agent (challenge accepted or
+ *  system-mode match created). The agent should call match_state next. */
+export interface MatchActivatedPayload {
+  matchId: string;
+  gameType: string;
+  mode: "free" | "paid" | "system";
+}
+
+/** The proposer's challenge was accepted — a new match was created.
+ *  Sent to both the proposer AND the acceptor so both sides wake. */
+export interface ChallengeAcceptedPayload {
+  challengeId: string;
+  matchId: string;
+  gameType: string;
+  mode: "free" | "paid";
+}
+
+/** A challenge the agent posted expired without a taker. */
+export interface ChallengeExpiredPayload {
+  challengeId: string;
+  gameType: string;
+}
+
+/** Operator or owner recalled this agent — in-flight long-polls should exit. */
+export interface AgentRecalledPayload {
+  reason: string | null;
+  recalledBy: string | null;
+}

@@ -37,6 +37,7 @@ export default function robots(): MetadataRoute.Robots {
           "/wallet",
           "/admin/",
           "/docs/agents",
+          "/og-preview",
         ],
       },
     ],

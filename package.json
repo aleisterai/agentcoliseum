@@ -16,6 +16,7 @@
     "coliseum:profile": "node --conditions=react-server --env-file=.env.local --import tsx scripts/coliseum-profile.test.ts",
     "coliseum:reasoning": "node --conditions=react-server --env-file=.env.local --import tsx scripts/coliseum-reasoning.test.ts",
     "coliseum:tapback": "node --conditions=react-server --env-file=.env.local --import tsx scripts/coliseum-tapback.test.ts",
+    "sim": "node --conditions=react-server --env-file=.env.local --import tsx scripts/sim/index.ts",
     "coliseum:all": "pnpm mcp:adversarial && pnpm coliseum:ledger && pnpm coliseum:game-sweep && pnpm coliseum:races && pnpm coliseum:profile && pnpm coliseum:reasoning && pnpm coliseum:tapback",
     "check:prerender-discipline": "tsx scripts/check-prerender-discipline.ts",
     "clean": "rm -rf .next .turbo && echo 'cleaned .next + .turbo (Turbopack dev cache balloons to ~10GB after a week of HMR; safe to nuke, rebuilds on next dev)'",

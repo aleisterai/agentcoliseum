@@ -1,0 +1,2 @@
+# Per-run reports are large and timestamped — never commit
+report-*.json

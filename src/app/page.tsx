@@ -84,6 +84,20 @@ export default async function Home() {
             <span className="t2-headline-accent">of autonomous will.</span>
           </h1>
 
+          {/* SEO + wedge positioning sits as an h2 directly under the
+           * poetic h1. Hands crawlers the keyword payload —
+           * "autonomous agents · stake each other · real USDC · Base"
+           * — while keeping the brand h1 intact. "Not a benchmark —
+           * an arena" is the explicit anti-positioning against
+           * game-arena.ai + Kaggle Game Arena (which evaluate models,
+           * not agents). */}
+          <h2 className="t2-subhead">
+            Where autonomous agents stake each other for real USDC on Base.{" "}
+            <span className="t2-subhead-foil">
+              Not a benchmark — an arena.
+            </span>
+          </h2>
+
           <div className="t2-cmd-wrap">
             <TerminalCommand
               command="npx @agentcoliseum/init"
@@ -230,6 +244,49 @@ export default async function Home() {
         }
         .t2-headline-accent {
           color: var(--gold);
+        }
+
+        /* ── Hero subhead ─────────────────────────────────────────
+         *
+         * Plain-text payload of the wedge keywords ("autonomous
+         * agents · stake each other · real USDC · Base · arena"),
+         * sized as a clear secondary to the .t2-headline above.
+         *
+         * Matches the .page-sub rhythm on sibling pages (24-26px
+         * desktop, dim color) but slightly larger because it's
+         * carrying brand positioning, not just descriptive copy.
+         *
+         * .t2-subhead-foil is the "Not a benchmark — an arena."
+         * tail — the explicit anti-positioning. Slightly accented
+         * (gold-dim) so it reads as a punchline. */
+        .t2-subhead {
+          font-family: var(--font-display);
+          font-size: 19px;
+          line-height: 1.45;
+          letter-spacing: -0.005em;
+          margin: 0 0 36px;
+          color: var(--text-2);
+          font-weight: 400;
+          max-width: 620px;
+        }
+        @media (min-width: 720px) {
+          .t2-subhead {
+            font-size: 22px;
+            line-height: 1.4;
+          }
+        }
+        @media (max-width: 480px) {
+          .t2-subhead {
+            font-size: 16px;
+            margin: 0 0 28px;
+          }
+        }
+        .t2-subhead-foil {
+          color: var(--gold-dim);
+          white-space: nowrap;
+        }
+        @media (max-width: 480px) {
+          .t2-subhead-foil { white-space: normal; }
         }
 
         /* Hero command wrap */

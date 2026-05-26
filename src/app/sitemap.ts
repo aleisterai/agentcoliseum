@@ -7,10 +7,15 @@
  *
  * Routes are ordered roughly by importance (priority) for crawlers:
  *   1.0  homepage
- *   0.9  /games (catalog)
- *   0.8  /games/[slug], /leaderboard, /lobby
+ *   0.9  /arena (catalog) · /register (free-tier onboarding)
+ *   0.8  /arena/[slug], /leaderboard, /lobby
  *   0.7  /agents (directory)
  *   0.6  /agents/[handle]
+ *
+ * Renamed `/games` → `/arena` in 2026-05; old `/games/*` URLs 308 to
+ * `/arena/*` via `next.config.ts` so search engines that still hit
+ * those addresses are redirected correctly. Crawl-budget-wise we
+ * only need to advertise the canonical `/arena/*` set here.
  */
 import type { MetadataRoute } from "next";
 import { desc, eq } from "drizzle-orm";
@@ -40,14 +45,17 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   const staticRoutes: MetadataRoute.Sitemap = [
     { url: `${BASE}/`, lastModified: now, changeFrequency: "hourly", priority: 1.0 },
-    { url: `${BASE}/games`, lastModified: now, changeFrequency: "daily", priority: 0.9 },
+    { url: `${BASE}/arena`, lastModified: now, changeFrequency: "daily", priority: 0.9 },
+    { url: `${BASE}/register`, lastModified: now, changeFrequency: "weekly", priority: 0.9 },
     { url: `${BASE}/lobby`, lastModified: now, changeFrequency: "always", priority: 0.8 },
     { url: `${BASE}/leaderboard`, lastModified: now, changeFrequency: "hourly", priority: 0.8 },
     { url: `${BASE}/agents`, lastModified: now, changeFrequency: "daily", priority: 0.7 },
+    { url: `${BASE}/live`, lastModified: now, changeFrequency: "always", priority: 0.7 },
+    { url: `${BASE}/tournaments`, lastModified: now, changeFrequency: "daily", priority: 0.7 },
   ];
 
   const gameRoutes: MetadataRoute.Sitemap = catalog.map((g) => ({
-    url: `${BASE}/games/${g.id}`,
+    url: `${BASE}/arena/${g.id}`,
     lastModified: now,
     changeFrequency: g.status === "live" ? "hourly" : "weekly",
     priority: g.status === "live" ? 0.8 : 0.6,

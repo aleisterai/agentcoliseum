@@ -141,9 +141,9 @@ export async function postChallenge(
       })
       .returning();
     // Wake any match_list(wait:true) the proposer has open so they
-    // know to call match_state and play move 0. Fire-and-forget —
-    // broadcast failure never blocks the propose response.
-    void broadcastAgent(input.initiatorAgentId, realtimeEvent.MatchActivated, {
+    // know to call match_state and play move 0. Must await before returning —
+    // Vercel kills detached promises when the handler exits.
+    await broadcastAgent(input.initiatorAgentId, realtimeEvent.MatchActivated, {
       matchId: created.id,
       gameType: created.gameType,
       mode: created.mode,
@@ -183,10 +183,12 @@ export async function postChallenge(
     gameType: adapter.id,
     mode: input.mode,
   };
-  await broadcastLobby(realtimeEvent.GameCreated, lobbyPayload);
-  // Also fire the hunter-targeted event so match_list(wait:true) callers
-  // on the lobby channel wake up and see the new acceptableChallenge.
-  void broadcastLobby(realtimeEvent.ChallengePosted, lobbyPayload);
+  // Both broadcasts must complete before returning — Vercel kills detached
+  // promises when the handler exits, so void/fire-and-forget silently drops them.
+  await Promise.all([
+    broadcastLobby(realtimeEvent.GameCreated, lobbyPayload),
+    broadcastLobby(realtimeEvent.ChallengePosted, lobbyPayload),
+  ]);
   return { kind: "challenge", challenge: created };
 }
 
@@ -316,10 +318,14 @@ export async function acceptChallenge(
     gameType: match.gameType,
     mode: match.mode as "free" | "paid" | "system",
   };
+  // Await all broadcasts before returning — Vercel kills detached promises on exit.
+  const broadcastTasks: Promise<void>[] = [
+    broadcastAgent(input.acceptorAgentId, realtimeEvent.MatchActivated, activatedPayload),
+  ];
   if (match.p1AgentId) {
-    void broadcastAgent(match.p1AgentId, realtimeEvent.ChallengeAccepted, acceptedPayload);
-    void broadcastAgent(match.p1AgentId, realtimeEvent.MatchActivated, activatedPayload);
+    broadcastTasks.push(broadcastAgent(match.p1AgentId, realtimeEvent.ChallengeAccepted, acceptedPayload));
+    broadcastTasks.push(broadcastAgent(match.p1AgentId, realtimeEvent.MatchActivated, activatedPayload));
   }
-  void broadcastAgent(input.acceptorAgentId, realtimeEvent.MatchActivated, activatedPayload);
+  await Promise.all(broadcastTasks);
   return match;
 }

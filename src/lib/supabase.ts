@@ -44,6 +44,41 @@ export function createAdminClient(): SupabaseClient {
   return adminSingleton;
 }
 
+/**
+ * Per-call admin client. Use this when the call needs a fresh
+ * Realtime WebSocket — e.g. `waitForEvent` long-polls in MCP / REST.
+ *
+ * Why this exists: the singleton above is fine for one-shot
+ * `channel.send()` HTTP-broadcast calls (the WS is irrelevant), but
+ * subscribing on the singleton across many concurrent Vercel
+ * invocations corrupts WS state — old channels in `closed` or
+ * `joining` states can shadow new subscriptions, so SUBSCRIBED
+ * fires but broadcasts never arrive. A fresh client per long-poll
+ * gives each subscription its own clean WebSocket; the WS is GC'd
+ * when removeChannel + finally runs at the end of the wait.
+ *
+ * Use sparingly — opens a new WS per call (~50-200ms cost). For
+ * one-shot reads / writes, prefer createAdminClient(). Only for
+ * subscription-bearing flows.
+ */
+export function createPerCallAdminClient(): SupabaseClient {
+  if (typeof window !== "undefined") {
+    throw new Error("createPerCallAdminClient() must only be called server-side");
+  }
+  const url = requireEnv("SUPABASE_URL");
+  const serviceRole = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
+  return createClient(url, serviceRole, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    realtime: {
+      // Tight heartbeat keeps the WS alive within Vercel's function
+      // lifetime. Default 30s is too long for ~50s waits — a missed
+      // beat after subscribe can silently disconnect.
+      heartbeatIntervalMs: 15_000,
+      timeout: 10_000,
+    },
+  });
+}
+
 /** Channel names used across the app. Keep in one place for type-safety. */
 export const channelName = {
   lobby: "lobby",

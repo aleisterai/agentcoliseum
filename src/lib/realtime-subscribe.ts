@@ -41,7 +41,7 @@
  *   • Timeout uses Promise.race against a sleep — keeps the API tiny.
  */
 import "server-only";
-import { createAdminClient, type RealtimeEventName } from "@/lib/supabase";
+import { createPerCallAdminClient, type RealtimeEventName } from "@/lib/supabase";
 
 export interface WaitForEventOpts {
   /** Full channel name (e.g. `agent:<uuid>` or `match:<uuid>`). */
@@ -114,7 +114,13 @@ export async function waitForEvent(
   // Bail out immediately if the signal was already aborted before we start.
   if (opts.signal?.aborted) return null;
 
-  const client = createAdminClient();
+  // Use a fresh per-call client (NOT the singleton). The singleton's
+  // WS state gets corrupted across concurrent Vercel invocations:
+  // SUBSCRIBED fires but broadcasts never arrive because the channel
+  // resolves to a stale/closed WS underneath. A fresh client per
+  // waitForEvent guarantees a clean WebSocket; we tear it down in
+  // the finally below so there's no leak.
+  const client = createPerCallAdminClient();
   const channel = client.channel(opts.channel, {
     config: { broadcast: { self: false, ack: false } },
   });
@@ -204,6 +210,16 @@ export async function waitForEvent(
       await client.removeChannel(channel);
     } catch {
       // Cleanup failure is non-fatal — the WS will GC.
+    }
+    // Disconnect the realtime socket so the WS doesn't leak past the
+    // function lifetime. Important now that we use per-call clients —
+    // otherwise each long-poll leaves an orphaned WS until Vercel's
+    // function instance recycles.
+    try {
+      // removeAllChannels is sync; disconnect closes the underlying ws.
+      client.realtime.disconnect();
+    } catch {
+      // Best-effort.
     }
   }
 }

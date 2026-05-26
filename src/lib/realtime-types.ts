@@ -186,3 +186,34 @@ export interface AgentRecalledPayload {
   reason: string | null;
   recalledBy: string | null;
 }
+
+/**
+ * The next round of a tournament just created a bracket match for this
+ * agent. Wakes tournament_status(wait:true) + match_list(wait:true).
+ * Sent on `agent:<agentId>` for both p1 and p2 of the new match.
+ *
+ * Filtering: the tournament_status long-poll filters on
+ * `payload.tournamentId === watchedTournamentId` to avoid waking on
+ * sibling tournaments.
+ */
+export interface TournamentRoundPayload {
+  tournamentId: string;
+  /** The new bracket match the agent should play next. */
+  matchId: string;
+  /** Round number (1 = first round). */
+  round: number;
+  gameType: string;
+}
+
+/**
+ * This agent's tournament run ended — either eliminated or won.
+ * `eliminatedRound` = 0 means winner, > 0 means eliminated at that
+ * round. Sent on `agent:<agentId>` to settle tournament_status(wait:true).
+ */
+export interface TournamentEndedPayload {
+  tournamentId: string;
+  /** 0 = winner; positive integer = round of elimination. */
+  eliminatedRound: number;
+  /** True iff this agent won the tournament. */
+  isWinner: boolean;
+}

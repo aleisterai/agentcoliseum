@@ -38,6 +38,12 @@ import { buildNextRound, totalRounds } from "@/lib/tournament";
 import { refundStake } from "@/lib/chain/stake";
 import { recordCronRun } from "@/lib/cron-audit";
 import { authorizedCronRequest } from "@/lib/cron-auth";
+import { broadcastAgent, realtimeEvent } from "@/lib/realtime";
+import type {
+  TournamentEndedPayload,
+  TournamentRoundPayload,
+  MatchActivatedPayload,
+} from "@/lib/realtime-types";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -179,6 +185,14 @@ async function advanceOne(t: typeof tournaments.$inferSelect): Promise<{
             eq(tournamentEntries.agentId, loserId),
           ),
         );
+      // Wake any tournament_status(wait:true) the loser has open —
+      // AGE-55 contract: must await on Vercel or the broadcast gets
+      // dropped when the cron handler returns.
+      await broadcastAgent(loserId, realtimeEvent.TournamentEnded, {
+        tournamentId: t.id,
+        eliminatedRound: tm.round,
+        isWinner: false,
+      } satisfies TournamentEndedPayload);
     }
     advanced++;
   }
@@ -221,6 +235,14 @@ async function advanceOne(t: typeof tournaments.$inferSelect): Promise<{
         winnerAgentId: tm.winnerAgentId,
       })),
     );
+    // Collect the new (p1, p2, matchId) tuples so we can broadcast
+    // TournamentRound + MatchActivated AFTER the tx commits. Doing
+    // it inside the tx would broadcast even on a rollback.
+    const createdRoundMatches: Array<{
+      matchId: string;
+      p1AgentId: string;
+      p2AgentId: string;
+    }> = [];
     await db.transaction(async (tx) => {
       for (const pair of nextPairings) {
         if (!pair.p1AgentId || !pair.p2AgentId) continue;
@@ -249,8 +271,53 @@ async function advanceOne(t: typeof tournaments.$inferSelect): Promise<{
           p1AgentId: pair.p1AgentId,
           p2AgentId: pair.p2AgentId,
         });
+        createdRoundMatches.push({
+          matchId: matchRow.id,
+          p1AgentId: pair.p1AgentId,
+          p2AgentId: pair.p2AgentId,
+        });
       }
     });
+    // Wake both sides of every new bracket match. Awaited per AGE-55
+    // so Vercel doesn't drop the broadcast on cron-handler return.
+    // We send BOTH TournamentRound (for tournament_status long-polls)
+    // and MatchActivated (for match_list long-polls) so whichever
+    // surface the agent is sitting on wakes immediately.
+    const roundPayload = (matchId: string): TournamentRoundPayload => ({
+      tournamentId: t.id,
+      matchId,
+      round: lastRound + 1,
+      gameType: t.gameType,
+    });
+    const activatedPayload = (matchId: string): MatchActivatedPayload => ({
+      matchId,
+      gameType: t.gameType,
+      mode: "free",
+    });
+    await Promise.all(
+      createdRoundMatches.flatMap((m) => [
+        broadcastAgent(
+          m.p1AgentId,
+          realtimeEvent.TournamentRound,
+          roundPayload(m.matchId),
+        ),
+        broadcastAgent(
+          m.p2AgentId,
+          realtimeEvent.TournamentRound,
+          roundPayload(m.matchId),
+        ),
+        broadcastAgent(
+          m.p1AgentId,
+          realtimeEvent.MatchActivated,
+          activatedPayload(m.matchId),
+        ),
+        broadcastAgent(
+          m.p2AgentId,
+          realtimeEvent.MatchActivated,
+          activatedPayload(m.matchId),
+        ),
+      ]),
+    );
     return { advanced, roundCreated: lastRound + 1 };
   }
 
@@ -310,6 +377,13 @@ async function advanceOne(t: typeof tournaments.$inferSelect): Promise<{
         eq(tournamentEntries.agentId, winnerAgent.id),
       ),
     );
+  // Wake the winner's tournament_status(wait:true). Awaited per
+  // AGE-55 so the broadcast survives the cron handler's return.
+  await broadcastAgent(winnerAgent.id, realtimeEvent.TournamentEnded, {
+    tournamentId: t.id,
+    eliminatedRound: 0,
+    isWinner: true,
+  } satisfies TournamentEndedPayload);
 
   return { advanced, completed: true, payoutTxHash };
 }

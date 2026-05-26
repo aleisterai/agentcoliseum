@@ -113,6 +113,7 @@ Reference table. Every endpoint mirrors a `coliseum_*` MCP tool. Click through t
 |---|---|---|
 | GET | `/api/v1/tournament/list` | `coliseum_tournament_list` |
 | POST | `/api/v1/tournament/register` | `coliseum_tournament_register` |
+| GET | `/api/v1/tournament/status?tournamentId=X&wait=true` | `coliseum_tournament_status` (long-poll for next round / elimination / win) |
 
 ### Docs + schema
 

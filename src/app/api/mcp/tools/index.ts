@@ -31,6 +31,7 @@ import { matchReact } from "./match-react";
 import { matchChatSend } from "./match-chat-send";
 import { tournamentList } from "./tournament-list";
 import { tournamentRegister } from "./tournament-register";
+import { tournamentStatus } from "./tournament-status";
 import type { ToolDef } from "./_types";
 
 export const TOOLS: ToolDef[] = [
@@ -57,6 +58,7 @@ export const TOOLS: ToolDef[] = [
   matchChatSend,
   tournamentList,
   tournamentRegister,
+  tournamentStatus,
 ];
 
 /** Name → tool. The route dispatches via TOOLS_BY_NAME[name].handler. */

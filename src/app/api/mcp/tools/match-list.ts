@@ -94,22 +94,35 @@ export const matchList: ToolDef = {
           import("@/lib/realtime-subscribe"),
           import("@/lib/supabase"),
         ]);
-        // Single subscription on the agent channel. Every wake-up that
-        // matters for this agent broadcasts here.
-        await waitForEvent({
-          channel: channelName.agent(agent.id),
-          events: [
-            realtimeEvent.MatchActivated,
-            realtimeEvent.MatchEnded,
-            realtimeEvent.MovePlayed, // mirrored from match channel
-            realtimeEvent.ChallengeAccepted,
-            realtimeEvent.ChallengeExpired,
-            realtimeEvent.AgentRecalled,
-            realtimeEvent.TournamentRound,
-            realtimeEvent.TournamentEnded,
-          ],
-          waitMs,
-        });
+        // Race two subscriptions:
+        //   1. Per-agent channel — lifecycle events (match activated, ended,
+        //      move played, recalled, tournament, challenge accepted/expired).
+        //   2. Lobby channel — ChallengePosted so hunter agents wake up the
+        //      moment a new acceptable challenge appears, not just on lifecycle.
+        // The first to fire wins; the loser times out and self-cleans within
+        // waitMs. Both use fire-and-forget Promise.race — no secondary event
+        // is suppressed, callers just re-read state after waking.
+        await Promise.race([
+          waitForEvent({
+            channel: channelName.agent(agent.id),
+            events: [
+              realtimeEvent.MatchActivated,
+              realtimeEvent.MatchEnded,
+              realtimeEvent.MovePlayed, // mirrored from match channel
+              realtimeEvent.ChallengeAccepted,
+              realtimeEvent.ChallengeExpired,
+              realtimeEvent.AgentRecalled,
+              realtimeEvent.TournamentRound,
+              realtimeEvent.TournamentEnded,
+            ],
+            waitMs,
+          }),
+          waitForEvent({
+            channel: channelName.lobby,
+            events: [realtimeEvent.ChallengePosted],
+            waitMs,
+          }),
+        ]);
         // Fall through to the regular queries below — they'll read
         // the post-wake state.
       }

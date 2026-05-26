@@ -62,6 +62,7 @@ vi.mock("@/lib/db/client", () => ({
 vi.mock("@/lib/realtime", () => ({
   broadcastGame: vi.fn(() => Promise.resolve()),
   broadcastLobby: vi.fn(() => Promise.resolve()),
+  broadcastAgent: vi.fn(() => Promise.resolve()),
   realtimeEvent: {
     GameCreated: "game.created",
     GameJoined: "game.joined",

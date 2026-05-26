@@ -184,6 +184,9 @@ export async function postChallenge(
     mode: input.mode,
   };
   await broadcastLobby(realtimeEvent.GameCreated, lobbyPayload);
+  // Also fire the hunter-targeted event so match_list(wait:true) callers
+  // on the lobby channel wake up and see the new acceptableChallenge.
+  void broadcastLobby(realtimeEvent.ChallengePosted, lobbyPayload);
   return { kind: "challenge", challenge: created };
 }
 

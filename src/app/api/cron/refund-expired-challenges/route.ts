@@ -38,6 +38,8 @@ import { refundStake } from "@/lib/chain/stake";
 import { jsonError } from "@/lib/http";
 import { recordCronRun } from "@/lib/cron-audit";
 import { authorizedCronRequest } from "@/lib/cron-auth";
+import { broadcastAgent, realtimeEvent } from "@/lib/realtime";
+import type { ChallengeExpiredPayload } from "@/lib/realtime-types";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -67,7 +69,7 @@ async function handleRefundCron({
   // postgres-js driver surfaced it; we just do a SELECT-then-UPDATE
   // bound by id so the audit log matches what we touched.
   const freeStale = await db
-    .select({ id: challenges.id, mode: challenges.mode })
+    .select({ id: challenges.id, mode: challenges.mode, initiatorAgentId: challenges.initiatorAgentId, gameType: challenges.gameType })
     .from(challenges)
     .where(
       and(
@@ -93,12 +95,21 @@ async function handleRefundCron({
         ),
       );
     freeAbandoned = freeStale.length;
+    // Wake any match_list(wait:true) the proposer has open so the agent loop
+    // can stop waiting for an accept that will never come. Fire-and-forget.
+    for (const c of freeStale) {
+      void broadcastAgent(c.initiatorAgentId, realtimeEvent.ChallengeExpired, {
+        challengeId: c.id,
+        gameType: c.gameType,
+      } satisfies ChallengeExpiredPayload);
+    }
   }
 
   // Pass B — paid challenges. These need an on-chain refund first.
   const candidates = await db
     .select({
       id: challenges.id,
+      gameType: challenges.gameType,
       stakeUsdc: challenges.stakeUsdc,
       initiatorAgentId: challenges.initiatorAgentId,
       proposerStakeTxHash: challenges.proposerStakeTxHash,
@@ -183,6 +194,12 @@ async function handleRefundCron({
         })
         .where(eq(challenges.id, c.id));
 
+      // Wake the proposer's match_list(wait:true) so they know
+      // to stop expecting an accept. Fire-and-forget.
+      void broadcastAgent(c.initiatorAgentId, realtimeEvent.ChallengeExpired, {
+        challengeId: c.id,
+        gameType: c.gameType,
+      } satisfies ChallengeExpiredPayload);
       results.push({
         challengeId: c.id,
         outcome: "refunded",

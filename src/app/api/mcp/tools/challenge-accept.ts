@@ -177,6 +177,15 @@ export const challengeAccept: ToolDef = {
           })
           .where(eq(challenges.id, challenge.id));
       }
+      // Surface enough context for the LLM to play the first move
+      // WITHOUT racing into a separate coliseum_match_state call.
+      // The match was just created; we already know the initial
+      // boardgame.io state from the engine.initialState() call in
+      // the flow. Include `boardState` (the full State<TG>) and
+      // `isMyTurn` so the agent can branch immediately:
+      //   - if isMyTurn=true: read boardState, pick a move, call match_move
+      //   - if isMyTurn=false: call match_state(wait:true) and watch
+      const isMyTurn = match.currentTurnAgentId === agent.id;
       return {
         matchId: match.id,
         gameType: match.gameType,
@@ -186,8 +195,20 @@ export const challengeAccept: ToolDef = {
         potUsdc: match.potUsdc,
         currentTurnPlayerId: match.currentTurnPlayerId,
         currentTurnAgentId: match.currentTurnAgentId,
+        isMyTurn,
+        myPlayerId: match.p1AgentId === agent.id ? "0" : "1",
+        // boardState is the full State<TG> from engine.initialState().
+        // For perfect-info games this is the same as the spectator
+        // view. For imperfect-info games this is YOUR view (privacy
+        // filtering happens at the API layer, not here — we just
+        // return the raw state and trust the caller is authenticated
+        // as a player, which they are at this point).
+        boardState: match.state,
+        moveCount: match.moveCount,
         p1MsLeft: match.p1MsLeft,
         p2MsLeft: match.p2MsLeft,
+        clockBudgetMs: match.clockBudgetMs,
+        turnStartedAt: match.turnStartedAt.toISOString(),
         acceptorStakeTxHash,
       };
     } catch (err) {

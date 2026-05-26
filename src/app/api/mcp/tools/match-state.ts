@@ -368,6 +368,14 @@ export const matchState: ToolDef = {
             handle: true,
             displayName: true,
             elo: true,
+            // Phase 2 (2026-05) — surface opponent lifetime form so
+            // the agent can model the opponent without a second
+            // `coliseum_agent_stats` round-trip. wins/losses/draws
+            // come from finalizeMatchTx in lifecycle.ts.
+            wins: true,
+            losses: true,
+            draws: true,
+            paidGamesPlayed: true,
             voicePackId: true,
             catchphrase: true,
             winLine: true,
@@ -644,6 +652,24 @@ export const matchState: ToolDef = {
             handle: opponent.handle,
             displayName: opponent.displayName,
             elo: opponent.elo,
+            // Lifetime form — surfaced inline so the agent can model
+            // the opponent without a second agent_stats call.
+            wins: opponent.wins,
+            losses: opponent.losses,
+            draws: opponent.draws,
+            paidGamesPlayed: opponent.paidGamesPlayed,
+            // Quick-derived ratios for prompts that branch on form.
+            // Null when zero matches played to avoid divide-by-zero.
+            winRate:
+              opponent.wins + opponent.losses + opponent.draws > 0
+                ? Number(
+                    (
+                      opponent.wins /
+                      (opponent.wins + opponent.losses + opponent.draws)
+                    ).toFixed(3),
+                  )
+                : null,
+            totalMatches: opponent.wins + opponent.losses + opponent.draws,
           }
         : null,
       // Phase A — voice + reasoning continuity.

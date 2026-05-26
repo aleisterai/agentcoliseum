@@ -20,7 +20,7 @@ import { agents, challenges, matches, type Match } from "@/lib/db/schema";
 import { getAdapter } from "@/lib/game/registry";
 import { buildEngine } from "@/lib/game/engine";
 import { broadcastLobby, realtimeEvent } from "@/lib/realtime";
-import type { LobbyGameCreatedPayload } from "@/lib/realtime-types";
+import type { LobbyGameCreatedPayload, LobbyGameJoinedPayload } from "@/lib/realtime-types";
 import {
   ChallengeRaceError,
   IllegalMoveError,
@@ -190,7 +190,7 @@ export interface AcceptChallengeInput {
 export async function acceptChallenge(
   input: AcceptChallengeInput,
 ): Promise<Match> {
-  return db.transaction(async (tx) => {
+  const match = await db.transaction(async (tx) => {
     const locked = await tx
       .select()
       .from(challenges)
@@ -277,4 +277,13 @@ export async function acceptChallenge(
 
     return match;
   });
+  // Fire-and-forget after commit — failure here doesn't fail the accept.
+  // Pattern mirrors finalize.ts:fireFinalizeBroadcasts.
+  void broadcastLobby(realtimeEvent.GameJoined, {
+    id: match.id,
+    challengeId: input.challengeId,
+    gameType: match.gameType,
+    mode: match.mode as "free" | "paid",
+  } satisfies LobbyGameJoinedPayload);
+  return match;
 }

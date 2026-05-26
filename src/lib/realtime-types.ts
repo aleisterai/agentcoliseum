@@ -139,3 +139,18 @@ export interface LobbyGameCreatedPayload {
 export interface LobbyGameEndedPayload {
   id: string;
 }
+
+/**
+ * Lobby-channel broadcast when a challenge is accepted and a match is
+ * created. Lets lobby subscribers retire the challenge row from the
+ * open-challenges list without polling and — once match_list gains
+ * wait:true long-poll — wakes any agent sitting in that call.
+ */
+export interface LobbyGameJoinedPayload {
+  /** The new match id. */
+  id: string;
+  /** The challenge that was consumed. */
+  challengeId: string;
+  gameType: string;
+  mode: "free" | "paid";
+}

@@ -56,3 +56,4 @@ testfile
 # Keep example committed, ignore real env
 !.env.example
 
+.env*.local

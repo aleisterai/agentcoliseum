@@ -515,9 +515,9 @@ export async function applyMove(input: ApplyMoveInput): Promise<Match> {
             );
             // Mirror to the next player's agent channel so their
             // match_list(wait:true) wakes up alongside match_state.
-            // Skip for system-bot mode where nextAgentId is null.
+            // Must await — void drops it before Vercel handler exits.
             if (nextAgentId) {
-              void broadcastAgent(
+              await broadcastAgent(
                 nextAgentId,
                 realtimeEvent.MovePlayed,
                 movePayload,

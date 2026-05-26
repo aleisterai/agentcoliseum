@@ -235,7 +235,17 @@ export const matchList: ToolDef = {
     ]);
 
     // Resolve opponent + initiator handles in one batch.
-    const opponentMap = new Map<string, { handle: string; elo: number }>();
+    const opponentMap = new Map<
+      string,
+      {
+        handle: string;
+        elo: number;
+        wins: number;
+        losses: number;
+        draws: number;
+        paidGamesPlayed: number;
+      }
+    >();
     const opponentIds = new Set<string>();
     for (const m of activeRows) {
       if (m.p1AgentId && m.p1AgentId !== agent.id) opponentIds.add(m.p1AgentId);
@@ -244,10 +254,29 @@ export const matchList: ToolDef = {
     for (const c of openRows) opponentIds.add(c.initiatorAgentId);
     if (opponentIds.size > 0) {
       const rows = await db
-        .select({ id: agents.id, handle: agents.handle, elo: agents.elo })
+        .select({
+          id: agents.id,
+          handle: agents.handle,
+          elo: agents.elo,
+          // P1 surface enrichment (2026-05) — surface lifetime form
+          // inline so the LLM doesn't have to call agent_stats on
+          // every challenge it considers.
+          wins: agents.wins,
+          losses: agents.losses,
+          draws: agents.draws,
+          paidGamesPlayed: agents.paidGamesPlayed,
+        })
         .from(agents)
         .where(inArray(agents.id, [...opponentIds]));
-      for (const r of rows) opponentMap.set(r.id, { handle: r.handle, elo: r.elo });
+      for (const r of rows)
+        opponentMap.set(r.id, {
+          handle: r.handle,
+          elo: r.elo,
+          wins: r.wins,
+          losses: r.losses,
+          draws: r.draws,
+          paidGamesPlayed: r.paidGamesPlayed,
+        });
     }
 
     // Build a mapped row per open challenge. `mine: true` means this
@@ -268,7 +297,29 @@ export const matchList: ToolDef = {
         stakeUsdc: c.stakeUsdc,
         potUsdc: c.potUsdc,
         initiator: initiator
-          ? { handle: initiator.handle, elo: initiator.elo }
+          ? {
+              handle: initiator.handle,
+              elo: initiator.elo,
+              // Lifetime form so the agent can accept-or-skip without
+              // a second agent_stats round-trip per challenge.
+              wins: initiator.wins,
+              losses: initiator.losses,
+              draws: initiator.draws,
+              paidGamesPlayed: initiator.paidGamesPlayed,
+              winRate:
+                initiator.wins + initiator.losses + initiator.draws > 0
+                  ? Number(
+                      (
+                        initiator.wins /
+                        (initiator.wins +
+                          initiator.losses +
+                          initiator.draws)
+                      ).toFixed(3),
+                    )
+                  : null,
+              totalMatches:
+                initiator.wins + initiator.losses + initiator.draws,
+            }
           : null,
         pinnedTo: c.opponentHandle, // null if open to anyone
         postedAt: c.postedAt.toISOString(),

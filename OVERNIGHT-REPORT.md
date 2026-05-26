@@ -69,18 +69,59 @@ All contract scenarios (1–11, 14) are now covered. Scenarios 12–13 require t
 
 ---
 
-## What's queued for the human (morning)
+---
 
-### Decision-free queue (can ship any time)
+## AGE-53 phase 2 — 2026-05-26
 
-1. **`match_list(wait:true)` lobby-race cleanup** — the `Promise.race` leaves the losing `waitForEvent` subscription alive until it times out (up to 50s). A future refactor could extend `waitForEvent` to accept multiple channels and share a single WebSocket. Performance improvement, not correctness fix.
+### Commit `8ef9ced` — cancel losing waitForEvent subscription in match_list race (self-improve)
 
-2. **Prod E2E smoke test** — `pnpm mcp:prod-e2e` was called out in the workplan. The script exists but wasn't run against prod (requires live agent credentials + real network). If you want this verified in a follow-up heartbeat, say so.
+The `Promise.race` in `match_list(wait:true)` left the losing `waitForEvent`
+subscription alive for up to 50s after the winner fired.
+
+Fix:
+- `src/lib/realtime-subscribe.ts` — added `signal?: AbortSignal` to
+  `WaitForEventOpts`. When aborted, `settle(null)` fires immediately and
+  the `finally` block tears down the Supabase channel. Bail-out on
+  already-aborted signal before opening the channel.
+- `src/app/api/mcp/tools/match-list.ts` — `Promise.race` now uses a shared
+  `AbortController`. `.finally(() => raceCtrl.abort())` fires on resolution
+  and signals both waiting subscriptions; the loser cleans up within
+  microtask time instead of holding a WebSocket open for ~50s.
+- `public/coliseum-mcp.mjs` + `public/coliseum.mcpb` — sync'd stale build
+  artifacts (source had cosmetic formatting drift, public had not been
+  rebuilt; no functional delta).
+
+Verification: `pnpm typecheck` clean; 585/585 unit tests pass. `pnpm next
+build` not runnable (no `DATABASE_URL` in this execution environment —
+same constraint that blocks `pnpm mcp:prod-e2e`).
+
+---
+
+### Prod E2E verification — BLOCKED (no .env.local)
+
+`pnpm mcp:prod-e2e` requires `DATABASE_URL` via `.env.local` to look up
+the seeded `mcp-duel-alpha` / `mcp-duel-beta` agents and seed the
+`tier_cache`. No `.env.local` is present in this execution environment.
+
+Closest available alternative: all 585 unit tests pass. The broadcast
+wiring from WS1 is exercised by the integration tests in
+`src/lib/game/flow/integration.test.ts` and `lobby.test.ts`.
+
+To run prod E2E manually: `pnpm mcp:duel` (if test agents don't exist),
+then `pnpm mcp:prod-e2e`.
+
+---
+
+## What remains
 
 ### Needs human input
 
-3. **WORKSTREAM 2+** — the workplan was truncated at the WORKSTREAM 1 event list. WORKSTREAM 2+ contents are entirely unknown. Forward the full workplan if recoverable, or describe WORKSTREAM 2+ directly.
+1. **WORKSTREAM 2+** — workplan truncated at WORKSTREAM 1 event list.
+   Contents unknown. Forward the full workplan if recoverable.
+
+2. **Prod E2E** — needs an environment with `.env.local` / `DATABASE_URL`.
+   The script is ready; just blocked on credentials.
 
 ### Approval-gated items
 
-None. No schema migrations, no new SaaS deps. Vercel trunk deploy will pick up all commits automatically.
+None. No schema migrations, no new SaaS deps.

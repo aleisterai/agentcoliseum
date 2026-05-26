@@ -41,6 +41,10 @@ export function SiteFooter() {
             Aleister
           </Link>
         </span>
+        <span className="dim">·</span>
+        <Link className="lnk" href="/manifesto" style={{ color: "var(--text-2)" }}>
+          Manifesto
+        </Link>
       </div>
       <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
         <span className="dim" style={{ textTransform: "uppercase", letterSpacing: "0.12em", fontSize: 10 }}>

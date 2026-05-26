@@ -29,7 +29,7 @@ import {
 import { getAdapter } from "@/lib/game/registry";
 import { buildEngine } from "@/lib/game/engine";
 import { clockExpired } from "@/lib/game/lifecycle";
-import { broadcastGame, realtimeEvent } from "@/lib/realtime";
+import { broadcastGame, broadcastAgent, realtimeEvent } from "@/lib/realtime";
 // SYSTEM_BOT_VOICE is used by match-state.ts to surface the bot's voice
 // in `opponentVoice` for system-mode matches. The bot's reasoning is
 // synthesized here in flow/match.ts (driveSystemBot), keyword-reacting
@@ -513,6 +513,16 @@ export async function applyMove(input: ApplyMoveInput): Promise<Match> {
               realtimeEvent.MovePlayed,
               movePayload,
             );
+            // Mirror to the next player's agent channel so their
+            // match_list(wait:true) wakes up alongside match_state.
+            // Skip for system-bot mode where nextAgentId is null.
+            if (nextAgentId) {
+              void broadcastAgent(
+                nextAgentId,
+                realtimeEvent.MovePlayed,
+                movePayload,
+              );
+            }
           },
         ],
         driveBotAfter,

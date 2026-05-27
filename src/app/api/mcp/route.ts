@@ -27,6 +27,7 @@ import {
   lookupAgentByToken,
   stampLastMcpAt,
 } from "@/lib/mcp-auth";
+import { REQUEST_ID_HEADER, withRequestContext } from "@/lib/log";
 
 export const dynamic = "force-dynamic";
 // MCP long-poll mode (`coliseum_match_state({wait:true})` and
@@ -78,6 +79,17 @@ const ToolCallParams = z.object({
 });
 
 export async function POST(req: NextRequest) {
+  // Seed the request-scoped context. Middleware (src/middleware.ts)
+  // sets `x-request-id` on the inbound headers; we fall back to a
+  // fresh UUID if a caller hits this route without going through the
+  // edge layer (e.g. direct internal invocation, tests). agentId gets
+  // layered on once the bearer is resolved.
+  const requestId =
+    req.headers.get(REQUEST_ID_HEADER) ?? crypto.randomUUID();
+  return withRequestContext({ requestId }, () => handlePost(req));
+}
+
+async function handlePost(req: NextRequest) {
   const token = bearerFrom(req);
   if (!token) {
     return err(
@@ -120,6 +132,19 @@ export async function POST(req: NextRequest) {
   // here can't delay the tool response.
   stampLastMcpAt(agent.id);
 
+  // Layer agentId onto the request context now that we've resolved
+  // the bearer. The inner `withRequestContext` merges with the outer
+  // scope (requestId already set) — see `withRequestContext` impl.
+  // Any downstream `log.*` call automatically picks up both fields.
+  return withRequestContext({ agentId: agent.id }, () =>
+    dispatchJsonRpc(body, agent),
+  );
+}
+
+async function dispatchJsonRpc(
+  body: JsonRpcRequest,
+  agent: NonNullable<Awaited<ReturnType<typeof lookupAgentByToken>>>,
+) {
   try {
     switch (body.method) {
       case "initialize": {

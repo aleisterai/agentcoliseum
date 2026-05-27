@@ -28,13 +28,31 @@ import { NextResponse, type NextRequest } from "next/server";
 import { TOOLS_BY_NAME } from "@/app/api/mcp/tools";
 import { resolveAgentFromBearer } from "@/lib/mcp-auth";
 import { requirePlayAccess } from "@/lib/chain/tiers";
+import { REQUEST_ID_HEADER, withRequestContext } from "@/lib/log";
 
 /**
  * Run one tool by name with the given args, applying the same auth +
  * paid-play tier gate the MCP dispatcher applies. Returns a NextResponse
  * suitable for direct return from the route handler.
+ *
+ * Wraps the entire flow in `withRequestContext` so downstream
+ * `log.*` calls automatically pick up `{requestId, agentId}`. The
+ * requestId comes from the edge middleware via `x-request-id`; if
+ * the header is absent (direct internal hit, tests) we mint one.
  */
 export async function dispatchTool(
+  req: Request,
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<NextResponse> {
+  const requestId =
+    req.headers.get(REQUEST_ID_HEADER) ?? crypto.randomUUID();
+  return withRequestContext({ requestId }, () =>
+    dispatchToolInner(req, toolName, args),
+  );
+}
+
+async function dispatchToolInner(
   req: Request,
   toolName: string,
   args: Record<string, unknown>,
@@ -60,54 +78,58 @@ export async function dispatchTool(
     );
   }
 
-  // 3. Paid-play tier gate — mirrors src/app/api/mcp/route.ts:218.
-  //    The MCP route surfaces the denial as a tool-level result; we do
-  //    the same here so curl scripts can branch on `.ok`.
-  if (tool.paidPlayRequired) {
-    const isFreeMode = tool.freeModeArgs?.(args) ?? false;
-    if (!isFreeMode) {
-      const access = await requirePlayAccess({
-        id: agent.id,
-        handle: agent.handle,
-        linkedWalletAddress: agent.linkedWalletAddress,
-        paidGamesPlayed: agent.paidGamesPlayed,
-      });
-      if (!access.ok) {
-        return NextResponse.json({
-          ok: false,
-          error: {
-            code: access.code,
-            message: access.message,
-            details: access.details,
-            hint: access.hint,
-          },
+  // Layer agentId onto the context once the bearer resolves. Inner
+  // call merges with the outer scope's requestId — see log.ts.
+  return withRequestContext({ agentId: agent.id }, async () => {
+    // 3. Paid-play tier gate — mirrors src/app/api/mcp/route.ts.
+    //    The MCP route surfaces the denial as a tool-level result; we do
+    //    the same here so curl scripts can branch on `.ok`.
+    if (tool.paidPlayRequired) {
+      const isFreeMode = tool.freeModeArgs?.(args) ?? false;
+      if (!isFreeMode) {
+        const access = await requirePlayAccess({
+          id: agent.id,
+          handle: agent.handle,
+          linkedWalletAddress: agent.linkedWalletAddress,
+          paidGamesPlayed: agent.paidGamesPlayed,
         });
+        if (!access.ok) {
+          return NextResponse.json({
+            ok: false,
+            error: {
+              code: access.code,
+              message: access.message,
+              details: access.details,
+              hint: access.hint,
+            },
+          });
+        }
       }
     }
-  }
 
-  // 4. Invoke. The handler returns the result body directly; we wrap
-  //    in the REST envelope.
-  //
-  //    Some handlers self-report errors by returning a shape that
-  //    starts with `error: "..."` or `ok: false, error: {...}`. We
-  //    detect those and re-shape into the standard REST envelope so
-  //    the caller sees the same surface regardless of which kind of
-  //    failure happened.
-  try {
-    const result = await tool.handler(args, { agent });
-    return NextResponse.json(rewrapResult(result));
-  } catch (e) {
-    // Unhandled exception from the handler — not the normal error path.
-    // Still HTTP 200 so curl scripts can branch on .ok.
-    return NextResponse.json({
-      ok: false,
-      error: {
-        code: "internal_error",
-        message: e instanceof Error ? e.message : String(e),
-      },
-    });
-  }
+    // 4. Invoke. The handler returns the result body directly; we wrap
+    //    in the REST envelope.
+    //
+    //    Some handlers self-report errors by returning a shape that
+    //    starts with `error: "..."` or `ok: false, error: {...}`. We
+    //    detect those and re-shape into the standard REST envelope so
+    //    the caller sees the same surface regardless of which kind of
+    //    failure happened.
+    try {
+      const result = await tool.handler(args, { agent });
+      return NextResponse.json(rewrapResult(result));
+    } catch (e) {
+      // Unhandled exception from the handler — not the normal error path.
+      // Still HTTP 200 so curl scripts can branch on .ok.
+      return NextResponse.json({
+        ok: false,
+        error: {
+          code: "internal_error",
+          message: e instanceof Error ? e.message : String(e),
+        },
+      });
+    }
+  });
 }
 
 /**

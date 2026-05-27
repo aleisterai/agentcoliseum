@@ -29,6 +29,16 @@ import type { NextConfig } from "next";
  */
 const nextConfig: NextConfig = {
   devIndicators: false,
+  /**
+   * Pino + pino-pretty are pulled in by `src/lib/log.ts` (structured-
+   * logging foundation, 2026-05). They depend on `thread-stream` /
+   * worker_threads which break when Webpack tries to bundle them — the
+   * worker can't resolve its sibling file once it's been rewritten.
+   * Marking them as serverExternalPackages tells Next to leave them
+   * for Node's runtime `require`, which is the supported integration
+   * recipe documented by pino.
+   */
+  serverExternalPackages: ["pino", "pino-pretty"],
   experimental: {
     optimizePackageImports: [
       "wagmi",

@@ -30,6 +30,7 @@ import { getAdapter } from "@/lib/game/registry";
 import { buildEngine } from "@/lib/game/engine";
 import { clockExpired } from "@/lib/game/lifecycle";
 import { broadcastGame, broadcastAgent, realtimeEvent } from "@/lib/realtime";
+import { log } from "@/lib/log";
 import { writeMatchEvent } from "./events";
 // SYSTEM_BOT_VOICE is used by match-state.ts to surface the bot's voice
 // in `opponentVoice` for system-mode matches. The bot's reasoning is
@@ -558,7 +559,15 @@ export async function applyMove(input: ApplyMoveInput): Promise<Match> {
       // Realtime is best-effort. DB state is correct; clients will
       // recover on their next poll/reconnect. Log + continue rather
       // than failing the move that already committed.
-      console.error("[applyMove] broadcast failed:", err);
+      //
+      // First demonstration of the structured-logging foundation
+      // (src/lib/log.ts). requestId / agentId are injected from the
+      // AsyncLocalStorage context seeded by the MCP + REST entry
+      // points — log line carries them without a call-site change.
+      log.error(
+        { err, matchId: updated.id },
+        "applyMove: broadcast failed (DB state is correct, clients will recover)",
+      );
     }
   }
 

@@ -34,8 +34,25 @@ export default async function LobbyPage({
   searchParams: Promise<{ tab?: string; gameType?: string }>;
 }) {
   const { tab: rawTab, gameType } = await searchParams;
-  const tab: Tab =
-    rawTab === "live" ? "live" : rawTab === "history" ? "history" : "book";
+  // Tab resolution rules:
+  //   - explicit ?tab=X wins always (lets users park on a tab via URL)
+  //   - when no explicit tab is given:
+  //       * if there are LIVE matches running right now → default to "live"
+  //         (operator instruction: "I want to see live games first when
+  //         accessing the lobby")
+  //       * otherwise → fall back to "book" so the order-book is still the
+  //         landing surface during idle periods
+  // We have to peek at the live-match count before we can default. The
+  // count comes from `liveMatches` below, so this defaulting logic moves
+  // BELOW the parallel-fetch — see `tab` reassignment after the Promise.all.
+  const explicitTab: Tab | null =
+    rawTab === "live"
+      ? "live"
+      : rawTab === "history"
+      ? "history"
+      : rawTab === "book"
+      ? "book"
+      : null;
 
   // Pull all the data we need in parallel — counts shown in the tabs and the
   // active-tab body both come from the same dataset, so this is one round trip.
@@ -79,6 +96,12 @@ export default async function LobbyPage({
         .limit(40),
     ]);
 
+  // Default-tab resolution: respect explicit ?tab=X if present, otherwise
+  // show live first when there's anything actually playing, fall back to
+  // the order book during idle periods.
+  const tab: Tab =
+    explicitTab ?? (liveMatches.length > 0 ? "live" : "book");
+
   // Resolve the agents in one shot for every row we'll render.
   const agentIds = new Set<string>();
   for (const c of openOrders) agentIds.add(c.initiatorAgentId);
@@ -121,18 +144,23 @@ export default async function LobbyPage({
         <div>
           <h1 className="page-title">Lobby</h1>
           <p className="page-sub">
-            Open challenges, ready to fill. Click any order to accept and route an x402 stake.
+            {fLive.length > 0
+              ? `${fLive.length} live ${
+                  fLive.length === 1 ? "match" : "matches"
+                } in progress · open the live tab to watch, or jump to the order book to post.`
+              : "Open challenges, ready to fill. Click any order to accept and route an x402 stake."}
           </p>
         </div>
         <div className="title-actions">
           <div className="title-tabs">
-            <TabLink href={tabHref("book", gameType)} active={tab === "book"} label="Order book" />
+            {/* Live first — the priority surface when matches are running. */}
             <TabLink
               href={tabHref("live", gameType)}
               active={tab === "live"}
               label="Live"
               count={fLive.length}
             />
+            <TabLink href={tabHref("book", gameType)} active={tab === "book"} label="Order book" />
             <TabLink
               href={tabHref("history", gameType)}
               active={tab === "history"}

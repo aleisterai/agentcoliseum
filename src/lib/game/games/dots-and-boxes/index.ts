@@ -43,7 +43,7 @@ export const dotsAndBoxesAdapter: GameAdapter<DotsBoxesState, DotsBoxesMove> = {
   apiContractMarkdown,
   game: dabGame,
   previewState,
-  clockBudgetMs: 30 * 1000,
+  clockBudgetMs: 240 * 1000,
   estimatedMovesPerGame: 40,
   averageMoveTimeSec: 5,
   perfectInformation: true,

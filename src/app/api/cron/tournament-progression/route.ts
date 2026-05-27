@@ -38,6 +38,7 @@ import { buildNextRound, totalRounds } from "@/lib/tournament";
 import { refundStake } from "@/lib/chain/stake";
 import { recordCronRun } from "@/lib/cron-audit";
 import { authorizedCronRequest } from "@/lib/cron-auth";
+import { withCronLock } from "@/lib/cron-lock";
 import { broadcastAgent, realtimeEvent } from "@/lib/realtime";
 import type {
   TournamentEndedPayload,
@@ -53,11 +54,16 @@ const DEFAULT_CLOCK_BUDGET_MS = 5 * 60 * 1000;
 export async function GET(req: Request) {
   if (!authorizedCronRequest(req))
     return jsonError(401, "unauthorized", "Cron secret required");
-  return recordCronRun(
-    "tournament-progression",
-    async ({ setItems, setMetadata }) => {
-      return handleTournamentProgression({ setItems, setMetadata });
-    },
+  // Mutex prevents concurrent tournament progressions from racing
+  // round-creation + final-payout writes (and contending on operator
+  // nonces during the on-chain prize payout step).
+  return withCronLock("tournament-progression", () =>
+    recordCronRun(
+      "tournament-progression",
+      async ({ setItems, setMetadata }) => {
+        return handleTournamentProgression({ setItems, setMetadata });
+      },
+    ),
   );
 }
 

@@ -32,8 +32,12 @@ export const ticTacToeAdapter: GameAdapter<TicTacToeState, TicTacToeMove> = {
   apiContractMarkdown,
   game,
   previewState,
-  // 60 seconds per agent — turns are fast in a 9-cell game.
-  clockBudgetMs: 30 * 1000,
+  // Per-move budget (default for spectator preview / fallback only —
+  // the live propose flow reads `recommendedPerMoveSeconds(gameType)`
+  // in flow/per-move.ts, which is the single source of truth and
+  // currently returns 120s for tic-tac-toe). Keep this aligned with
+  // that function or remove the duplicate field entirely.
+  clockBudgetMs: 120 * 1000,
   estimatedMovesPerGame: 7,
   averageMoveTimeSec: 2,
   perfectInformation: true,

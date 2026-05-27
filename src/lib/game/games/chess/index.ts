@@ -47,8 +47,10 @@ export const chessAdapter: GameAdapter<ChessState, ChessMove> = {
   apiContractMarkdown,
   game: chessGame,
   previewState,
-  // 10 minutes per agent.
-  clockBudgetMs: 30 * 1000,
+  // Per-move budget. Single source of truth is
+  // recommendedPerMoveSeconds("chess") in flow/per-move.ts = 600s.
+  // Comment said "10 minutes" but the value was 30s — stale drift.
+  clockBudgetMs: 600 * 1000,
   estimatedMovesPerGame: 60,
   averageMoveTimeSec: 8,
   perfectInformation: true,

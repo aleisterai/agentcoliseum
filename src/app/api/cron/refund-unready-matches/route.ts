@@ -38,6 +38,7 @@ import { finalizeMatch } from "@/lib/game/flow/finalize";
 import { jsonError } from "@/lib/http";
 import { recordCronRun } from "@/lib/cron-audit";
 import { authorizedCronRequest } from "@/lib/cron-auth";
+import { withCronLock } from "@/lib/cron-lock";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -48,11 +49,14 @@ const UNREADY_MAX_MS = 30 * 60 * 1000; // 30 minutes
 export async function GET(req: Request) {
   if (!authorizedCronRequest(req))
     return jsonError(401, "unauthorized", "Cron secret required");
-  return recordCronRun(
-    "refund-unready-matches",
-    async ({ setItems, setMetadata }) => {
-      return handle({ setItems, setMetadata });
-    },
+  // Mutex serializes operator-wallet refunds for unready matches.
+  return withCronLock("refund-unready-matches", () =>
+    recordCronRun(
+      "refund-unready-matches",
+      async ({ setItems, setMetadata }) => {
+        return handle({ setItems, setMetadata });
+      },
+    ),
   );
 }
 

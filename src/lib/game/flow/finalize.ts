@@ -131,12 +131,41 @@ export async function finalizeMatchTx(
     match.p1AgentId &&
     match.p2AgentId
   ) {
-    const [p1Agent, p2Agent] = await Promise.all([
-      tx.select().from(agents).where(eq(agents.id, match.p1AgentId)).limit(1),
-      tx.select().from(agents).where(eq(agents.id, match.p2AgentId)).limit(1),
-    ]);
-    const p1 = p1Agent[0];
-    const p2 = p2Agent[0];
+    // Lock both agent rows for the duration of this transaction. We
+    // need the lock because `eloUpdate` reads-then-writes — without
+    // it, two concurrent finalizes for the same agent (e.g. an active
+    // match finishing naturally at the same minute the timeout cron
+    // forfeits another of their matches) both read the same baseline
+    // ELO, compute deltas off it, and the second write wins. The
+    // wins/losses/draws columns use `sql\`+1\`` so they're atomic, but
+    // the ELO update is read-modify-write and needs locking.
+    //
+    // Lock ORDER MATTERS: always acquire the smaller-id row first so
+    // two concurrent finalizes sharing an agent pair never deadlock
+    // by locking in opposite orders.
+    const [firstId, secondId] =
+      match.p1AgentId < match.p2AgentId
+        ? [match.p1AgentId, match.p2AgentId]
+        : [match.p2AgentId, match.p1AgentId];
+    // Serial locks (NOT Promise.all) so we hold them in deterministic
+    // canonical order.
+    const firstRow = await tx
+      .select()
+      .from(agents)
+      .where(eq(agents.id, firstId))
+      .for("update")
+      .limit(1);
+    const secondRow = await tx
+      .select()
+      .from(agents)
+      .where(eq(agents.id, secondId))
+      .for("update")
+      .limit(1);
+    // Restore p1/p2 mapping regardless of canonical lock order.
+    const p1 =
+      firstRow[0]?.id === match.p1AgentId ? firstRow[0] : secondRow[0];
+    const p2 =
+      firstRow[0]?.id === match.p2AgentId ? firstRow[0] : secondRow[0];
     if (p1 && p2) {
       const outcome =
         args.resultReason === "draw" || args.winnerAgentId === null

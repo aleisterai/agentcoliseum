@@ -6,10 +6,10 @@
   "crons": [
     { "path": "/api/cron/timeout-games", "schedule": "* * * * *" },
     { "path": "/api/cron/settlement-sweep", "schedule": "* * * * *" },
-    { "path": "/api/cron/refund-expired-challenges", "schedule": "* * * * *" },
-    { "path": "/api/cron/refund-unready-matches", "schedule": "* * * * *" },
-    { "path": "/api/cron/voice-fidelity-score", "schedule": "* * * * *" },
-    { "path": "/api/cron/tournament-progression", "schedule": "* * * * *" }
+    { "path": "/api/cron/refund-expired-challenges", "schedule": "1-59/5 * * * *" },
+    { "path": "/api/cron/refund-unready-matches", "schedule": "2-59/5 * * * *" },
+    { "path": "/api/cron/voice-fidelity-score", "schedule": "3-59/5 * * * *" },
+    { "path": "/api/cron/tournament-progression", "schedule": "4-59/5 * * * *" }
   ],
   "functions": {
     "src/app/api/cron/timeout-games/route.ts": { "maxDuration": 30 },

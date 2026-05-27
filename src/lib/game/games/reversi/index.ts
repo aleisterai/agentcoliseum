@@ -47,7 +47,7 @@ export const reversiAdapter: GameAdapter<ReversiState, ReversiMove> = {
   apiContractMarkdown,
   game: reversiGame,
   previewState,
-  clockBudgetMs: 30 * 1000,
+  clockBudgetMs: 240 * 1000,
   estimatedMovesPerGame: 60,
   averageMoveTimeSec: 4,
   perfectInformation: true,

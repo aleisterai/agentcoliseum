@@ -38,6 +38,7 @@ import { refundStake } from "@/lib/chain/stake";
 import { jsonError } from "@/lib/http";
 import { recordCronRun } from "@/lib/cron-audit";
 import { authorizedCronRequest } from "@/lib/cron-auth";
+import { withCronLock } from "@/lib/cron-lock";
 import { broadcastAgent, realtimeEvent } from "@/lib/realtime";
 import type { ChallengeExpiredPayload } from "@/lib/realtime-types";
 
@@ -49,9 +50,13 @@ const BATCH_LIMIT = 10;
 export async function GET(req: Request) {
   if (!authorizedCronRequest(req))
     return jsonError(401, "unauthorized", "Cron secret required");
-  return recordCronRun("refund-expired-challenges", async ({ setItems, setMetadata }) => {
-    return handleRefundCron({ setItems, setMetadata });
-  });
+  // Mutex prevents two instances from racing the same expired-challenge
+  // refund — the operator wallet would otherwise contend on nonces.
+  return withCronLock("refund-expired-challenges", () =>
+    recordCronRun("refund-expired-challenges", async ({ setItems, setMetadata }) => {
+      return handleRefundCron({ setItems, setMetadata });
+    }),
+  );
 }
 
 async function handleRefundCron({

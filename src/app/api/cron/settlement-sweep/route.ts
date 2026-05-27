@@ -45,6 +45,7 @@ import { jsonError } from "@/lib/http";
 import { recordCronRun } from "@/lib/cron-audit";
 import { submitOperatorTx } from "@/lib/chain/operator-nonce";
 import { authorizedCronRequest } from "@/lib/cron-auth";
+import { withCronLock } from "@/lib/cron-lock";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -54,11 +55,14 @@ const BATCH_LIMIT = 10;
 export async function GET(req: Request) {
   if (!authorizedCronRequest(req))
     return jsonError(401, "unauthorized", "Cron secret required");
-  return recordCronRun(
-    "settlement-sweep",
-    async ({ setItems, setMetadata }) => {
+  // Cross-instance mutex via Redis. Prevents two settlement-sweep
+  // invocations on different Vercel instances from concurrently
+  // submitting operator-wallet transactions (which would otherwise
+  // contend with the in-process nonce mutex and lose).
+  return withCronLock("settlement-sweep", () =>
+    recordCronRun("settlement-sweep", async ({ setItems, setMetadata }) => {
       return handleSettlementSweep({ setItems, setMetadata });
-    },
+    }),
   );
 }
 

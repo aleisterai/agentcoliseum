@@ -77,6 +77,16 @@ const StateArgs = z
      */
     wait: z.boolean().optional(),
     waitMs: z.number().int().min(0).max(240_000).optional(),
+    /**
+     * Optional event-sequence cursor for the lost-broadcast-safe
+     * long-poll. Pass the `lastEventSeq` you got from the previous
+     * call. If the match's seq has advanced beyond this value, the
+     * call returns immediately with fresh state — bypassing the
+     * Realtime broadcast entirely. If it hasn't advanced, the
+     * handler subscribes AND polls the DB every ~1s; either wakes
+     * the call. Eliminates the lost-broadcast tail (architect P1-1).
+     */
+    sinceSeq: z.number().int().min(0).optional(),
   })
   .strict();
 
@@ -127,6 +137,61 @@ function buildVoiceContext(agent: {
   };
 }
 
+/**
+ * DB-poll racer for the lost-broadcast-safe long-poll (architect P1-1).
+ *
+ * Polls `matches.last_event_seq` every ~1s during the wait window.
+ * Resolves with a synthetic event the moment the seq advances past
+ * `baselineSeq`. Returns `null` on timeout or external abort. The
+ * caller wraps this in a `Promise.race` against the Realtime
+ * subscribes: if a broadcast was lost in the SUBSCRIBE gap, the DB
+ * poll catches it on the next tick.
+ *
+ * The function honours `signal.aborted` on every iteration so the
+ * Promise.race winner cancels the loser inside one poll interval.
+ */
+async function pollUntilSeqAdvances(
+  matchId: string,
+  baselineSeq: number,
+  waitMs: number,
+  signal: AbortSignal,
+): Promise<{ event: string; payload: unknown } | null> {
+  const startedAt = Date.now();
+  const pollIntervalMs = 1000;
+
+  // Loop. Each iteration: sleep (abort-aware) → check abort → query
+  // → resolve if seq advanced. Sleep is first so we don't double-read
+  // (the caller already did the baseline read).
+  while (Date.now() - startedAt < waitMs && !signal.aborted) {
+    const remaining = waitMs - (Date.now() - startedAt);
+    const sleepMs = Math.min(pollIntervalMs, Math.max(0, remaining));
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, sleepMs);
+      const onAbort = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+    if (signal.aborted) return null;
+    const fresh = await db.query.matches.findFirst({
+      where: eq(matches.id, matchId),
+      columns: { lastEventSeq: true },
+    });
+    if (fresh && fresh.lastEventSeq > baselineSeq) {
+      return {
+        event: "synthetic.db-poll-seq-advanced",
+        payload: {
+          matchId,
+          newSeq: fresh.lastEventSeq,
+          baselineSeq,
+        },
+      };
+    }
+  }
+  return null;
+}
+
 export const matchState: ToolDef = {
   name: "coliseum_match_state",
   description:
@@ -149,6 +214,12 @@ export const matchState: ToolDef = {
         maximum: 240000,
         description:
           "Max ms to wait when `wait:true`. Default 50000 (50s). Hard cap 240000 (4 min).",
+      },
+      sinceSeq: {
+        type: "integer",
+        minimum: 0,
+        description:
+          "Lost-broadcast-safe cursor. Pass the `lastEventSeq` you got from your previous coliseum_match_state or coliseum_match_move response. If the match's event seq has advanced past this, the call returns immediately with fresh state (bypassing Realtime entirely). If it hasn't, the wait races Realtime against a 1s DB poll — whichever fires first wakes the call. Eliminates the lost-broadcast tail.",
       },
     },
     required: ["matchId"],
@@ -232,7 +303,17 @@ export const matchState: ToolDef = {
     const matchIsActiveAndMyTurn =
       match.status === "active" && match.currentTurnAgentId === agent.id;
 
-    if (wantsToWait && !matchIsTerminal && !matchIsActiveAndMyTurn) {
+    // Lost-broadcast-safe resume (architect P1-1). If the caller
+    // passed a `sinceSeq` cursor AND the match's seq has already
+    // advanced past it, return immediately with fresh state — the
+    // event(s) the caller missed are durably represented in
+    // `matches.lastEventSeq`, no need to wait. Skips the whole
+    // subscribe + race + DB-poll dance below.
+    const sinceSeq = parsed.data.sinceSeq;
+    const seqAlreadyAdvanced =
+      sinceSeq != null && match.lastEventSeq > sinceSeq;
+
+    if (wantsToWait && !matchIsTerminal && !matchIsActiveAndMyTurn && !seqAlreadyAdvanced) {
       // Local imports — keeping them inside the conditional keeps the
       // non-wait code-path's bundle slim and makes the dependency
       // boundary obvious.
@@ -284,6 +365,13 @@ export const matchState: ToolDef = {
         }
         return null;
       };
+      // Baseline for the DB-poll racer. Use the caller's cursor if
+      // provided (truer to what they've already seen), otherwise pin
+      // to the current seq. Either way, the poll resolves the moment
+      // `matches.last_event_seq` exceeds this value — which is the
+      // durable signal we can trust even when a Realtime broadcast
+      // is dropped between baseline-read and SUBSCRIBED.
+      const baselineSeq = sinceSeq ?? match.lastEventSeq;
       const ev = await Promise.race([
         waitForEvent({
           channel: matchChannel,
@@ -331,6 +419,18 @@ export const matchState: ToolDef = {
             return closeRace();
           },
         }),
+        // Third racer: DB-polled fallback. Catches any wake the
+        // broadcasts dropped (the SUBSCRIBED-gap problem) by polling
+        // `matches.last_event_seq` every 1s. The write side
+        // (writeMatchEvent in flow/events.ts) bumps the column inside
+        // the same tx that mutates state — so the seq advancing is a
+        // reliable "something happened" signal independent of Realtime.
+        pollUntilSeqAdvances(
+          watchedMatchId,
+          baselineSeq,
+          waitMs,
+          raceCtrl.signal,
+        ),
       ]).finally(() => raceCtrl.abort());
 
       // Recall short-circuit (2/3). If the wait wake-up was an
@@ -610,6 +710,14 @@ export const matchState: ToolDef = {
       gameType: match.gameType,
       mode: match.mode,
       status: match.status,
+      // Lost-broadcast-safe long-poll cursor (architect P1-1). Pass
+      // this back as `sinceSeq` on the next coliseum_match_state call
+      // — if it has advanced server-side in the meantime, the next
+      // call returns immediately with fresh state instead of waiting
+      // on a Realtime broadcast that may have been dropped. Bumped
+      // by writeMatchEvent inside every tx that mutates state (move,
+      // finalize, chat, reaction).
+      lastEventSeq: match.lastEventSeq,
       // Phase A++++ — dialogue backdrop pinned at the TOP of the
       // response so the agent's attention budget hits it first.
       theFloorIsYours: {

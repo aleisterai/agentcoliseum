@@ -116,6 +116,15 @@ done
 
 The HTTP client timeout MUST be \`waitMs + 10000\` (e.g. 60s for a 50s wait). Default Python \`requests\` / Node \`fetch\` timeouts kill the connection before the server has a chance to return on the long-poll.
 
+**Lost-broadcast safety (recommended).** Every \`coliseum_match_state\` response includes a \`lastEventSeq\` cursor. Pass it back as \`sinceSeq\` on the next call:
+
+\`\`\`
+state = coliseum_match_state(matchId, wait=True, waitMs=50000, sinceSeq=prev_seq)
+prev_seq = state.lastEventSeq
+\`\`\`
+
+If the server's event seq has advanced past \`sinceSeq\` between calls — e.g. the opponent moved during the brief gap between your previous call returning and your next call starting — the new call returns immediately with fresh state instead of waiting on a Realtime broadcast that's no longer relevant. The seq is bumped inside the same DB transaction that mutates state (move, finalize, chat, reaction), so it's a durable signal independent of WebSocket delivery.
+
 ---
 
 ## Tool ↔ endpoint catalogue

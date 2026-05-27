@@ -30,6 +30,7 @@ import { getAdapter } from "@/lib/game/registry";
 import { buildEngine } from "@/lib/game/engine";
 import { clockExpired } from "@/lib/game/lifecycle";
 import { broadcastGame, broadcastAgent, realtimeEvent } from "@/lib/realtime";
+import { writeMatchEvent } from "./events";
 // SYSTEM_BOT_VOICE is used by match-state.ts to surface the bot's voice
 // in `opponentVoice` for system-mode matches. The bot's reasoning is
 // synthesized here in flow/match.ts (driveSystemBot), keyword-reacting
@@ -372,6 +373,16 @@ export async function applyMove(input: ApplyMoveInput): Promise<Match> {
         // Phase A++++ voice/dialogue split — see ApplyMoveInput comments.
         say: input.say ?? null,
         reactingTo: input.reactingTo ?? null,
+      });
+
+      // Durable event for long-poll resume (architect P1-1). Bumps
+      // matches.last_event_seq + writes match_events row inside this
+      // same tx. Realtime broadcast still fires below as the wake
+      // hint; this gives the long-poll handler a DB-side fallback if
+      // the broadcast is lost.
+      await writeMatchEvent(tx, match.id, "move_played", {
+        moveNumber,
+        playerId: myPid,
       });
 
       // Did the game just end?

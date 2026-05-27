@@ -109,6 +109,26 @@ export const recallSourceEnum = pgEnum("recall_source", [
   "system",
 ]);
 
+// match_events discriminator — every state-mutating action in the
+// match flow writes one row here so long-poll handlers can resume
+// from a known sequence number even if a Realtime broadcast was lost.
+// Extend cautiously; the long-poll handlers branch on kind to decide
+// what to refetch.
+export const matchEventKindEnum = pgEnum("match_event_kind", [
+  // Match created from challenge accept OR system-bot propose. seq=1.
+  "match_started",
+  // Engine accepted a move + advanced state. Includes bot moves in
+  // system mode.
+  "move_played",
+  // Engine reached game-over OR clock expired OR 3-strike forfeit.
+  // Always followed (in the same tx) by the finalize writes.
+  "match_ended",
+  // Spectator chat post or agent off-clock chat (match_chat_messages).
+  "chat_posted",
+  // Tapback emoji on a move or chat bubble.
+  "reaction_added",
+]);
+
 // -----------------------------------------------------------------------------
 // owners — humans connecting wallets. One row per unique wallet address.
 // -----------------------------------------------------------------------------
@@ -428,6 +448,17 @@ export const matches = pgTable(
     lastMoveAt: timestamp("last_move_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     abandonedAt: timestamp("abandoned_at", { withTimezone: true }),
+
+    // Match-local event sequence counter. Increments by 1 on every
+    // entry written to `match_events` (move played, finalize, chat,
+    // etc.). The long-poll handlers use this as a fast "anything new?"
+    // probe: read this column, compare to caller's `lastSeenSeq`,
+    // return events when it advanced. Eliminates the lost-broadcast
+    // tail risk in the autonomous-play loop — see architect review
+    // P1-1.
+    //
+    // Default 0 so existing rows are valid; first event sets to 1.
+    lastEventSeq: integer("last_event_seq").default(0).notNull(),
   },
   (table) => [
     index("matches_status_idx").on(table.status),
@@ -528,6 +559,68 @@ export interface MoveReaction {
   fromAnonymousToken?: string | null;
   at: string;
 }
+
+// -----------------------------------------------------------------------------
+// match_events — durable per-match event log for long-poll replay.
+//
+// THE PROBLEM IT SOLVES (architect review P1-1, 2026-05).
+//
+// Realtime broadcasts are fire-and-forget. If a long-poll subscriber
+// is in the gap between baseline-read and SUBSCRIBED, the broadcast
+// for that gap is gone. The `onSubscribed` race-window close in
+// `realtime-subscribe.ts` catches state-visible-in-DB cases (turn
+// flipped, match ended) but a ChatPosted between baseline-read and
+// SUBSCRIBED is silently dropped.
+//
+// HOW THIS TABLE SOLVES IT.
+//
+// Every state-mutating action in flow/match.ts + flow/finalize.ts +
+// flow/lobby.ts writes one row here INSIDE its existing transaction,
+// bumping `matches.last_event_seq`. The seq is match-local and
+// monotonic.
+//
+// The long-poll handler reads the caller's `lastSeenSeq` (passed as
+// a tool argument) and compares against `matches.last_event_seq`. If
+// the column is ahead, the handler immediately reads forward and
+// returns. If not, it subscribes to the broadcast AND polls the
+// column every ~1s — whichever fires first wakes the call.
+//
+// Broadcasts become a wake-up HINT; the DB is the source of truth.
+//
+// WHY SEQ INSTEAD OF JUST TIMESTAMP.
+//
+// (created_at) is wall-clock; two events in the same millisecond
+// land in unspecified order. seq is canonical ordering AND lets
+// `WHERE seq > $1` use the unique index. Timestamps are kept for
+// observability but never authoritative for the resume path.
+// -----------------------------------------------------------------------------
+
+export const matchEvents = pgTable(
+  "match_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    matchId: uuid("match_id")
+      .notNull()
+      .references(() => matches.id, { onDelete: "cascade" }),
+    // Match-local monotonic ordering. Bumped via `matches.last_event_seq +
+    // 1` inside the same tx that writes the row, with a UNIQUE(match_id,
+    // seq) hard guarantee against concurrent-writer holes.
+    seq: integer("seq").notNull(),
+    kind: matchEventKindEnum("kind").notNull(),
+    // Free-form per-kind payload. Keep small (< 8KB) — long-poll
+    // handlers may return events inline.
+    payload: jsonb("payload").default({}).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    // Hard ordering guarantee. Also the index that backs `WHERE seq > ?`
+    // in the long-poll resume path.
+    uniqueIndex("match_events_match_seq_uq").on(table.matchId, table.seq),
+    index("match_events_created_idx").on(table.createdAt),
+  ],
+).enableRLS();
 
 export const matchMoves = pgTable(
   "match_moves",

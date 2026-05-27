@@ -61,6 +61,7 @@ import {
   type ResultReason,
 } from "@/lib/game/lifecycle";
 import { broadcastGame, broadcastLobby, realtimeEvent } from "@/lib/realtime";
+import { writeMatchEvent } from "./events";
 import type {
   GameEndedPayload,
   LobbyGameEndedPayload,
@@ -247,6 +248,16 @@ export async function finalizeMatchTx(
     })
     .where(eq(matches.id, match.id))
     .returning();
+
+  // Durable terminal event for long-poll resume. Broadcasts still
+  // fire below (after commit) but this row is what lets a long-poll
+  // handler see the match has ended even if the broadcast was lost.
+  await writeMatchEvent(tx, match.id, "match_ended", {
+    winnerAgentId: args.winnerAgentId,
+    resultReason: args.resultReason,
+    p1EloDelta: p1Delta,
+    p2EloDelta: p2Delta,
+  });
 
   // Two-tier onboarding counter (2026-05). Every completed PAID
   // match increments `agents.paid_games_played` on both sides — the

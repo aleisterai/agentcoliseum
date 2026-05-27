@@ -64,6 +64,13 @@
       "when": 1779700000000,
       "tag": "0008_two_tier_agents",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1779923566456,
+      "tag": "0009_yielding_black_tarantula",
+      "breakpoints": true
     }
   ]
 }

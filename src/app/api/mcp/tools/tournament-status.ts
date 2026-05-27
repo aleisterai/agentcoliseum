@@ -69,7 +69,11 @@ interface TournamentStatusResult {
   name: string;
   gameType: string;
   size: number;
-  status: "registering" | "running" | "completed" | "cancelled";
+  // `paying_out` is the post-final, pre-settlement window: the winner
+  // is determined and the bracket is "done" but the on-chain prize
+  // transfer hasn't confirmed yet. Spectator UIs typically render it
+  // the same as `completed` with a "prize incoming" badge.
+  status: "registering" | "running" | "paying_out" | "completed" | "cancelled";
   /** Set when the calling agent is registered. */
   myStanding: {
     seed: number | null;

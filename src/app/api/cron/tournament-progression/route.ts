@@ -30,12 +30,15 @@ import {
   tournaments,
   tournamentEntries,
   tournamentMatches,
+  tournamentPayouts,
 } from "@/lib/db/schema";
 import { jsonError } from "@/lib/http";
 import { buildEngine } from "@/lib/game/engine";
 import { getAdapter } from "@/lib/game/registry";
 import { buildNextRound, totalRounds } from "@/lib/tournament";
-import { refundStake } from "@/lib/chain/stake";
+// refundStake removed: tournament prize payouts now flow through the
+// tournament_payouts queue + settlement-sweep cron (architect review
+// P0-1). The cron no longer touches the operator wallet directly.
 import { recordCronRun } from "@/lib/cron-audit";
 import { authorizedCronRequest } from "@/lib/cron-auth";
 import { withCronLock } from "@/lib/cron-lock";
@@ -86,7 +89,10 @@ async function handleTournamentProgression({
     advanced: number;
     roundCreated?: number;
     completed?: boolean;
-    payoutTxHash?: string;
+    // True when the final match decided and we enqueued a
+    // tournament_payouts row; the on-chain transfer is now
+    // settlement-sweep's responsibility, not ours.
+    payingOut?: boolean;
     error?: string;
   }> = [];
 
@@ -121,7 +127,7 @@ async function advanceOne(t: typeof tournaments.$inferSelect): Promise<{
   advanced: number;
   roundCreated?: number;
   completed?: boolean;
-  payoutTxHash?: string;
+  payingOut?: boolean;
 }> {
   // 1. Copy winners from completed matches into tournament_matches rows.
   const allTMatches = await db
@@ -327,7 +333,20 @@ async function advanceOne(t: typeof tournaments.$inferSelect): Promise<{
     return { advanced, roundCreated: lastRound + 1 };
   }
 
-  // Final completed — pay out + flip status.
+  // Final completed — enqueue payout + flip status to 'paying_out'.
+  //
+  // CRITICAL CHANGE (architect review P0-1): we used to call
+  // refundStake() inline here, then update tournaments.status='completed'.
+  // A crash between those two writes left the prize on-chain with the
+  // tournament still in 'running' — next cron tick re-paid the winner.
+  //
+  // New flow: insert a tournament_payouts row (status='pending') and
+  // flip tournaments.status from 'running' → 'paying_out' INSIDE one
+  // transaction. The UNIQUE constraint on (tournamentId, recipient)
+  // prevents double-enqueue if this tx commits but a downstream step
+  // crashes and retries. The settlement-sweep cron then drains the
+  // pending row, submits the on-chain tx, and on confirmation flips
+  // status from 'paying_out' → 'completed'.
   const finalMatch = lastRoundMatches[0];
   if (!finalMatch?.winnerAgentId) return { advanced };
   const winnerAgent = await db.query.agents.findFirst({
@@ -344,52 +363,68 @@ async function advanceOne(t: typeof tournaments.$inferSelect): Promise<{
   });
   if (!winnerOwner) return { advanced };
 
-  let payoutTxHash: string | undefined;
-  if (t.prizePoolUsdc > 0 && process.env.PLATFORM_OPERATOR_PRIVATE_KEY) {
-    // We re-use refundStake (operator → owner USDC.transfer) since
-    // mechanically it's the same op as a refund: move USDC from
-    // operator → recipient.
-    try {
-      payoutTxHash = await refundStake(
-        winnerOwner.walletAddress as `0x${string}`,
-        t.prizePoolUsdc,
-      );
-    } catch (err) {
-      console.error("[cron/tournament-progression] payout failed", {
-        tournamentId: t.id,
-        err,
-      });
-      // Don't flip to completed if payout failed — leave 'running'
-      // so the next tick retries. Operator can also force-pay from
-      // /admin/treasury if it stays stuck.
-      return { advanced };
-    }
-  }
+  // Free tournaments (prizePool=0) skip the on-chain step and go
+  // straight to completed. The settlement-sweep contract is
+  // "pending row → drain", so we just don't enqueue anything.
+  const hasPrize = t.prizePoolUsdc > 0;
 
-  await db
-    .update(tournaments)
-    .set({
-      status: "completed",
-      winnerAgentId: winnerAgent.id,
-      completedAt: new Date(),
-    })
-    .where(eq(tournaments.id, t.id));
-  await db
-    .update(tournamentEntries)
-    .set({ eliminatedRound: 0 }) // winner sentinel
-    .where(
-      and(
-        eq(tournamentEntries.tournamentId, t.id),
-        eq(tournamentEntries.agentId, winnerAgent.id),
-      ),
-    );
-  // Wake the winner's tournament_status(wait:true). Awaited per
-  // AGE-55 so the broadcast survives the cron handler's return.
+  await db.transaction(async (tx) => {
+    // 1. Enqueue the payout (idempotent via UNIQUE constraint).
+    if (hasPrize) {
+      await tx
+        .insert(tournamentPayouts)
+        .values({
+          tournamentId: t.id,
+          recipientAddress: winnerOwner.walletAddress,
+          recipientAgentId: winnerAgent.id,
+          amountUsdc: t.prizePoolUsdc,
+          status: "pending",
+        })
+        .onConflictDoNothing({
+          target: [
+            tournamentPayouts.tournamentId,
+            tournamentPayouts.recipientAddress,
+          ],
+        });
+    }
+    // 2. Flip tournament status. For free tournaments we go straight
+    //    to completed (nothing to settle); for paid we go to
+    //    paying_out and the settlement-sweep cron promotes to
+    //    completed after the receipt confirms.
+    await tx
+      .update(tournaments)
+      .set({
+        status: hasPrize ? "paying_out" : "completed",
+        winnerAgentId: winnerAgent.id,
+        ...(!hasPrize ? { completedAt: new Date() } : {}),
+      })
+      .where(eq(tournaments.id, t.id));
+    // 3. Stamp the winner's eliminatedRound sentinel.
+    await tx
+      .update(tournamentEntries)
+      .set({ eliminatedRound: 0 })
+      .where(
+        and(
+          eq(tournamentEntries.tournamentId, t.id),
+          eq(tournamentEntries.agentId, winnerAgent.id),
+        ),
+      );
+  });
+  // Wake the winner's tournament_status(wait:true). Fires AFTER the
+  // tx commits — same AGE-55 pattern as the round-creation broadcast
+  // above. The winner sees `eliminatedRound: 0` immediately even
+  // though the on-chain payout hasn't confirmed yet (status is
+  // 'paying_out' for paid tournaments; the spectator UI shows
+  // "prize incoming" until the tx confirms).
   await broadcastAgent(winnerAgent.id, realtimeEvent.TournamentEnded, {
     tournamentId: t.id,
     eliminatedRound: 0,
     isWinner: true,
   } satisfies TournamentEndedPayload);
 
-  return { advanced, completed: true, payoutTxHash };
+  return {
+    advanced,
+    completed: !hasPrize,
+    payingOut: hasPrize,
+  };
 }

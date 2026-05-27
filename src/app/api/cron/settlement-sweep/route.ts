@@ -37,7 +37,7 @@ import { NextResponse } from "next/server";
 import { eq, inArray, sql as dsql } from "drizzle-orm";
 import { encodeFunctionData, erc20Abi, type Hex } from "viem";
 import { db } from "@/lib/db/client";
-import { matches, matchPayouts } from "@/lib/db/schema";
+import { matches, matchPayouts, tournaments, tournamentPayouts } from "@/lib/db/schema";
 import { getOperatorWallet } from "@/lib/chain/wallet";
 import { publicClient } from "@/lib/chain/viem";
 import { USDC_BASE } from "@/lib/chain/aerodrome";
@@ -280,17 +280,26 @@ async function handleSettlementSweep({
     }
   }
 
+  // Drain tournament_payouts on the same tick. Same per-row pattern
+  // as match_payouts but writes to tournament_payouts + flips the
+  // parent tournament row from 'paying_out' → 'completed' on receipt
+  // confirmation. Sequential after match_payouts so we don't compete
+  // with ourselves for nonce slots (the operator-nonce mutex would
+  // serialize anyway; this just keeps the order predictable).
+  const tournamentDrain = await drainTournamentPayouts();
+
   const confirmed = results.filter((r) => r.outcome === "confirmed").length;
   const resumed = results.filter((r) => r.outcome === "resumed").length;
   const skipped = results.filter((r) => r.outcome === "skipped").length;
   const failed = results.filter((r) => r.outcome === "failed").length;
-  setItems(confirmed + resumed);
+  setItems(confirmed + resumed + tournamentDrain.confirmed + tournamentDrain.resumed);
   setMetadata({
     confirmed,
     resumed,
     skipped,
     failed,
     batchSize: results.length,
+    tournament: tournamentDrain,
   });
   return NextResponse.json({
     ok: true,
@@ -300,5 +309,148 @@ async function handleSettlementSweep({
     skipped,
     failed,
     results,
+    tournament: tournamentDrain,
   });
+}
+
+interface TournamentDrainResult {
+  confirmed: number;
+  resumed: number;
+  failed: number;
+  batchSize: number;
+}
+
+/**
+ * Sister loop for tournament_payouts. Same submit-capture-wait-confirm
+ * pattern as match_payouts above; the differences are the table the
+ * row lives on and the post-confirmation step (flip parent tournament
+ * row to status='completed' instead of stamping matches.payoutAt).
+ */
+async function drainTournamentPayouts(): Promise<TournamentDrainResult> {
+  const pending = await db
+    .select()
+    .from(tournamentPayouts)
+    .where(inArray(tournamentPayouts.status, ["pending", "submitted"]))
+    .limit(BATCH_LIMIT);
+
+  if (pending.length === 0) {
+    return { confirmed: 0, resumed: 0, failed: 0, batchSize: 0 };
+  }
+  if (!process.env.PLATFORM_OPERATOR_PRIVATE_KEY) {
+    return { confirmed: 0, resumed: 0, failed: 0, batchSize: pending.length };
+  }
+
+  const wallet = getOperatorWallet();
+  let confirmed = 0;
+  let resumed = 0;
+  let failed = 0;
+
+  for (const row of pending) {
+    try {
+      // Resume-from-submitted: chase the receipt without re-broadcasting.
+      if (row.status === "submitted" && row.txHash) {
+        const receipt = await publicClient.waitForTransactionReceipt({
+          hash: row.txHash as Hex,
+        });
+        if (receipt.status === "success") {
+          await db.transaction(async (tx) => {
+            await tx
+              .update(tournamentPayouts)
+              .set({ status: "confirmed", confirmedAt: new Date() })
+              .where(eq(tournamentPayouts.id, row.id));
+            await tx
+              .update(tournaments)
+              .set({ status: "completed", completedAt: new Date() })
+              .where(eq(tournaments.id, row.tournamentId));
+          });
+          resumed++;
+        } else {
+          await db
+            .update(tournamentPayouts)
+            .set({
+              status: "failed",
+              lastError: "receipt status reverted",
+              attemptCount: dsql`${tournamentPayouts.attemptCount} + 1`,
+            })
+            .where(eq(tournamentPayouts.id, row.id));
+          failed++;
+        }
+        continue;
+      }
+
+      if (row.amountUsdc <= 0) {
+        // Defence-in-depth — tournament-progression refuses to enqueue
+        // 0-amount rows but if a hand-edited row slipped through, mark
+        // failed without burning a tx.
+        await db
+          .update(tournamentPayouts)
+          .set({ status: "failed", lastError: "amountUsdc must be > 0" })
+          .where(eq(tournamentPayouts.id, row.id));
+        failed++;
+        continue;
+      }
+
+      const hash = await submitOperatorTx((nonce) =>
+        wallet.sendTransaction({
+          to: USDC_BASE,
+          data: encodeFunctionData({
+            abi: erc20Abi,
+            functionName: "transfer",
+            args: [
+              row.recipientAddress as `0x${string}`,
+              BigInt(row.amountUsdc),
+            ],
+          }),
+          nonce,
+        }),
+      );
+      await db
+        .update(tournamentPayouts)
+        .set({
+          status: "submitted",
+          txHash: hash,
+          submittedAt: new Date(),
+          attemptCount: dsql`${tournamentPayouts.attemptCount} + 1`,
+        })
+        .where(eq(tournamentPayouts.id, row.id));
+
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status === "success") {
+        await db.transaction(async (tx) => {
+          await tx
+            .update(tournamentPayouts)
+            .set({ status: "confirmed", confirmedAt: new Date() })
+            .where(eq(tournamentPayouts.id, row.id));
+          await tx
+            .update(tournaments)
+            .set({ status: "completed", completedAt: new Date() })
+            .where(eq(tournaments.id, row.tournamentId));
+        });
+        confirmed++;
+      } else {
+        await db
+          .update(tournamentPayouts)
+          .set({ status: "failed", lastError: "receipt status reverted" })
+          .where(eq(tournamentPayouts.id, row.id));
+        failed++;
+      }
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[cron/settlement-sweep] tournament payout ${row.id} (tournament ${row.tournamentId}) failed`,
+        err,
+      );
+      await db
+        .update(tournamentPayouts)
+        .set({
+          status: row.txHash ? "submitted" : "failed",
+          lastError: detail,
+          attemptCount: dsql`${tournamentPayouts.attemptCount} + 1`,
+        })
+        .where(eq(tournamentPayouts.id, row.id));
+      failed++;
+    }
+  }
+
+  return { confirmed, resumed, failed, batchSize: pending.length };
 }

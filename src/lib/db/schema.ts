@@ -801,9 +801,20 @@ export const matchReactions = pgTable(
 // Lifecycle: registering → running → completed | cancelled.
 // -----------------------------------------------------------------------------
 
+// Tournament lifecycle:
+//   registering → running → paying_out → completed
+//                              ↓
+//                          cancelled (admin-only)
+//
+// `paying_out` is the on-chain prize-disbursement window. The tournament-
+// progression cron flips into this state INSIDE the same tx that enqueues
+// the tournament_payouts row, so a crash between the two states can never
+// double-pay. The settlement-sweep cron drains the payout row and flips
+// to 'completed' once the receipt confirms.
 export const tournamentStatusEnum = pgEnum("tournament_status", [
   "registering",
   "running",
+  "paying_out",
   "completed",
   "cancelled",
 ]);
@@ -901,6 +912,84 @@ export const tournamentMatches = pgTable(
       table.bracketPosition,
     ),
     index("tournament_matches_match_idx").on(table.matchId),
+  ],
+).enableRLS();
+
+// -----------------------------------------------------------------------------
+// tournament_payouts — per-tournament prize disbursement idempotency.
+//
+// Mirrors match_payouts (line 1010+) but for the tournament-winner prize path.
+//
+// Before this table, tournament-progression/route.ts called refundStake()
+// directly and then UPDATEd tournaments.status='completed'. A crash, Vercel
+// function timeout, or DB write failure between the on-chain transfer and
+// the status flip left the tournament in status='running' with the prize
+// already on-chain — next cron tick re-paid the winner. (See architect
+// review 2026-05, P0-1.)
+//
+// Lifecycle of a tournament_payouts row:
+//   1. Tournament-progression cron detects all-decided final match. In a
+//      SINGLE transaction it:
+//        - INSERTs a pending row (UNIQUE constraint on
+//          (tournament_id, recipient_address) prevents dupes)
+//        - Flips tournaments.status from 'running' → 'paying_out'
+//      A crash here leaves the tx un-committed; next cron tick is identical.
+//   2. settlement-sweep cron picks pending → submitOperatorTx → status='submitted'
+//      with tx_hash. After waitForTransactionReceipt: 'confirmed' or 'failed'.
+//   3. When the payout row is 'confirmed', settlement-sweep flips the
+//      tournament.status from 'paying_out' → 'completed' in the same tx.
+//
+// Why a separate table (and not just tournament columns):
+//   - One day we may have multi-place prizes (1st/2nd/3rd, sponsorships).
+//     The row-per-recipient pattern scales trivially; column-per-recipient
+//     would explode the tournaments schema.
+//   - Reusing the settlement-sweep machinery (already battle-tested for
+//     match_payouts) is much safer than duplicating submit/wait logic in
+//     the tournament cron.
+// -----------------------------------------------------------------------------
+
+export const tournamentPayouts = pgTable(
+  "tournament_payouts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tournamentId: uuid("tournament_id")
+      .notNull()
+      .references(() => tournaments.id, { onDelete: "cascade" }),
+    // Recipient address snapshotted at finalize time (owner row may
+    // rotate wallets between payout-enqueue and on-chain settle).
+    recipientAddress: text("recipient_address").notNull(),
+    // The winning agent. Nullable to allow sponsorship/bounty payouts
+    // not tied to a registered agent (future use).
+    recipientAgentId: uuid("recipient_agent_id").references(() => agents.id, {
+      onDelete: "set null",
+    }),
+    amountUsdc: integer("amount_usdc").notNull(),
+
+    // Reuse the match_payouts status enum — same lifecycle states.
+    status: matchPayoutStatusEnum("status").default("pending").notNull(),
+    txHash: text("tx_hash"),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+
+    attemptCount: integer("attempt_count").default(0).notNull(),
+    lastError: text("last_error"),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    // Hard idempotency: at most one prize per (tournament, recipient).
+    // Today we only pay one winner per tournament so this is effectively
+    // a unique on tournamentId, but the shape lets us add 2nd/3rd-place
+    // payouts later without a schema change.
+    uniqueIndex("tournament_payouts_uq").on(
+      table.tournamentId,
+      table.recipientAddress,
+    ),
+    index("tournament_payouts_tournament_idx").on(table.tournamentId),
+    index("tournament_payouts_status_idx").on(table.status),
+    index("tournament_payouts_created_idx").on(table.createdAt),
   ],
 ).enableRLS();
 

@@ -26,6 +26,14 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 export const revalidate = 5;
 
+/**
+ * Max-height (px) of the bounded scroll panels on the merged "All" view.
+ * Tuned to fit ~7-8 rows per panel on a 1080p screen without pushing the
+ * post-challenge form below the fold. Change this if the row density
+ * shifts (e.g. dropping the avatar column would let us go denser).
+ */
+const PANEL_MAX_HEIGHT_PX = 440;
+
 type Tab = "all" | "book" | "live" | "history";
 
 export default async function LobbyPage({
@@ -190,7 +198,7 @@ export default async function LobbyPage({
             </div>
             <div
               className="panel-bd-flush scroll-x"
-              style={{ maxHeight: 440, overflowY: "auto" }}
+              style={{ maxHeight: PANEL_MAX_HEIGHT_PX, overflowY: "auto" }}
             >
               {fLive.length === 0 ? (
                 <EmptyTable msg="No live matches right now." />
@@ -214,7 +222,7 @@ export default async function LobbyPage({
             </div>
             <div
               className="panel-bd-flush scroll-x"
-              style={{ maxHeight: 440, overflowY: "auto" }}
+              style={{ maxHeight: PANEL_MAX_HEIGHT_PX, overflowY: "auto" }}
             >
               {fOpen.length === 0 ? (
                 <EmptyTable msg="No open challenges. Post one below to seed the book." />

@@ -205,7 +205,9 @@ export async function waitForEvent(
   try {
     return await promise;
   } finally {
-    opts.signal?.removeEventListener("abort", abortHandler);
+    // No explicit `signal.removeEventListener(abortHandler)` here —
+    // the listener was registered with `{ once: true }` (above), so
+    // it auto-removes after the first fire OR after the signal is GC'd.
     try {
       await client.removeChannel(channel);
     } catch {

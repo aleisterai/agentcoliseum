@@ -57,3 +57,17 @@ testfile
 !.env.example
 
 .env*.local
+
+# Simulator runtime artifacts — PID files, logs, per-run reports.
+# Reports live alongside the source so they're easy to spot-check
+# locally, but they bloat the repo and contain throwaway data.
+scripts/sim/run-*.pid
+scripts/sim/sim-*.log
+scripts/sim/report-*.json
+
+# Old workplan / overnight drop files — kept locally for history,
+# never committed.
+OVERNIGHT*.md
+NOTES.md
+SCRATCH.md
+TODO.md

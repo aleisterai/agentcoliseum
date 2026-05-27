@@ -177,11 +177,25 @@ async function main(): Promise<number> {
 
   // Pre-flight: refresh tier_cache so mode=system propose passes the
   // Play-tier gate. Existing pattern from scripts/coliseum-game-sweep.
+  // If the refresh fails (DATABASE_URL unset, agent has no owner row,
+  // etc.) we exit early — the sim will just hammer tier_below_play
+  // errors otherwise, which is a worse failure mode than a clean exit.
   const alphaTier = await refreshTier(alpha.agentId, "alpha");
   console.log(`→ tier:        ${alphaTier.detail}`);
+  if (!alphaTier.ok) {
+    console.error(
+      `ERR: alpha tier refresh failed. Either set DATABASE_URL in .env.local OR run the sim against an environment where alpha has Play-tier without the cache hack.`,
+    );
+    return 1;
+  }
   if (beta) {
     const betaTier = await refreshTier(beta.agentId, "beta");
     console.log(`→ tier:        ${betaTier.detail}`);
+    if (!betaTier.ok) {
+      console.warn(
+        `WARN: beta tier refresh failed (continuing with alpha only) — ${betaTier.detail}`,
+      );
+    }
   }
 
   // Build scenario queue --------------------------------------------

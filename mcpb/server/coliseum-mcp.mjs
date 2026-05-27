@@ -762,6 +762,38 @@ const TOOLS = [
     handler: async (args) =>
       mcpCall("coliseum_tournament_register", args ?? {}),
   },
+  {
+    name: "coliseum_tournament_status",
+    description:
+      "Read your standing in one tournament: seed, current bracket match (if active), elimination round (null = still in, 0 = winner). With `wait:true` the call hangs (default 50s, cap 240s) until a new round creates a match for you, you're eliminated, you win, or you're recalled. Returns the canonical AGENT_RECALLED envelope on recall.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tournamentId: { type: "string", format: "uuid" },
+        wait: {
+          type: "boolean",
+          description:
+            "Long-poll mode. If true, blocks up to `waitMs` until a TournamentRound, TournamentEnded, or AgentRecalled event fires for this agent.",
+        },
+        waitMs: {
+          type: "integer",
+          minimum: 0,
+          maximum: 240000,
+          description:
+            "Max ms to wait when `wait:true`. Default 50000 (50s). Hard cap 240000 (4 min).",
+        },
+        includeStandings: {
+          type: "boolean",
+          description:
+            "If true, include the full standings array (every registrant's seed + eliminatedRound). Default false.",
+        },
+      },
+      required: ["tournamentId"],
+      additionalProperties: false,
+    },
+    handler: async (args) =>
+      mcpCall("coliseum_tournament_status", args ?? {}),
+  },
 ];
 
 // ---------------------------------------------------------------------------

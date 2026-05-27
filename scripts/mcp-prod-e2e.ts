@@ -241,6 +241,77 @@ async function runToolBatteryWithBearer(
     },
   );
 
+  // 7b. tournament_status — covers both cases: real ID if any tournament
+  //     exists, otherwise nil UUID → tournament_not_found is the expected
+  //     happy path (coverage gap from AGE-106).
+  {
+    const tsStart = Date.now();
+    try {
+      // Scan all statuses for any real tournament ID.
+      let testTournamentId: string | null = null;
+      for (const status of ["registering", "running", "completed"] as const) {
+        const lr = await callTool<
+          { tournaments?: Array<{ id: string }> } | Array<{ id: string }>
+        >(bearer, "coliseum_tournament_list", { status });
+        const arr = Array.isArray(lr)
+          ? lr
+          : (lr as { tournaments?: Array<{ id: string }> }).tournaments ?? [];
+        if (arr.length > 0) {
+          testTournamentId = arr[0].id;
+          break;
+        }
+      }
+
+      if (testTournamentId) {
+        // Real tournament — validate full response shape.
+        const ts = await callTool<{
+          id: string;
+          name: string;
+          status: string;
+          entries: unknown[];
+          bracket: unknown[];
+        }>(bearer, "coliseum_tournament_status", {
+          tournamentId: testTournamentId,
+        });
+        if (ts.id !== testTournamentId) throw new Error(`id mismatch: ${ts.id}`);
+        if (!Array.isArray(ts.entries)) throw new Error("entries not an array");
+        if (!Array.isArray(ts.bracket)) throw new Error("bracket not an array");
+        pass(
+          contract,
+          "coliseum_tournament_status",
+          `id=${testTournamentId.slice(0, 8)} status=${ts.status} entries=${ts.entries.length}`,
+          Date.now() - tsStart,
+        );
+      } else {
+        // No tournaments in prod — nil UUID → expect tournament_not_found.
+        const NIL_UUID = "00000000-0000-0000-0000-000000000000";
+        const raw = (await jsonRpcCall(bearer, "tools/call", {
+          name: "coliseum_tournament_status",
+          arguments: { tournamentId: NIL_UUID },
+        })) as { content?: Array<{ type: string; text: string }> };
+        const text = raw?.content?.[0]?.text;
+        if (typeof text !== "string") throw new Error("no text content in response");
+        const parsed = JSON.parse(text) as { error?: string };
+        if (parsed.error !== "tournament_not_found") {
+          throw new Error(`expected tournament_not_found, got: ${parsed.error ?? JSON.stringify(parsed)}`);
+        }
+        pass(
+          contract,
+          "coliseum_tournament_status",
+          "no active tournament — tournament_not_found handled gracefully",
+          Date.now() - tsStart,
+        );
+      }
+    } catch (err) {
+      fail(
+        contract,
+        "coliseum_tournament_status",
+        err instanceof Error ? err.message : String(err),
+        Date.now() - tsStart,
+      );
+    }
+  }
+
   // 8. profile_update — every field the user cares about, in sequence.
   //    Each subtest applies one field, asserts it stuck, and continues.
   const updateField = async <K extends string>(

@@ -82,7 +82,25 @@ function parseArgs(argv: string[]): CliArgs {
   // twists
   const twistsOff = args["twists-off"] === "true" || args.twistsOff === "true";
   // concurrency
-  const concurrency = Math.max(1, Math.min(8, Number(args.concurrency ?? "1")));
+  // The OLD cap was 8 (defensive). Raised to 500 so a single sim run
+  // can saturate the per-bearer rate-limit ceiling.
+  //
+  // Real ceiling math:
+  //   - Rate limit: 60 req/60s per bearer × 2 bearers = 120 ops/min
+  //   - Each match: ~20-40 HTTP round-trips (state-poll + move loop)
+  //   - The runner already has rate-limit-aware back-off
+  //     (parses "Back off for ~Ns" from the server)
+  //   - Past ~50 in-flight per bearer, you're just queueing on the
+  //     server-side rate limiter — no throughput gain
+  //
+  // Pragmatic guidance:
+  //   --concurrency=100  → ~50 in-flight per bearer, full saturation
+  //   --concurrency=20   → comfortable, finishes 1000 matches in ~6h
+  //   --concurrency=8    → previous default, deliberately under quota
+  const concurrency = Math.max(
+    1,
+    Math.min(500, Number(args.concurrency ?? "1")),
+  );
 
   return { games, matches, difficulty, twistsOff, concurrency };
 }

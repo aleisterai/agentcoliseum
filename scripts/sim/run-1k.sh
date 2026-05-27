@@ -38,7 +38,7 @@ PIDFILE="$ROOT/scripts/sim/run-1k.pid"
   SIM_MATCH_DEADLINE_MS=600000 nohup \
     node --conditions=react-server --env-file=.env.local --import tsx \
     scripts/sim/index.ts \
-    --games=all --matches=70 --concurrency=2 --twists-off \
+    --games=all --matches=70 --concurrency=100 --twists-off \
     > "$LOG" 2>&1 < /dev/null &
   echo "$!" > "$PIDFILE"
 ) &

@@ -26,7 +26,7 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 export const revalidate = 5;
 
-type Tab = "book" | "live" | "history";
+type Tab = "all" | "book" | "live" | "history";
 
 export default async function LobbyPage({
   searchParams,
@@ -34,25 +34,23 @@ export default async function LobbyPage({
   searchParams: Promise<{ tab?: string; gameType?: string }>;
 }) {
   const { tab: rawTab, gameType } = await searchParams;
-  // Tab resolution rules:
-  //   - explicit ?tab=X wins always (lets users park on a tab via URL)
-  //   - when no explicit tab is given:
-  //       * if there are LIVE matches running right now → default to "live"
-  //         (operator instruction: "I want to see live games first when
-  //         accessing the lobby")
-  //       * otherwise → fall back to "book" so the order-book is still the
-  //         landing surface during idle periods
-  // We have to peek at the live-match count before we can default. The
-  // count comes from `liveMatches` below, so this defaulting logic moves
-  // BELOW the parallel-fetch — see `tab` reassignment after the Promise.all.
-  const explicitTab: Tab | null =
+  // Tab resolution. Default is the merged "all" view: Live on top +
+  // Order book below, each as a bounded scrollable panel. Power-users
+  // can drill into a focused single-section view via `?tab=live` /
+  // `?tab=book` / `?tab=history` — those routes still render the
+  // original full-table layout.
+  //
+  // History is intentionally NOT on the merged view — it's past-tense
+  // reference material that would push the post-challenge form below
+  // the fold and grow unboundedly.
+  const tab: Tab =
     rawTab === "live"
       ? "live"
       : rawTab === "history"
       ? "history"
       : rawTab === "book"
       ? "book"
-      : null;
+      : "all";
 
   // Pull all the data we need in parallel — counts shown in the tabs and the
   // active-tab body both come from the same dataset, so this is one round trip.
@@ -95,12 +93,6 @@ export default async function LobbyPage({
         .orderBy(desc(matches.completedAt))
         .limit(40),
     ]);
-
-  // Default-tab resolution: respect explicit ?tab=X if present, otherwise
-  // show live first when there's anything actually playing, fall back to
-  // the order book during idle periods.
-  const tab: Tab =
-    explicitTab ?? (liveMatches.length > 0 ? "live" : "book");
 
   // Resolve the agents in one shot for every row we'll render.
   const agentIds = new Set<string>();
@@ -147,13 +139,16 @@ export default async function LobbyPage({
             {fLive.length > 0
               ? `${fLive.length} live ${
                   fLive.length === 1 ? "match" : "matches"
-                } in progress · open the live tab to watch, or jump to the order book to post.`
+                } in progress · ${fOpen.length} open challenge${
+                  fOpen.length === 1 ? "" : "s"
+                } waiting for a taker.`
               : "Open challenges, ready to fill. Click any order to accept and route an x402 stake."}
           </p>
         </div>
         <div className="title-actions">
           <div className="title-tabs">
-            {/* Live first — the priority surface when matches are running. */}
+            {/* All-in-one is the default — live + book on one scrollable page. */}
+            <TabLink href={tabHref("all", gameType)} active={tab === "all"} label="All" />
             <TabLink
               href={tabHref("live", gameType)}
               active={tab === "live"}
@@ -168,13 +163,71 @@ export default async function LobbyPage({
               count={fHistory.length}
             />
           </div>
-          <Link href="/lobby?tab=book#post" className="btn primary">
+          <Link href="/lobby#post" className="btn primary">
             + Post challenge
           </Link>
         </div>
       </section>
 
-      {/* Body switches on tab */}
+      {/* Body switches on tab. The "all" view is the default merged
+          surface — Live above Order book, each as a bounded scrollable
+          panel (~440px max-height) so the page stays single-screen.
+          Focused tabs (live / book / history) render the same panels
+          without the height cap for users who want the full list. */}
+      {tab === "all" && (
+        <>
+          <section className="panel">
+            <div className="panel-hd">
+              <span className="panel-hd-title">
+                <span style={{ color: "var(--gold)" }}>●</span> Live · matches in progress
+              </span>
+              <span className="panel-hd-meta mono">
+                {fLive.length} live ·{" "}
+                <Link href={tabHref("live", gameType)} className="lnk">
+                  view all →
+                </Link>
+              </span>
+            </div>
+            <div
+              className="panel-bd-flush scroll-x"
+              style={{ maxHeight: 440, overflowY: "auto" }}
+            >
+              {fLive.length === 0 ? (
+                <EmptyTable msg="No live matches right now." />
+              ) : (
+                <LiveMatchesTable rows={fLive} aMap={aMap} />
+              )}
+            </div>
+          </section>
+
+          <section className="panel" style={{ marginTop: 14 }}>
+            <div className="panel-hd">
+              <span className="panel-hd-title">
+                <span style={{ color: "var(--ox-bright)" }}>●</span> Order book · open challenges
+              </span>
+              <span className="panel-hd-meta mono">
+                {fOpen.length} orders · {formatUsdc(totalBookUsdc)} USDC ·{" "}
+                <Link href={tabHref("book", gameType)} className="lnk">
+                  view all →
+                </Link>
+              </span>
+            </div>
+            <div
+              className="panel-bd-flush scroll-x"
+              style={{ maxHeight: 440, overflowY: "auto" }}
+            >
+              {fOpen.length === 0 ? (
+                <EmptyTable msg="No open challenges. Post one below to seed the book." />
+              ) : (
+                <OpenChallengesTable rows={fOpen} aMap={aMap} />
+              )}
+            </div>
+          </section>
+
+          <PostChallengeForm id="post" />
+        </>
+      )}
+
       {tab === "book" && (
         <>
           <section className="book-grid">
@@ -191,84 +244,7 @@ export default async function LobbyPage({
                 {fOpen.length === 0 ? (
                   <EmptyTable msg="No open challenges. Post one below to seed the book." />
                 ) : (
-                  <table className="t book-t">
-                    <thead>
-                      <tr>
-                        <th>Agent</th>
-                        <th>Game</th>
-                        <th>Filter</th>
-                        <th className="right">Clock</th>
-                        <th className="right">Posted</th>
-                        <th className="right">Stake</th>
-                        <th className="right">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {fOpen.map((c) => {
-                        const a = aMap[c.initiatorAgentId];
-                        const g = catalogEntry(c.gameType);
-                        const filterLabel =
-                          c.eloMin || c.eloMax
-                            ? `ELO ${c.eloMin ?? "?"}–${c.eloMax ?? "?"}`
-                            : "any opponent";
-                        return (
-                          <tr key={c.id}>
-                            <td>
-                              <div className="agent-cell">
-                                <span className="av" data-c={avatarIndex(a?.handle ?? "")}>
-                                  {avatarInitials(a?.displayName ?? "?")}
-                                </span>
-                                <div className="nm">
-                                  {a?.displayName ?? "—"}
-                                  <span className="h">
-                                    @{a?.handle ?? "?"} · ELO {a?.elo ?? "—"}
-                                  </span>
-                                </div>
-                              </div>
-                            </td>
-                            <td>
-                              <Link href={`/games/${c.gameType}`} className="lnk">
-                                {g?.displayName ?? c.gameType}
-                              </Link>
-                            </td>
-                            <td>
-                              <span className="chip dim" style={{ fontSize: 9.5 }}>
-                                {filterLabel}
-                              </span>
-                            </td>
-                            <td className="right mono" style={{ fontSize: 11 }}>
-                              {/* Per-move clock. Older challenges with no
-                                  stored value default to 240s — matches the
-                                  recalibrated DEFAULT_PER_MOVE_SECONDS in
-                                  per-move.ts. */}
-                              {Math.round((c.clockBudgetMs ?? 240000) / 1000)}s/move
-                            </td>
-                            <td
-                              className="right mono mute"
-                              style={{ fontSize: 11 }}
-                            >
-                              {timeAgo(c.postedAt)} ago
-                            </td>
-                            <td className="right">
-                              {c.mode === "paid" && c.stakeUsdc ? (
-                                <span className="money">{formatUsdc(c.stakeUsdc)}</span>
-                              ) : (
-                                <span className="dim mono">free</span>
-                              )}
-                            </td>
-                            <td className="right">
-                              <Link
-                                href={`/lobby/accept/${c.id}`}
-                                className="btn gold sm"
-                              >
-                                Accept →
-                              </Link>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                  <OpenChallengesTable rows={fOpen} aMap={aMap} />
                 )}
               </div>
             </div>
@@ -373,67 +349,7 @@ export default async function LobbyPage({
             {fLive.length === 0 ? (
               <EmptyTable msg="No live matches right now." />
             ) : (
-              <table className="t">
-                <thead>
-                  <tr>
-                    <th>Game</th>
-                    <th>Matchup</th>
-                    <th>Mode</th>
-                    <th className="right">Pot</th>
-                    <th className="right">Move</th>
-                    <th className="right">Last move</th>
-                    <th className="right" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {fLive.map((m) => {
-                    const p1 = m.p1AgentId ? aMap[m.p1AgentId] : null;
-                    const p2 = m.p2AgentId ? aMap[m.p2AgentId] : null;
-                    const g = catalogEntry(m.gameType);
-                    return (
-                      <tr key={m.id}>
-                        <td>
-                          <Link href={`/games/${m.gameType}`} className="lnk">
-                            {g?.displayName ?? m.gameType}
-                          </Link>
-                        </td>
-                        <td>
-                          @{p1?.handle ?? "?"}{" "}
-                          <span className="dim">vs</span> @{p2?.handle ?? "system"}
-                        </td>
-                        <td>
-                          <span
-                            className="chip dim"
-                            style={{ fontSize: 9.5, textTransform: "uppercase" }}
-                          >
-                            {m.mode}
-                          </span>
-                        </td>
-                        <td className="right">
-                          {m.potUsdc ? (
-                            <span className="money">{formatUsdc(m.potUsdc)}</span>
-                          ) : (
-                            <span className="dim mono">—</span>
-                          )}
-                        </td>
-                        <td className="right mono">{m.moveCount}</td>
-                        <td className="right mono mute" style={{ fontSize: 11 }}>
-                          {timeAgo(m.lastMoveAt ?? m.startedAt)} ago
-                        </td>
-                        <td className="right">
-                          <Link
-                            href={`/match/${m.id}`}
-                            className="lnk mono"
-                            style={{ fontSize: 11 }}
-                          >
-                            watch →
-                          </Link>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+              <LiveMatchesTable rows={fLive} aMap={aMap} />
             )}
           </div>
         </section>
@@ -580,6 +496,180 @@ function TabLink({
   );
 }
 
+// Shared lookup type for the inline agent resolution (id → { handle, elo, ... }).
+type AgentMap = Record<
+  string,
+  { id: string; handle: string; displayName: string; elo: number }
+>;
+
+/**
+ * Renders the body of the Live-matches table.
+ *
+ * Reused by both the merged "all" view (bounded scroll) and the focused
+ * "live" tab (full height). The bounded variant wraps this in a
+ * max-height + overflow-y div at the call site — the table itself stays
+ * the same.
+ */
+function LiveMatchesTable({
+  rows,
+  aMap,
+}: {
+  rows: typeof matches.$inferSelect[];
+  aMap: AgentMap;
+}) {
+  return (
+    <table className="t">
+      <thead>
+        <tr>
+          <th>Game</th>
+          <th>Matchup</th>
+          <th>Mode</th>
+          <th className="right">Pot</th>
+          <th className="right">Move</th>
+          <th className="right">Last move</th>
+          <th className="right" />
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((m) => {
+          const p1 = m.p1AgentId ? aMap[m.p1AgentId] : null;
+          const p2 = m.p2AgentId ? aMap[m.p2AgentId] : null;
+          const g = catalogEntry(m.gameType);
+          return (
+            <tr key={m.id}>
+              <td>
+                <Link href={`/games/${m.gameType}`} className="lnk">
+                  {g?.displayName ?? m.gameType}
+                </Link>
+              </td>
+              <td>
+                @{p1?.handle ?? "?"} <span className="dim">vs</span> @
+                {p2?.handle ?? "system"}
+              </td>
+              <td>
+                <span
+                  className="chip dim"
+                  style={{ fontSize: 9.5, textTransform: "uppercase" }}
+                >
+                  {m.mode}
+                </span>
+              </td>
+              <td className="right">
+                {m.potUsdc ? (
+                  <span className="money">{formatUsdc(m.potUsdc)}</span>
+                ) : (
+                  <span className="dim mono">—</span>
+                )}
+              </td>
+              <td className="right mono">{m.moveCount}</td>
+              <td className="right mono mute" style={{ fontSize: 11 }}>
+                {timeAgo(m.lastMoveAt ?? m.startedAt)} ago
+              </td>
+              <td className="right">
+                <Link
+                  href={`/match/${m.id}`}
+                  className="lnk mono"
+                  style={{ fontSize: 11 }}
+                >
+                  watch →
+                </Link>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+/**
+ * Renders the body of the Open-challenges table (the "order book").
+ *
+ * Same reuse pattern as LiveMatchesTable — bounded vs full layout is
+ * handled by the wrapping div at the call site.
+ */
+function OpenChallengesTable({
+  rows,
+  aMap,
+}: {
+  rows: typeof challenges.$inferSelect[];
+  aMap: AgentMap;
+}) {
+  return (
+    <table className="t book-t">
+      <thead>
+        <tr>
+          <th>Agent</th>
+          <th>Game</th>
+          <th>Filter</th>
+          <th className="right">Clock</th>
+          <th className="right">Posted</th>
+          <th className="right">Stake</th>
+          <th className="right">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((c) => {
+          const a = aMap[c.initiatorAgentId];
+          const g = catalogEntry(c.gameType);
+          const filterLabel =
+            c.eloMin || c.eloMax
+              ? `ELO ${c.eloMin ?? "?"}–${c.eloMax ?? "?"}`
+              : "any opponent";
+          return (
+            <tr key={c.id}>
+              <td>
+                <div className="agent-cell">
+                  <span className="av" data-c={avatarIndex(a?.handle ?? "")}>
+                    {avatarInitials(a?.displayName ?? "?")}
+                  </span>
+                  <div className="nm">
+                    {a?.displayName ?? "—"}
+                    <span className="h">
+                      @{a?.handle ?? "?"} · ELO {a?.elo ?? "—"}
+                    </span>
+                  </div>
+                </div>
+              </td>
+              <td>
+                <Link href={`/games/${c.gameType}`} className="lnk">
+                  {g?.displayName ?? c.gameType}
+                </Link>
+              </td>
+              <td>
+                <span className="chip dim" style={{ fontSize: 9.5 }}>
+                  {filterLabel}
+                </span>
+              </td>
+              <td className="right mono" style={{ fontSize: 11 }}>
+                {/* Per-move clock. Older challenges with no stored value
+                    default to 240s — matches the recalibrated
+                    DEFAULT_PER_MOVE_SECONDS in per-move.ts. */}
+                {Math.round((c.clockBudgetMs ?? 240000) / 1000)}s/move
+              </td>
+              <td className="right mono mute" style={{ fontSize: 11 }}>
+                {timeAgo(c.postedAt)} ago
+              </td>
+              <td className="right">
+                {c.mode === "paid" && c.stakeUsdc ? (
+                  <span className="money">{formatUsdc(c.stakeUsdc)}</span>
+                ) : (
+                  <span className="dim mono">free</span>
+                )}
+              </td>
+              <td className="right">
+                <Link href={`/lobby/accept/${c.id}`} className="btn gold sm">
+                  Accept →
+                </Link>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
 function EmptyTable({ msg }: { msg: string }) {
   return (
     <div
@@ -688,7 +778,8 @@ function PostChallengeForm({ id }: { id: string }) {
 
 function tabHref(tab: Tab, gameType?: string): string {
   const qs = new URLSearchParams();
-  if (tab !== "book") qs.set("tab", tab);
+  // "all" is the default — bare /lobby renders it.
+  if (tab !== "all") qs.set("tab", tab);
   if (gameType) qs.set("gameType", gameType);
   const s = qs.toString();
   return s ? `/lobby?${s}` : "/lobby";

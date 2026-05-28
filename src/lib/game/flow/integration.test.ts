@@ -1465,6 +1465,76 @@ describe("coliseum_match_state — wall-clock fields (all games)", () => {
     });
   }
 
+  // Architect P0-#136 — first-move-timeout fields on the MCP response.
+  // Verifies the response shape that an LLM agent will consume to
+  // detect "I'm under the 90s clock now". Distinct from the cron-level
+  // test above which validates server enforcement; this validates the
+  // CLIENT-VISIBLE contract so docs and code can't drift.
+  it("first-move timeout: response exposes effectiveBudgetMs + firstMoveTimeoutActive + tighter myMsLeftLive on move 0 + ready", async () => {
+    const { matchState } = await import("@/app/api/mcp/tools/match-state");
+    const { FIRST_MOVE_TIMEOUT_MS } = await import("../lifecycle");
+    await withTestDb(async ({ db }) => {
+      currentDb = db;
+      const { agent } = await seedOwnerAgent(db, { handle: "fmt_resp" });
+      // Use a long-clock game so the budget delta is visible: chess
+      // would give 600s under the normal clock but 90s under the
+      // first-move budget — easy to assert the difference.
+      const r = await postChallenge({
+        gameType: "chess",
+        initiatorAgentId: agent.id,
+        mode: "system",
+        systemBotDifficulty: "easy",
+      });
+      if (r.kind !== "match") throw new Error("expected match");
+      const matchId = r.match.id;
+      const chessBudget = r.match.clockBudgetMs;
+
+      // Move 0, agent went ready 30s ago. The first-move budget is
+      // 90s; we expect myMsLeftLive ~ 60_000.
+      const thirtySecAgo = new Date(Date.now() - 30_000);
+      await db
+        .update(matches)
+        .set({
+          turnStartedAt: thirtySecAgo,
+          agentReadyAt: thirtySecAgo,
+          // moveCount stays at 0 (the default) — that's the path
+          // under test.
+        })
+        .where(eq(matches.id, matchId));
+
+      const state = (await matchState.handler({ matchId }, {
+        agent: { id: agent.id, ownerId: agent.ownerId },
+      } as never)) as Record<string, unknown>;
+
+      // The new fields are present and correct:
+      expect(state.firstMoveTimeoutActive).toBe(true);
+      expect(state.firstMoveTimeoutMs).toBe(FIRST_MOVE_TIMEOUT_MS);
+      expect(state.effectiveBudgetMs).toBe(FIRST_MOVE_TIMEOUT_MS);
+      // clockBudgetMs stays at the FULL per-game budget — surfaced
+      // for context, not as the active deadline.
+      expect(state.clockBudgetMs).toBe(chessBudget);
+
+      // myMsLeftLive uses the SHORT budget. 90s - 30s elapsed = ~60s
+      // with some tolerance for test runner jitter.
+      const live = state.myMsLeftLive as number;
+      expect(live).toBeGreaterThan(55_000);
+      expect(live).toBeLessThan(65_000);
+
+      // turnDeadline matches the first-move budget, NOT the full
+      // clockBudgetMs. If we got 30 minutes here, the LLM would
+      // happily wait past 90s and lose the match.
+      expect(typeof state.turnDeadline).toBe("string");
+      const deadlineMs = new Date(state.turnDeadline as string).getTime();
+      const expectedDeadline = thirtySecAgo.getTime() + FIRST_MOVE_TIMEOUT_MS;
+      expect(Math.abs(deadlineMs - expectedDeadline)).toBeLessThan(1000);
+
+      // clockRule is the human-readable summary the LLM can quote
+      // back to its operator. Includes the 90s figure on this path.
+      expect(state.clockRule).toContain("90s");
+      expect(state.clockRule).toContain("first-move");
+    });
+  });
+
   it("urgency tiers correctly: fresh / half / low / critical", async () => {
     const { matchState } = await import("@/app/api/mcp/tools/match-state");
     await withTestDb(async ({ db }) => {

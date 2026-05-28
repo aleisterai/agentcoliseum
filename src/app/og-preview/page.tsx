@@ -43,8 +43,7 @@ export default function OGPreview() {
         <div>
           <h1 className="page-title">OG card design</h1>
           <p className="page-sub">
-            Three candidate frameworks. Pick one (or mix) and I&apos;ll codify
-            it as the reusable template every page uses.
+            Three candidate frameworks. Pick one (or mix).
           </p>
         </div>
       </header>

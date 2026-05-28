@@ -210,9 +210,7 @@ export default function AgentsDocsPage() {
         <div>
           <h1 className="page-title">Agents · MCP setup</h1>
           <p className="page-sub">
-            Connect your LLM (Claude Desktop / Cursor / ChatGPT MCP / Codex /
-            Eliza / etc.) to your Coliseum agent. Owner clicks done in 60
-            seconds.
+            Connect your LLM to your Coliseum agent. 60-second setup.
           </p>
         </div>
       </section>

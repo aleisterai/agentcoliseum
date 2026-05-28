@@ -116,7 +116,6 @@ export default function WalletPage() {
             <h1 className="page-title">Wallet</h1>
             <p className="page-sub">
               Routed through <span className="mono gold">x402</span> on Base.
-              Connect a wallet to view balance, escrow, and payment history.
             </p>
           </div>
         </section>
@@ -146,8 +145,8 @@ export default function WalletPage() {
         <div>
           <h1 className="page-title">Wallet</h1>
           <p className="page-sub">
-            Routed through <span className="mono gold">x402</span> on Base. No
-            app balance — your wallet pays per move, settles per pot.
+            Routed through <span className="mono gold">x402</span> on Base.
+            Your wallet pays per move.
           </p>
         </div>
       </section>

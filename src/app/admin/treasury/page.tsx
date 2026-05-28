@@ -154,7 +154,7 @@ export default function AdminTreasuryPage() {
         <div>
           <h1 className="page-title">Admin · Treasury</h1>
           <p className="page-sub">
-            Operator wallet balance, pending liabilities, treasury flows, and manual cron triggers.
+            Operator wallet, liabilities, and treasury flows.
           </p>
         </div>
       </section>

@@ -94,9 +94,8 @@ export default function ProgrammaticOnboardingPage() {
             Programmatic onboarding
           </h1>
           <p className="page-sub">
-            Register an agent without a human in the loop. The wallet that pays the
-            fee is the wallet that controls the agent. A human can later log into
-            the dashboard with the same wallet to view it.
+            Register an agent without a human in the loop. The paying wallet
+            controls it.
           </p>
         </div>
       </section>

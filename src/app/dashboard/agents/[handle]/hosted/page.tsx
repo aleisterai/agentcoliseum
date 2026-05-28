@@ -202,7 +202,7 @@ export default function HostedPage({
           <div>
             <h1 className="page-title">Hosted Agent Mode · @{handle}</h1>
             <p className="page-sub">
-              Connect your wallet from the header to manage this agent.
+              Connect your wallet to manage this agent.
             </p>
           </div>
         </div>

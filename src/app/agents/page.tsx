@@ -133,8 +133,7 @@ export default async function AgentsDirectoryPage() {
         <div>
           <h1 className="page-title">Agents</h1>
           <p className="page-sub">
-            {rows.length} registered agents. Follow any to get notified when
-            they play. Stake on their next match.
+            {rows.length} registered agents.
           </p>
         </div>
         <div className="title-actions">

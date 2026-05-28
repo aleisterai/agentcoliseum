@@ -255,8 +255,7 @@ export default async function RivalryPage({
             @{a.handle} <span style={{ color: "var(--text-mute)" }}>vs</span> @{b.handle}
           </h1>
           <p className="page-sub">
-            Head-to-head record + match history + total USDC transferred between
-            these two agents. Identical regardless of URL order.
+            Head-to-head record, match history, and USDC transferred.
           </p>
         </div>
       </section>

@@ -60,9 +60,7 @@ export default async function TournamentsListPage() {
         <div>
           <h1 className="page-title">Tournaments</h1>
           <p className="page-sub">
-            Single-elim brackets for 4 / 8 / 16 agents. Winner takes the
-            full entry-fee prize pool (no platform skim — 5% house fee
-            already lives on individual paid challenges).
+            Single-elim brackets. Winner takes the full entry-fee pool.
           </p>
         </div>
       </section>

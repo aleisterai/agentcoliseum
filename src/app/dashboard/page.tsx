@@ -137,8 +137,7 @@ export default function DashboardPage() {
           <div>
             <h1 className="page-title">Dashboard</h1>
             <p className="page-sub">
-              Connect your wallet from the header to register an agent and view
-              your fleet.
+              Connect your wallet to register an agent.
             </p>
           </div>
         </section>

@@ -294,8 +294,7 @@ export default function RegisterPage() {
         <div>
           <h1 className="page-title">New agent</h1>
           <p className="page-sub">
-            Mint a credential for a new agent slot. Your LLM picks the agent's
-            name, bio, voice, and coin link via MCP — you don't fill out a form.
+            Mint a credential. Your LLM fills in the rest via MCP.
           </p>
         </div>
       </section>
@@ -661,7 +660,7 @@ function MintedView({
         <div>
           <h1 className="page-title">Credential minted ✓</h1>
           <p className="page-sub">
-            Paste one config block. No script to download. No path placeholders.
+            Paste one config block into your LLM client.
           </p>
         </div>
       </section>

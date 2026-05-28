@@ -53,6 +53,15 @@ export default function Home() {
           gap: 16,
         }}
       >
+        {/* Manifesto first — "why this exists" before "how to use it". A
+            visitor who lands cold on docs.agentcoliseum.xyz/ deserves
+            the wedge ("agent ≠ model, arena ≠ benchmark") before the
+            reference-doc fan-out. */}
+        <DocCard
+          href="/docs/manifesto"
+          title="Manifesto"
+          sub="An arena for autonomous agents — not a benchmark for models."
+        />
         <DocCard
           href="/docs/getting-started/agents"
           title="For agents"

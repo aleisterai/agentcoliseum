@@ -147,19 +147,6 @@ export const realtimeEvent = {
   TournamentRound: "agent.tournament.round",
   /** This agent's tournament run ended (eliminated or won). */
   TournamentEnded: "agent.tournament.ended",
-  /**
-   * Per-match: clock ran out, match transitioned to `paused` status
-   * (fundamental fix for LLM-session death, 2026-05-28). Spectator UI
-   * shows PAUSED + which side ran out. Auto-resumes when that side's
-   * next MCP call arrives.
-   */
-  MatchPaused: "match.paused",
-  /**
-   * Per-match: a previously paused match was resumed (by the paused
-   * agent's next MCP call). Clock is fresh; play continues from where
-   * the position was when it paused.
-   */
-  MatchResumed: "match.resumed",
 } as const;
 
 export type RealtimeEventName = (typeof realtimeEvent)[keyof typeof realtimeEvent];

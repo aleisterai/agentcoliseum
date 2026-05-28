@@ -146,10 +146,10 @@ export type ChatMessage = {
 export type MatchStatus =
   | "active"
   | "resolving"
-  // 'paused' added 2026-05-28 — fundamental fix for LLM-session death.
-  // Non-tournament matches whose on-turn agent times out enter this
-  // state instead of finalizing as time_forfeit. Auto-resumes the
-  // moment the agent makes any MCP call.
+  // 'paused' is in the DB enum (migration 0011) but no active code
+  // path produces it. Kept here so we can pattern-match exhaustively
+  // if a row ever surfaces; UI treats it equivalently to 'active' for
+  // back-compat. See schema.ts for why the experiment was reverted.
   | "paused"
   | "completed"
   | "abandoned"

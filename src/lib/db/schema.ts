@@ -90,27 +90,23 @@ export const challengeStatusEnum = pgEnum("challenge_status", [
 export const matchStatusEnum = pgEnum("match_status", [
   "active",
   "resolving",
-  // 'paused' added in migration 0011 — fundamental fix for LLM-session
-  // death (architect investigation 2026-05-28). Non-tournament matches
-  // whose on-turn agent times out transition to 'paused' instead of
-  // finalizing as time_forfeit. Owner restarts session, calls
-  // coliseum_match_resume to put the match back to 'active' with a
-  // fresh clock. Stake stays locked across pauses. Limits enforced by
-  // the pause-cleanup cron (PAUSE_COUNT_MAX, PAUSED_MAX_MS).
+  // 'paused' is reserved in the production enum (migration 0011,
+  // 2026-05-28) but NOT used by any active code path. We considered
+  // pause/resume on clock-out and reverted: it would let a human
+  // operator stall when a position is hard, analyze externally, and
+  // resume with a fresh clock — laundering machine analysis as agent
+  // reasoning. The chess-clock discipline is the product. The enum
+  // value stays in the DB so a future cleanup migration can drop it
+  // safely (Postgres doesn't support dropping enum values online).
   "paused",
   "completed",
   "abandoned",
   "disputed",
 ]);
 
-// Why an agent's clock expired into a `paused` state. Set on the
-// matches row alongside `paused_at` / `paused_player_id`. The
-// reason gates how the pause-cleanup cron handles the row:
-//   idle_timeout    — automatic, the agent stopped responding
-//   operator_pause  — owner intentionally pulled their agent off the
-//                     board (e.g. for a config change). Same recovery
-//                     path; just doesn't count toward the auto-forfeit
-//                     pause-count limit.
+// Dormant enum (migration 0011). Documented for the same reason as
+// the 'paused' value above — kept so a future cleanup migration can
+// DROP TYPE cleanly. No active code references this.
 export const pauseReasonEnum = pgEnum("pause_reason", [
   "idle_timeout",
   "operator_pause",
@@ -482,26 +478,18 @@ export const matches = pgTable(
     // Default 0 so existing rows are valid; first event sets to 1.
     lastEventSeq: integer("last_event_seq").default(0).notNull(),
 
-    /* ===== Pause/resume (migration 0011, 2026-05-28) ====================
+    /* ===== Pause/resume columns — DORMANT (migration 0011) ============
      *
-     * Non-tournament clock expiry transitions a match to status='paused'
-     * instead of finalizing as time_forfeit. The columns below carry the
-     * state needed by the resume MCP tool + pause-cleanup cron:
+     * Reserved in the production schema for a 2026-05-28 pause/resume
+     * experiment that was reverted before going live. The columns
+     * stay nullable + default-zero so existing INSERTs are unaffected;
+     * no production code path reads or writes them. Kept here for
+     * schema/DB parity until a follow-up cleanup migration drops them.
      *
-     *   pausedAt          when the clock-out triggered the pause
-     *   pausedReason      'idle_timeout' (cron) | 'operator_pause' (owner)
-     *   pausedPlayerId    which side ran out of time (whose turn it was)
-     *   pauseCount        how many times this match has been paused; the
-     *                     pause-cleanup cron force-finalizes as
-     *                     time_forfeit (opponent wins) once this hits 3
-     *   totalPausedMs     cumulative time spent in paused state across
-     *                     the match's lifetime. Surfaced on /live for
-     *                     transparency and used by the
-     *                     "paused too long" check (> 7 days → abandoned).
-     *
-     * Tournament matches keep the existing time_forfeit behavior — they
-     * have spectator-timing constraints. The pause path branches on the
-     * presence of `tournamentMatchId`.
+     * Why reverted: pause/resume on clock-out lets the operator stall
+     * a hard position, analyze externally for hours/days, and resume
+     * with a fresh clock — laundering external compute as agent
+     * reasoning. Time pressure is the product; this would break it.
      */
     pausedAt: timestamp("paused_at", { withTimezone: true }),
     pausedReason: pauseReasonEnum("paused_reason"),

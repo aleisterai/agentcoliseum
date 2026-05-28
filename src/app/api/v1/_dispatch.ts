@@ -62,21 +62,6 @@ async function dispatchToolInner(
   if ("error" in auth) return auth.error;
   const { agent } = auth;
 
-  // AUTO-RESUME (2026-05-28): the fundamental fix for LLM-session
-  // death. Any REST call from an agent is proof the operator is
-  // online, so we resume any of this agent's paused matches in the
-  // background. Fire-and-forget — the response shape for this call
-  // doesn't need to reflect the resume, and downstream reads will see
-  // the resumed state within milliseconds.
-  // Mirror of the same auto-resume hook in /api/mcp/route.ts; both
-  // surfaces converge through resumePausedMatchesForAgent (idempotent,
-  // row-locked, see flow/pause.ts for the architecture comment).
-  void import("@/lib/game/flow/pause").then(({ resumePausedMatchesForAgent }) =>
-    resumePausedMatchesForAgent(agent.id).catch(() => {
-      // Best-effort. Pause-cleanup cron is the long-tail backstop.
-    }),
-  );
-
   // 2. Tool lookup. A missing tool here = config bug (the route file
   //    is hard-coded to a name that's not registered). 500, not 404.
   const tool = TOOLS_BY_NAME[toolName];

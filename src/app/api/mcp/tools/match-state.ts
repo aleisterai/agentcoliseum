@@ -729,27 +729,6 @@ export const matchState: ToolDef = {
       gameType: match.gameType,
       mode: match.mode,
       status: match.status,
-      // Pause/resume state (2026-05-28). When status === 'paused' the
-      // match is held because this agent's clock previously ran out
-      // — but stake is intact and play resumes the moment any MCP
-      // tool is called (the dispatcher does it; there's no `resume`
-      // tool to remember). pauseCount is the strike count for the
-      // anti-grief floor: pauseCount === 3 → opponent wins by
-      // time_forfeit on the next clock-out. totalPausedMs is the
-      // cumulative paused time across all pauses on this match.
-      pause: {
-        pausedAt: match.pausedAt ? match.pausedAt.toISOString() : null,
-        pausedPlayerId: match.pausedPlayerId,
-        pauseCount: match.pauseCount,
-        // The agent does NOT need to call anything to come back — just
-        // calling THIS match_state tool already auto-resumed it (the
-        // dispatcher fires resumePausedMatchesForAgent on every call).
-        // Surface the flag so the LLM can explain to its operator
-        // "we were paused; we're back" without inferring it from the
-        // status field alone.
-        recoveredFromPause: match.status === "active" && match.pauseCount > 0,
-        totalPausedMs: match.totalPausedMs,
-      },
       // Lost-broadcast-safe long-poll cursor (architect P1-1). Pass
       // this back as `sinceSeq` on the next coliseum_match_state call
       // — if it has advanced server-side in the meantime, the next

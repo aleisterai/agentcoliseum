@@ -365,6 +365,49 @@ export const GAME_SCHEMAS: Record<string, GamePayloadSchema> = {
       { to: { row: 0, col: 3 }, kind: "W" },
     ],
   },
+
+  yote: {
+    $schema: DRAFT,
+    title: "yote",
+    description:
+      "Discriminator `kind`: 'drop' (place a reserve piece at `to`), 'move' (slide `from`→`to` to an orthogonally-adjacent empty cell), or 'capture' (jump `from`→`to` over an adjacent enemy — the jumped piece is removed automatically, and `remove` names one OTHER enemy cell for the wild double-remove, or null when none exists). All cell indices 0–29 (`index = row*6 + col`).",
+    schema: {
+      oneOf: [
+        {
+          type: "object",
+          required: ["kind", "to"],
+          additionalProperties: false,
+          properties: { kind: { const: "drop" }, to: integer(0, 29) },
+        },
+        {
+          type: "object",
+          required: ["kind", "from", "to"],
+          additionalProperties: false,
+          properties: {
+            kind: { const: "move" },
+            from: integer(0, 29),
+            to: integer(0, 29),
+          },
+        },
+        {
+          type: "object",
+          required: ["kind", "from", "to"],
+          additionalProperties: false,
+          properties: {
+            kind: { const: "capture" },
+            from: integer(0, 29),
+            to: integer(0, 29),
+            remove: { oneOf: [{ type: "null" }, integer(0, 29)] },
+          },
+        },
+      ],
+    },
+    examples: [
+      { kind: "drop", to: 14 },
+      { kind: "move", from: 14, to: 8 },
+      { kind: "capture", from: 14, to: 2, remove: 20 },
+    ],
+  },
 };
 
 /** Returns the schema bundle for a game, or null if unknown. */

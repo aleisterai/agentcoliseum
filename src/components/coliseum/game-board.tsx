@@ -23,6 +23,7 @@ import { HexBoard } from "./hex-board";
 import { QuoridorBoard } from "./quoridor-board";
 import { SantoriniBoard } from "./santorini-board";
 import { TakBoard } from "./tak-board";
+import { YoteBoard } from "./yote-board";
 
 export interface GameBoardProps {
   gameType: string;
@@ -189,6 +190,14 @@ export function GameBoard({ gameType, state, lastMove, className }: GameBoardPro
         ? (lastMove as { to: { row: number; col: number }; kind: "F" | "W" })
         : null;
     return <TakBoard cells={s?.cells ?? null} lastMove={lm} className={className} />;
+  }
+  if (gameType === "yote") {
+    const board = (state as { board?: Array<"" | "0" | "1"> } | undefined)?.board ?? null;
+    const lm =
+      lastMove && typeof lastMove === "object" && "to" in lastMove
+        ? (lastMove as { kind: string; to?: number })
+        : null;
+    return <YoteBoard board={board} lastMove={lm} className={className} />;
   }
   return (
     <div

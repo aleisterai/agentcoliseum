@@ -129,3 +129,26 @@ The async backbone is a fleet of six Vercel crons under `src/app/api/cron/*` run
 3. **How often does `tournament-progression` actually run a final-match payout?** Determines urgency of P0-1.
 4. **What's the SLA for "agent's MCP wait returns within N ms of opponent's move"?** Determines whether the DB-side event log is mandatory.
 5. **Migration off Privy or Supabase Realtime on the 12-month roadmap?** Both deeply embedded but cleanly abstracted — changes where to invest abstraction effort.
+
+## 7. Resolution status (post-review work, 2026-05-27)
+
+User-supplied answers: prod volume target = **50,000 matches/month** (17× current), operator-key custody = unknown (separate infra concern), tournament payout cadence = unknown, SLA = "asap", no migration off Privy/Supabase. Directive: **fix everything**.
+
+| Finding | Status | Commit |
+|---|---|---|
+| **P0-1.** Tournament prize payout idempotency | ✅ shipped | `b42c1df` |
+| **P0-2.** Cross-instance nonce → Redis | ✅ shipped | `791ce32` |
+| **P0-3.** Stagger crons + cross-instance locks | ✅ shipped | `ba51907` |
+| **P1-1.** `match_events` log + DB-poll long-poll fallback | ✅ shipped (Phase A + B) | `e9f43ea` + `ce2c281` |
+| **P1-2.** Collapse `match-state.ts` sequential reads | ✅ shipped (6 awaits → 4 parallel) | `a620f81` |
+| **P1-3.** Lock agent rows in `finalizeMatchTx` | ✅ shipped | (in `ba51907`) |
+| **P1-4.** Structured logging foundation (pino + ALS) | ✅ shipped | `99d63bf` |
+| **P1-5.** Decouple `applyMove` from voice/mood/chat | ⏳ phase 1 shipped (bot-narrator), phase 2 deferred | `edab024` |
+| **P0-#136** (sim-discovered). Move-0 stall auto-cleanup | ✅ shipped | `89257d7` |
+| **P1-#135** (sim-discovered). match-tick under-forfeits | ✅ shipped (same commit as #136) | `89257d7` |
+
+**Architecture-level operator key in KMS** remains an external infra task — flagged for separate sprint, no code change possible until AWS/GCP KMS account is provisioned and `wallet.ts` is refactored to use it. Until then the operator key sits in `OPERATOR_PRIVATE_KEY` env var on Vercel as before.
+
+**P1-5 phase 2** (full `applyMoveCore` vs `applyMoveWithVoice` decorator split) tracked as a follow-up — the architect explicitly called it "sprint 2 — most invasive" and the integration test file is 2810 lines exercising the combined path. Phase 1 (bot-narrator extraction) already moved 350 lines of product code out of the engine, addressing the architect's specific note about `synthesizeBotDialogue` being "already half-there".
+
+**P2 findings.** P2-3 (structured logging) absorbed into P1-4. P2-4 (per-move-seconds drift) handled in earlier session work. P2-1 + P2-2 remain genuinely P2 and are not blockers for 50k/mo.

@@ -61,6 +61,7 @@ import { z } from "zod";
 import { db } from "@/lib/db/client";
 import { agents, matches, matchChatMessages, matchMoves } from "@/lib/db/schema";
 import { FIRST_MOVE_TIMEOUT_MS } from "@/lib/game/lifecycle";
+import { getAdapter } from "@/lib/game/registry";
 import { SYSTEM_BOT_VOICE, voicePackById } from "@/lib/voice-packs";
 import type { ToolDef } from "./_types";
 
@@ -724,6 +725,40 @@ export const matchState: ToolDef = {
       return "They moved but didn't say much. Reference their move (ref='opponent_move', echo='<their payload as words>').";
     })();
 
+    // Imperfect-information redaction (Battleship, Liar's Dice, …).
+    //
+    // Perfect-info games pass `match.state` through UNCHANGED — zero
+    // behavioural change for the 14+ existing games. For hidden-info
+    // games we run the adapter's serializeForSpectator from the CALLING
+    // agent's seat (myPlayerId) so:
+    //   • the opponent's private bits are stripped from publicState,
+    //   • this agent's own private bits ride along in `privateState`,
+    //   • the RNG seed (ctx._random) is removed — otherwise an agent
+    //     could read its rival's hand or predict future dice straight
+    //     out of match_state.
+    // The {G, ctx, …} envelope shape is preserved so existing agent
+    // parsing (boardState.G.*) keeps working.
+    const stateAdapter = getAdapter(match.gameType);
+    let boardStateOut: unknown = match.state;
+    let privateStateOut: unknown = undefined;
+    if (stateAdapter && !stateAdapter.perfectInformation) {
+      const full = match.state as { G: unknown; ctx?: Record<string, unknown> };
+      const stateGameOver = match.status !== "active";
+      const view = stateAdapter.serializeForSpectator(
+        full.G as never,
+        myPlayerId,
+        stateGameOver,
+      );
+      const ctxIn = (full.ctx ?? {}) as Record<string, unknown>;
+      const safeCtx: Record<string, unknown> = {};
+      for (const k of Object.keys(ctxIn)) {
+        if (k === "_random") continue; // never expose the dice seed to a player
+        safeCtx[k] = ctxIn[k];
+      }
+      boardStateOut = { ...full, G: view.publicState, ctx: safeCtx };
+      privateStateOut = view.privateAddendum;
+    }
+
     return {
       matchId: match.id,
       gameType: match.gameType,
@@ -836,7 +871,10 @@ export const matchState: ToolDef = {
       opponentLastMove,
       // Phase A++ — full agent-to-agent chat session for this match.
       chat,
-      boardState: match.state, // game-specific shape; see docs.read({topic:'games'})
+      boardState: boardStateOut, // game-specific shape; see docs.read({topic:'games'})
+      // Imperfect-info only: your own hidden bits (your dice/fleet).
+      // undefined for perfect-info games + omitted from the wire.
+      privateState: privateStateOut,
       lastMove: lastMoveArr[0]
         ? {
             moveNumber: lastMoveArr[0].moveNumber,

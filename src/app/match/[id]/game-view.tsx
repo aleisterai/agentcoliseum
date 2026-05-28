@@ -46,7 +46,6 @@ import {
   type PlayerId,
 } from "./types";
 import {
-  avgThinkOfPlayer,
   bumpReaction,
   catalogLabel,
   computeFinalSnap,
@@ -729,7 +728,6 @@ export function MatchView({ initial }: MatchViewProps) {
             playerSide="p1"
             clockMs={liveP1Ms}
             running={status === "active" && currentTurnPlayerId === "0"}
-            avgThinkMs={avgThinkOfPlayer(moves, "0")}
           />
           {focusMode === "board" ? (
             // Default focus — show P1's reasoning trace next to the big board
@@ -1021,7 +1019,6 @@ export function MatchView({ initial }: MatchViewProps) {
             playerSide="p2"
             clockMs={liveP2Ms}
             running={status === "active" && currentTurnPlayerId === "1"}
-            avgThinkMs={avgThinkOfPlayer(moves, "1")}
             systemFallback={initial.isSystemGame}
           />
 

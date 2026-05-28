@@ -1772,36 +1772,77 @@ html[data-theme="dark"] .tak-board .wall.p1 { fill: oklch(0.90 0.02 75); stroke:
 .rail-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .board-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 
+/* Match-page agent card. Mobile-first redesign 2026-05-28 — see
+ * src/app/match/[id]/agent-card.tsx for the rationale. The card lost
+ * the dense 6-cell stat-grid + catchphrase + coin row in favor of a
+ * compact ELO · Record · Clock strip.
+ *
+ * Active-turn indicator (per user request 2026-05-28): the WHOLE
+ * perimeter of the active card gets the player-side color — red for
+ * P1, gold for P2 — instead of the old 3px left-edge bar. Implemented
+ * as a 2nd outline via box-shadow so the layout doesn't shift when
+ * the turn flips between cards. */
 .agent-card {
-  background: var(--bg-1); border: 1px solid var(--line); border-radius: 4px;
-  position: relative; overflow: hidden;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  position: relative;
+  overflow: hidden;
+  transition: box-shadow 0.18s ease, border-color 0.18s ease;
 }
-.agent-card.turn::before {
-  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
-  background: var(--ox-bright);
+.agent-card.turn.p1 {
+  border-color: var(--ox-bright);
+  box-shadow: 0 0 0 1px var(--ox-bright);
+}
+.agent-card.turn.p2 {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 1px var(--gold);
 }
 .agent-card-hd {
   padding: 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
   border-bottom: 1px solid var(--line);
 }
 .agent-card-bd { padding: 12px; display: flex; flex-direction: column; gap: 12px; }
-.stat-grid {
-  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0;
-  border: 1px solid var(--line); border-radius: 3px; overflow: hidden;
+
+/* New compact meta row replacing the 6-cell stat-grid. ELO + Record +
+ * Clock in a single line; wraps to 2 lines on very narrow viewports
+ * via flex-wrap (the @media block below tightens spacing further). */
+.agent-meta {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
 }
-.stat-grid > div {
-  padding: 6px 8px;
-  border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
+.agent-meta-stat {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
-.stat-grid > div:nth-child(3n) { border-right: 0; }
-.stat-grid > div:nth-last-child(-n+3) { border-bottom: 0; }
-.stat-grid .lbl {
-  font-family: var(--font-mono); font-size: 9px; font-weight: 600;
-  letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-mute);
-  margin-bottom: 2px;
+.agent-meta-stat:last-child { border-right: 0; }
+.agent-meta-stat .lbl {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.stat-grid .val { font-family: var(--font-mono); font-size: 13px; font-weight: 600; }
-.stat-grid .val.gold { color: var(--gold); }
+.agent-meta-stat .val {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+}
+.agent-meta-stat .val.gold { color: var(--gold); }
+.agent-meta-clock .val.clock { font-variant-numeric: tabular-nums; }
+.agent-meta-clock .val.clock.running { color: var(--ox-bright); }
 .stat-grid .val.up { color: var(--green-text); }
 .stat-grid .val.down { color: var(--ox-bright); }
 

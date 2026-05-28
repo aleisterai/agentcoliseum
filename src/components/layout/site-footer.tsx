@@ -42,7 +42,18 @@ export function SiteFooter() {
           </Link>
         </span>
         <span className="dim">·</span>
-        <Link className="lnk" href="/manifesto" style={{ color: "var(--text-2)" }}>
+        {/* Manifesto lives in docs (docs.agentcoliseum.xyz/manifesto) —
+            the marketing landing at agentcoliseum.xyz/manifesto stays
+            for SEO + paid traffic, but the footer points to the docs
+            version so the canonical home for the long-form piece is
+            inside the documentation IA. */}
+        <Link
+          className="lnk"
+          href="https://docs.agentcoliseum.xyz/docs/manifesto"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ color: "var(--text-2)" }}
+        >
           Manifesto
         </Link>
       </div>

@@ -111,6 +111,15 @@ export const pauseReasonEnum = pgEnum("pause_reason", [
   "idle_timeout",
   "operator_pause",
 ]);
+
+/**
+ * How the agent's reasoning loop runs (migration 0012, 2026-05-28).
+ * See `agents.executionMode` for the full doc comment.
+ */
+export const executionModeEnum = pgEnum("execution_mode", [
+  "mcp",
+  "hosted",
+]);
 export const resultReasonEnum = pgEnum("result_reason", [
   "natural",
   "time_forfeit",
@@ -243,6 +252,27 @@ export const agents = pgTable(
     // manage-agent page so owners can see if their LLM has actually
     // wired up to the MCP server yet.
     lastMcpAt: timestamp("last_mcp_at", { withTimezone: true }),
+    /**
+     * Operating mode for the agent (migration 0012, 2026-05-28).
+     *
+     *   'mcp'    — default. Owner's LLM client (Claude Desktop, Cursor,
+     *              ChatGPT MCP, etc.) calls our MCP server. The agent's
+     *              reasoning loop runs in the operator's environment.
+     *              Sensitive to operator-side failures (closed session,
+     *              context overflow, crashed loops). Time pressure is
+     *              real; running out of clock = forfeit.
+     *
+     *   'hosted' — Coliseum runs the loop server-side using the owner's
+     *              LLM API key. No operator-side session to maintain;
+     *              the hosted-agent worker cron polls, builds prompts,
+     *              calls the LLM, and submits moves. Owner pays $1
+     *              setup + $20/month. Config + encrypted key live in
+     *              the `hostedAgentConfigs` table; subscription state
+     *              lives in `hostedAgentSubscriptions`.
+     */
+    executionMode: executionModeEnum("execution_mode")
+      .default("mcp")
+      .notNull(),
     // Voice / personality. The LLM picks (or composes) these via
     // coliseum_agent_profile_update; owners can override from the
     // manage page. Keep each under 80 chars so they render on share
@@ -1464,3 +1494,115 @@ export const mcpOauthTokens = pgTable(
 export type McpOauthClient = typeof mcpOauthClients.$inferSelect;
 export type McpOauthCode = typeof mcpOauthCodes.$inferSelect;
 export type McpOauthToken = typeof mcpOauthTokens.$inferSelect;
+
+/* =====================================================================
+ * Hosted Agent Mode tables (migration 0012, 2026-05-28).
+ *
+ * Two tables that together describe a server-hosted agent:
+ *
+ *   hostedAgentConfigs        — per-agent LLM config (provider, model,
+ *                               encrypted API key, optional system-
+ *                               prompt extras). One row per agent.
+ *
+ *   hostedAgentSubscriptions  — billing periods. One row per paid
+ *                               period (setup $1, monthly $20). The
+ *                               agent is "active" if at least one row
+ *                               has status='active' AND expires_at > now.
+ *
+ * The encryption is AES-256-GCM. Master key from HOSTED_AGENT_KMS_KEY
+ * env var; per-key random IV + GCM auth tag stored alongside the
+ * ciphertext. Master key never lives in the database.
+ * ===================================================================== */
+
+export const hostedAgentConfigs = pgTable(
+  "hosted_agent_configs",
+  {
+    agentId: uuid("agent_id")
+      .primaryKey()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    /**
+     * Provider id matches `ProviderId` in src/lib/llm/types.ts.
+     * Currently expected values: 'anthropic' | 'openai' | 'gemini' |
+     * 'grok' | 'kimi' | 'deepseek'. Stored as text (not enum) so adding
+     * a provider doesn't require a migration — the runtime registry is
+     * the source of truth.
+     */
+    llmProvider: text("llm_provider").notNull(),
+    /**
+     * Model id within the provider's catalogue. E.g. 'claude-opus-4-7',
+     * 'gpt-5', 'gemini-2.5-pro'. Validated against the provider's
+     * model list when the config is created/updated.
+     */
+    llmModel: text("llm_model").notNull(),
+    /** Base64-encoded AES-256-GCM ciphertext of the owner's API key. */
+    apiKeyEncrypted: text("api_key_encrypted").notNull(),
+    /** Base64-encoded 12-byte AES IV. */
+    apiKeyIv: text("api_key_iv").notNull(),
+    /** Base64-encoded 16-byte GCM auth tag. */
+    apiKeyTag: text("api_key_tag").notNull(),
+    /**
+     * Optional addition to the baseline voice prompt the server
+     * constructs for every move. Use sparingly — the system prompt
+     * already encodes voice + reasoning style. Capped at ~2000 chars
+     * by the enable tool.
+     */
+    systemPromptExtra: text("system_prompt_extra"),
+    /** When the worker last fired against this config. */
+    lastCallAt: timestamp("last_call_at", { withTimezone: true }),
+    /** Last error message from the LLM provider (debug surface). */
+    lastError: text("last_error"),
+    /**
+     * Running count of consecutive errors. When >= 3, the worker
+     * recalls the agent until the owner fixes the config (rotates the
+     * key, switches models, etc.). Reset to 0 on a successful move.
+     */
+    consecutiveErrors: integer("consecutive_errors").default(0).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+).enableRLS();
+
+export const hostedAgentSubscriptions = pgTable(
+  "hosted_agent_subscriptions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    agentId: uuid("agent_id")
+      .references(() => agents.id, { onDelete: "cascade" })
+      .notNull(),
+    /**
+     * 'active'    — current and not yet expired
+     * 'expired'   — cron flipped it after expires_at passed without renewal
+     * 'cancelled' — owner explicitly disabled hosted mode
+     */
+    status: text("status").default("active").notNull(),
+    /** microUSDC. Setup row = 1_000_000 ($1); monthly rows = 20_000_000 ($20). */
+    paidAmountUsdc: bigint("paid_amount_usdc", { mode: "number" }).notNull(),
+    /** On-chain payment proof. Null only for admin-comp'd subscriptions. */
+    paymentTxHash: text("payment_tx_hash"),
+    /** 'setup' (initial) | 'monthly' (renewal). */
+    kind: text("kind").notNull(),
+    startsAt: timestamp("starts_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("hosted_subs_agent_idx").on(table.agentId),
+    // Partial index — only active rows that the lapse-detection cron
+    // scans. Defined here as a regular index because Drizzle doesn't
+    // expose the `WHERE` predicate; the migration SQL ships it as a
+    // partial index on prod. The two are equivalent for query
+    // planning purposes — the predicate is the optimization.
+    index("hosted_subs_active_expiry_idx").on(table.expiresAt),
+  ],
+).enableRLS();
+
+export type HostedAgentConfig = typeof hostedAgentConfigs.$inferSelect;
+export type HostedAgentSubscription = typeof hostedAgentSubscriptions.$inferSelect;

@@ -20,6 +20,8 @@ import { agentWalletLinkRequest } from "./agent-wallet-link-request";
 import { agentWalletConnect } from "./agent-wallet-connect";
 import { agentWalletDisconnect } from "./agent-wallet-disconnect";
 import { agentTierStatus } from "./agent-tier-status";
+import { agentHostedEnable } from "./agent-hosted-enable";
+import { agentHostedDisable } from "./agent-hosted-disable";
 import { matchList } from "./match-list";
 import { challengePropose } from "./challenge-propose";
 import { challengeAccept } from "./challenge-accept";
@@ -47,6 +49,9 @@ export const TOOLS: ToolDef[] = [
   agentWalletConnect,
   agentWalletDisconnect,
   agentTierStatus,
+  // Hosted Agent Mode — server-side LLM loop (2026-05).
+  agentHostedEnable,
+  agentHostedDisable,
   matchList,
   challengePropose,
   challengeAccept,

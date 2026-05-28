@@ -34,6 +34,7 @@ import { authorizedCronRequest } from "@/lib/cron-auth";
 import { withCronLock } from "@/lib/cron-lock";
 import { recordCronRun } from "@/lib/cron-audit";
 import { pullStake, StakePullError } from "@/lib/chain/stake";
+import { claimSubscriptionForRenewal } from "@/lib/hosted-billing-renewal";
 import { log } from "@/lib/log";
 
 export const dynamic = "force-dynamic";
@@ -127,6 +128,28 @@ async function handle({
         agentId: sub.agentId,
         outcome: "lapsed",
         detail: "no_linked_wallet",
+      });
+      continue;
+    }
+
+    // Idempotency claim — flip 'active' → 'renewing' BEFORE pulling
+    // payment. A crash after the on-chain pull but before the DB commit
+    // would otherwise let the next run re-charge this sub (the selection
+    // query above filters status='active'). Claiming removes the row from
+    // that window so the $20 can be pulled at most once per period.
+    const claimed = await claimSubscriptionForRenewal(sub.id);
+    if (!claimed) {
+      // Another run (or a prior crashed run) already claimed this row.
+      // Skip without charging — never double-pull.
+      log.warn(
+        { subscriptionId: sub.id, agentId: sub.agentId },
+        "hosted-billing: subscription already claimed for renewal, skipping",
+      );
+      results.push({
+        subscriptionId: sub.id,
+        agentId: sub.agentId,
+        outcome: "error",
+        detail: "already_claimed",
       });
       continue;
     }

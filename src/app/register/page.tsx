@@ -360,14 +360,14 @@ export default function RegisterPage() {
                     width: 22,
                     height: 22,
                     borderRadius: "50%",
-                    background: "var(--gold)",
-                    color: "#000",
+                    background: "var(--accent)",
+                    color: "var(--accent-fg)",
                     fontSize: 13,
                     fontWeight: 800,
                     lineHeight: 1,
                     flexShrink: 0,
                     boxShadow:
-                      "0 0 0 3px color-mix(in oklab, var(--gold) 22%, transparent)",
+                      "0 0 0 3px color-mix(in oklab, var(--accent) 22%, transparent)",
                   }}
                 >
                   ✓
@@ -431,6 +431,7 @@ export default function RegisterPage() {
                 selected={executionChoice === "self_hosted"}
                 onClick={() => setExecutionChoice("self_hosted")}
                 badge="FREE"
+                badgeKind="positive"
                 title="Self-hosted"
                 tagline="You run your LLM. We provide the tools."
                 bullets={[
@@ -444,6 +445,7 @@ export default function RegisterPage() {
                 selected={executionChoice === "hosted"}
                 onClick={() => setExecutionChoice("hosted")}
                 badge="$1 + $20/mo"
+                badgeKind="money"
                 title="Hosted by Coliseum"
                 tagline="We run the loop using your LLM API key."
                 bullets={[
@@ -676,8 +678,13 @@ function MintedView({
           className="panel"
           style={{
             padding: 18,
-            borderColor: "color-mix(in oklab, var(--gold) 45%, var(--line))",
-            background: "color-mix(in oklab, var(--gold) 5%, transparent)",
+            // CTA panel for the primary post-mint action ("Configure
+            // hosted mode →"). Uses the theme accent — same color as
+            // `btn primary` / `.lnk` so the panel reads as "this is
+            // the next thing to click." Gold stays on the money
+            // chip below.
+            borderColor: "color-mix(in oklab, var(--accent) 45%, var(--line))",
+            background: "color-mix(in oklab, var(--accent) 5%, transparent)",
           }}
         >
           <div
@@ -685,13 +692,15 @@ function MintedView({
             style={{ justifyContent: "space-between", marginBottom: 6 }}
           >
             <h3 style={{ margin: 0 }}>Set up your hosted agent</h3>
+            {/* Money pricing → `.chip.gold` (gold IS the money color
+                per --money-color in coliseum.css). */}
             <span
-              className="mono"
+              className="chip gold mono"
               style={{
                 fontSize: 10,
                 letterSpacing: "0.12em",
                 textTransform: "uppercase",
-                color: "var(--gold)",
+                padding: "3px 8px",
               }}
             >
               $1 + $20/mo
@@ -867,8 +876,11 @@ function NpxQuickStart() {
       style={{
         padding: 14,
         marginTop: 12,
-        borderLeft: "3px solid var(--gold)",
-        background: "color-mix(in oklab, var(--gold) 4%, transparent)",
+        // Alt-CTA / power-user side path — accent color so it visually
+        // chains with the green primary CTAs (and theme-swaps). Gold is
+        // reserved for money chips and branded emphasis.
+        borderLeft: "3px solid var(--accent)",
+        background: "color-mix(in oklab, var(--accent) 4%, transparent)",
       }}
     >
       <div
@@ -974,6 +986,7 @@ function ModeCard({
   selected,
   onClick,
   badge,
+  badgeKind,
   title,
   tagline,
   bullets,
@@ -982,6 +995,10 @@ function ModeCard({
   selected: boolean;
   onClick: () => void;
   badge: string;
+  /** "positive" = FREE/no-cost (green chip), "money" = pricing (gold chip).
+   *  Maps onto the shared `.chip` semantics in coliseum.css so badges read
+   *  consistently with the rest of the app — never hardcoded colors. */
+  badgeKind: "positive" | "money";
   title: string;
   tagline: string;
   bullets: string[];
@@ -996,16 +1013,20 @@ function ModeCard({
         textAlign: "left",
         padding: 16,
         borderRadius: 6,
+        // Selection state uses the theme accent (the same color as
+        // `btn primary` and `.lnk` — the primary CTA color on Coliseum).
+        // Gold is reserved for money chips + branded emphasis; never for
+        // selection or "done" state.
         background: selected
-          ? "color-mix(in oklab, var(--gold) 8%, var(--bg-1))"
+          ? "color-mix(in oklab, var(--accent) 8%, var(--bg-1))"
           : "var(--bg-1)",
         border: `1px solid ${
           selected
-            ? "color-mix(in oklab, var(--gold) 60%, var(--line))"
+            ? "color-mix(in oklab, var(--accent) 60%, var(--line))"
             : "var(--line)"
         }`,
         boxShadow: selected
-          ? "0 0 0 1px color-mix(in oklab, var(--gold) 60%, transparent)"
+          ? "0 0 0 1px color-mix(in oklab, var(--accent) 60%, transparent)"
           : "none",
         cursor: "pointer",
         transition: "border-color 0.15s, box-shadow 0.15s, background 0.15s",
@@ -1031,13 +1052,11 @@ function ModeCard({
               height: 14,
               borderRadius: "50%",
               border: `1.5px solid ${
-                selected ? "var(--gold)" : "var(--text-mute)"
+                selected ? "var(--accent)" : "var(--text-mute)"
               }`,
-              background: selected ? "var(--gold)" : "transparent",
+              background: selected ? "var(--accent)" : "transparent",
               flexShrink: 0,
-              boxShadow: selected
-                ? "inset 0 0 0 2px var(--bg-1)"
-                : "none",
+              boxShadow: selected ? "inset 0 0 0 2px var(--bg-1)" : "none",
             }}
           />
           <span
@@ -1050,17 +1069,16 @@ function ModeCard({
             {title}
           </span>
         </div>
+        {/* Use the shared `.chip` semantics from coliseum.css — green for
+            positive (free/no-cost), gold for money/pricing. No hardcoded
+            colors, theme-aware in both light + dark. */}
         <span
-          className="mono"
+          className={`chip ${badgeKind === "money" ? "gold" : "green"} mono`}
           style={{
             fontSize: 9.5,
             letterSpacing: "0.1em",
             textTransform: "uppercase",
-            color: "var(--gold)",
-            background: "color-mix(in oklab, var(--gold) 12%, transparent)",
-            border: "1px solid color-mix(in oklab, var(--gold) 35%, transparent)",
             padding: "3px 6px",
-            borderRadius: 3,
             whiteSpace: "nowrap",
           }}
         >

@@ -1,0 +1,51 @@
+name: CI
+
+# Gate every push to main + every PR on the checks that the Vercel
+# build does NOT run: typecheck, lint, and the vitest suite. The
+# Vercel build already runs check:prerender-discipline + check:mcpb-sync
+# + next build, so this workflow deliberately covers the complementary
+# gap (a money-handling app shipping with no automated regression gate).
+#
+# The 650+ test suite is hermetic: it runs against an in-process pglite
+# (WASM Postgres) via test/db-harness.ts and injects dummy env in
+# test/setup.ts — no secrets, no Supabase, no Docker required.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref so a rapid push sequence
+# doesn't queue stale jobs.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        # version comes from the `packageManager` field in package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm test

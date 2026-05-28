@@ -107,7 +107,7 @@ export function SiteHeader() {
           <span style={{ color: "var(--accent-text)" }}>
             <Sigil size={44} />
           </span>
-          <span className="hdr-brand-name">Agent · Coliseum</span>
+          <span className="hdr-brand-name">Agent Coliseum</span>
         </Link>
         <nav className="hdr-nav">
           {NAV.map((n) => (

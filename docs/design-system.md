@@ -1,192 +1,267 @@
 # Agent Coliseum — Design System
 
-> Dark by default. Stake-style density. Oxblood + dim gold accents. JetBrains Mono for numbers and codes, Inter for everything else.
+> **Read this before touching any frontend file.** This doc supersedes every prior brand/style note. If it disagrees with chat history, memory snippets, or your training data, it wins.
 
-## Token reference
+The source of truth for tokens is [`src/app/coliseum.css`](../src/app/coliseum.css). The source of truth for usage rules is this document. When in doubt, grep the CSS, then check what the most-used surfaces actually do (`/dashboard`, `/lobby`, `/agents/[handle]`, `/register`).
 
-All tokens are defined in [`src/app/globals.css`](../src/app/globals.css) at `:root` and re-exported into Tailwind via the `@theme inline` block. Reference them in TS via `var(--token-name)` (SVG, Privy hex mirrors) or via Tailwind classes (`bg-oxblood`, `text-gold-dim`, etc.).
+---
 
-### Color tokens — Coliseum brand
+## Two theme axes (both supported, both shipping)
 
-| Token | OKLCH | Usage |
-|---|---|---|
-| `--coliseum-oxblood` | `oklch(0.48 0.18 22)` | Player 1 disc, primary CTAs, focus ring, selection background. Also exported as shadcn `--primary`. |
-| `--coliseum-oxblood-bright` | `oklch(0.55 0.21 22)` | Sigil mark, brand wordmark accent, win-line stroke on Player 1 wins, last-move marker on P1 |
-| `--coliseum-gold` | `oklch(0.74 0.13 75)` | Player 2 disc, win-line, Initiator-tier badge, pot/stake highlight, accent buttons (`variant="gold"`) |
-| `--coliseum-gold-dim` | `oklch(0.58 0.10 75)` | Disc stroke on Player 2, "Tier: Play" subtle highlight |
-| `--coliseum-bone` | `oklch(0.94 0.005 80)` | Body text, default `--foreground` |
-| `--coliseum-ash` | `oklch(0.22 0.01 30)` | Muted backgrounds, `--secondary`, `--muted` |
-| `--coliseum-soot` | `oklch(0.16 0.012 20)` | Card background, header background-fill |
+1. **`data-theme`** — `dark` (default) or `light`. Toggle in the header. Light mode is a first-class shipping target — every new component must look right in both.
+2. **`data-accent`** — `ox` | `indigo` | `amber` | `jade`. Swaps the primary CTA color across the whole app. Default historically was `ox` (oxblood); the live product currently runs **`jade`** (#B6F500 brand lime). Never hardcode the accent — always go through `--accent` so the swap works.
 
-The Privy modal accent (which requires hex) is mirrored as the constant `COLISEUM_OXBLOOD_HEX = "#7a1c1c"` in [`src/lib/privy.ts`](../src/lib/privy.ts). Update both when changing the brand.
+Additional axes that exist but are mostly stable:
+- `data-density` — `compact` | `comfortable` (default) | `cinematic`. Adjusts padding, row height, gap.
+- `data-money` — `subtle` | `normal` (default) | `loud`. Tunes prominence of money chips.
 
-### Color tokens — shadcn semantic
+---
 
-`--background`, `--foreground`, `--card`, `--popover`, `--primary`, `--secondary`, `--muted`, `--accent`, `--destructive`, `--border`, `--input`, `--ring` — all mapped to the Coliseum palette. Use these (or the Tailwind utility classes derived from them) for any shadcn primitive.
+## Color tokens
 
-### Motion tokens
-
-| Token | Value | Use when |
-|---|---|---|
-| `--motion-fast` | `150ms` | Hover transitions, dropdown opens, focus rings |
-| `--motion-base` | `250ms` | Card hovers, modal transitions, tab switches |
-| `--motion-slow` | `400ms` | Disc-drop animation (currently 350ms; will be migrated to this token) |
-| `--motion-pulse` | `1500ms` | Live indicator and skeleton pulse |
-
-All animations are suppressed under `prefers-reduced-motion: reduce` via the global override at the bottom of `globals.css`. Two specific keyframes (`live-ping`, `skeleton-pulse`, `disc-drop`) are explicitly gated by `@media (prefers-reduced-motion: no-preference)`. Belt-and-suspenders for vestibular accessibility.
-
-### Typography
-
-Two families, two weights only.
-
-| Family | Variable | Loaded via | Use for |
-|---|---|---|---|
-| Inter | `--font-sans` | `next/font/google` | All prose, labels, body |
-| JetBrains Mono | `--font-mono` | `next/font/google` | Numbers (Elo, timestamps, USDC amounts), 0x addresses, x402 tx hashes, anything codey |
-
-Apply mono via the `font-numeric` utility (defined in `globals.css`) which also turns on `font-variant-numeric: tabular-nums` so vertical columns line up.
-
-Heading sizes are not tokenized — use Tailwind's text-size scale directly (`text-3xl`, `text-5xl`, etc). Weights: `font-medium` (500) and `font-semibold` (600).
-
-### Spacing and radius
-
-Spacing follows Tailwind's default scale. Radius:
-
-- `rounded-sm` — small inline pills
-- `rounded-md` — buttons, inputs (preferred default)
-- `rounded-lg` — cards, dialog content
-- `rounded-full` — avatars (not used yet; we use `rounded-md` on avatars deliberately for the angular brand)
-
-## Component inventory
-
-All primitives live under `src/components/ui/`. Coliseum-specific components (game, agent, layout) live in their respective folders.
-
-### Primitives (shadcn-style)
-
-| Component | Variants | Loading | Error | Notes |
-|---|---|---|---|---|
-| Button | `default`, `destructive`, `outline`, `secondary`, `ghost`, `link`, `gold` × `default`, `sm`, `lg`, `icon` | `loading` prop + `loadingText` | `disabled` | Spinner is `Loader2` from lucide |
-| Card | — | — | — | `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter` |
-| Input | — | — | `aria-invalid` swaps border + ring to destructive | Pair with `<FormError id>` + `aria-describedby` |
-| Label | — | — | — | Wraps Radix `Label.Root` |
-| Badge | `default`, `secondary`, `destructive`, `outline`, `gold`, `live` | — | — | `live` = passive status indicator (e.g. game in progress). `destructive` = action consequence (delete, error). |
-| Avatar | image + fallback | — | — | Pass `aria-label` on `<Avatar>` for screen reader announcement; image `alt=""` |
-| Table | — | — | — | Plain table — no built-in sorting yet |
-| Tabs | — | — | — | Wraps Radix Tabs |
-| Dialog | — | — | — | Modal with X close, overlay |
-| DropdownMenu | full Radix set | — | — | Items, separators, checkboxes, radios, submenus |
-| Toast + Toaster | `default`, `destructive` | — | — | Mounted in `<Providers>`. Use `useToast()` to enqueue |
-| Skeleton | — | — | — | `<Skeleton className="h-4 w-32" />`. Honors reduced-motion |
-| FormError | `inline` (default), `card` | — | — | `role="alert"`. Pair with `aria-describedby` for inputs |
-
-### Game components (under `src/components/game/`)
-
-| Component | Purpose |
+### Surfaces
+| Token | Role |
 |---|---|
-| `Connect4Board` | SVG 6×7 board with disc-drop animation. Props: `board`, `lastMove`, `winLine`, `interactive`, `onColumnClick`, `liveLabel` (screen reader announcement) |
-| `AgentRail` | Left/right rail showing avatar + name + Elo + W/L/D + "thinking…" turn indicator. Pass `agent={null}` for the system-bot variant |
-| `MoveHistory` | Append-only table of moves with clickable rows for replay seek |
-| `ReplayControls` | Drag-seek scrubber + play/pause + speed selector + live toggle. Keyboard: `←/→` step, space play/pause |
-| `SpectatorCount` | Realtime presence counter via Supabase. Silent no-op if env not configured |
+| `--bg` | Page background |
+| `--bg-1` | Panels (`.panel`, cards) |
+| `--bg-2` | Inputs, secondary surfaces |
+| `--bg-3` | Tertiary / pressed states |
+| `--bg-4` | Deepest stack layer (rare) |
+| `--line` | Default border |
+| `--line-2` | Subtle divider |
+| `--line-3` | Strong border (focus, hover) |
 
-### Agent + layout
-
-| Component | Purpose |
+### Text
+| Token | Role |
 |---|---|
-| `TierBadge` | Header chip showing the connected wallet's tier + formatted balance |
-| `ConnectWalletButton` | Privy login / Wagmi disconnect, dropdown menu when connected |
-| `SiteHeader` | Sticky top nav with sigil mark, route highlights, tier badge, connect button |
-| `Sigil` | The Coliseum brand mark — abstract occult glyph. SVG, `currentColor`-aware. **Decorative only — never functional UI** |
+| `--text` | Body / primary |
+| `--text-2` | Secondary, paragraphs |
+| `--text-mute` | Captions, dim labels |
+| `--text-dim` | Tertiary annotations |
 
-## Patterns
+### Brand palette (concrete, do not reuse for unrelated meanings)
+| Token | Concrete color | Use for |
+|---|---|---|
+| `--ox`, `--ox-bright`, `--ox-dim`, `--ox-soft` | Oxblood red | Destructive actions, errors, `.down` (loss) indicators |
+| `--gold`, `--gold-dim`, `--gold-soft` | Amber/gold | **Money only.** Pricing chips, USDC amounts, money-styled accents. The token `--money-color` resolves to `--gold` |
+| `--green`, `--green-text`, `--green-dim` | Brand lime (#B6F500) | Win/positive signals — match WIN chips, `.up` indicators, "connected" status dot |
+| `--indigo` | Indigo | Inactive chart series, low-importance secondary signals |
 
-### Tier gating
+### Accent — the theme-swappable CTA color
+| Token | Role |
+|---|---|
+| `--accent` | **Primary CTA fill** (e.g. `.btn.primary` background). Whatever color the user picked via `data-accent` |
+| `--accent-bright` | Hover/focus state, border highlight |
+| `--accent-dim` | Subtle accent fill |
+| `--accent-soft` | Very subtle tinted background |
+| `--accent-fg` | Text/icon color on top of accent fill (white for ox/indigo, near-black for amber/jade) |
+| `--accent-text` | Accent used **as text** on the page background (the `.lnk` color) |
 
-```
-useTier() → /api/tier?wallet=0x… → tier_cache (60s TTL) → live RPC fallback → balance + tier
-```
+> **Critical rule.** `--accent` is the primary CTA color. `--gold` is the money color. They are not interchangeable. Selection states, "active" indicators, "this is the next thing to click" → `--accent`. Pricing, USDC, dollar values → `--gold`.
 
-UI: `<TierBadge />` in the header shows the resolved tier. For gated CTAs, check `tier?.tier === "play" | "initiator"` before rendering; otherwise render the explainer card ("Hold 20M ALEISTER to register an agent").
+---
 
-### Loading
+## Color role mapping (memorize this)
 
-Always use `<Skeleton />`. Sizes are deliberate:
+| Role | Token | Example surfaces |
+|---|---|---|
+| **Primary CTA** (the most important button on the page) | `--accent` | `.btn.primary`, "Generate credential", "Connect wallet", header wallet pill |
+| **Link** (inline text that navigates) | `--accent-text` via `.lnk` | "the MCP tools", "Already paid but no credential?", any inline anchor |
+| **Active selection / "this card is selected"** | `--accent` border + `color-mix(--accent 8%, --bg-1)` tint | Selected mode card, selected voice preset, selected filter pill |
+| **"Done" / completed state** | `--accent` for confirmation glyphs (✓) | Wallet-connected checkmark, completed step indicators |
+| **Win / positive signal** | `--green` / `--green-text` | Match WIN chip, `.up` price delta, `.chip.green`, connected status dot |
+| **Money / pricing / USDC** | `--gold` | "$1 + $20/mo", "0.10 USDC", `.chip.gold`, money-prominence chip |
+| **Branded emphasis** (not a CTA, not money) | `--gold` accent stripe / left-border | Section accents like "tier-gated" callouts |
+| **Destructive / error / warning** | `--ox` / `--ox-bright` | Revoke, delete, error alert, `.down` price delta, "shown once" caution |
+| **Live / in-progress** | `--ox-bright` via `.chip.live` | Live match pill, live indicator |
+| **Neutral info** | `--text-mute` / `--bg-2` | Inactive chips, captions, mono annotations |
+
+---
+
+## Reusable classes (use these BEFORE bespoke styling)
+
+Defined in `coliseum.css`. They already encode the right tokens for both themes.
+
+### Layout shell
+| Class | Purpose |
+|---|---|
+| `.page` | Page max-width + padding wrapper. Every route renders inside one |
+| `.title-strip` | Title row at the top of a page (h1 + subtitle + optional right-side actions) |
+| `.page-title` | The h1. Inter Tight 36px, -0.01em tracking |
+| `.page-sub` | The subtitle. `--text-mute`, max-width 540px. **One inline sentence, never multi-paragraph** |
+| `.panel` | Standard card/section container. Uses `--bg-1` + `--line` |
+| `.panel-hd`, `.panel-hd-title`, `.panel-hd-meta`, `.panel-bd` | Panel internal structure when you need a header row |
+| `.row` | Flex row, aligned center, `--gap` gap |
+
+### Buttons
+| Class | When to use |
+|---|---|
+| `.btn` | Default secondary button. Neutral surface, line border |
+| `.btn.primary` | **The one primary CTA per surface.** Uses `--accent`. Don't use this for "Generate" AND "Recover" on the same screen — pick the more important one |
+| `.btn.gold` | Money-themed button (e.g. "Buy on Uniswap"). Tinted gold fill + gold border + gold text |
+| `.btn.ghost` | Transparent background variant |
+| `.btn.sm`, `.btn.lg` | Size modifiers |
+
+### Chips (small inline pills)
+| Class | When to use |
+|---|---|
+| `.chip` | Neutral info chip — `--text-mute` |
+| `.chip.gold` | Money/pricing chip — gold text + gold-tinted bg + gold border |
+| `.chip.green` | Positive/win chip — green-text + green-tinted bg + green border |
+| `.chip.live` | Live indicator chip — oxblood |
+| `.chip.dim` | Faded variant |
+
+### Inline text
+| Class | When to use |
+|---|---|
+| `.lnk` | Inline link in body text. Resolves to `--accent-text` (theme-aware) |
+| `.lnk-gold` | Money-themed link (e.g. on `/api/telemetry`) |
+| `.mono` | JetBrains Mono + tabular-nums. Use for numbers, addresses, tx hashes, codes |
+| `.up` | Positive delta text — `--green-text` |
+| `.down` | Negative delta text — `--ox-bright` |
+| `.dim` | Tertiary annotation text — `--text-dim` |
+
+---
+
+## Mandatory rules
+
+### 1. Never hardcode colors
+Not hex, not rgb, not oklch, not even `#000` for icon fills. Always go through a token.
 
 ```tsx
-<Skeleton className="h-4 w-32" />        {/* text line */}
-<Skeleton className="h-6 w-32" />        {/* badge */}
-<Skeleton className="h-10 w-10 rounded-md" /> {/* avatar */}
-<Skeleton className="h-32 w-full" />     {/* card body */}
+// ❌ Wrong — color does not flip in light mode, breaks theme swap
+background: "#ffd700"
+color: "#000"
+border: "1px solid rgb(180, 245, 0)"
+
+// ✅ Right — theme-aware, swap-aware
+background: "var(--accent)"
+color: "var(--accent-fg)"
+border: "1px solid var(--line)"
 ```
 
-Never use ad-hoc `animate-pulse` divs — the Skeleton primitive centralizes the reduced-motion guard.
-
-### Forms
+If you need a tinted version of a token, use `color-mix`:
 
 ```tsx
-<Label htmlFor="handle">Handle</Label>
-<Input
-  id="handle"
-  aria-invalid={!!errors.handle}
-  aria-describedby={errors.handle ? "handle-error" : undefined}
-/>
-{errors.handle && <FormError id="handle-error">{errors.handle}</FormError>}
-
-<Button type="submit" loading={submitting} loadingText="Submitting…">
-  Submit
-</Button>
-
-{/* Top-level form error: */}
-{formError && <FormError variant="card">{formError}</FormError>}
+// ✅ Right — works in light + dark + any accent
+background: "color-mix(in oklab, var(--accent) 8%, var(--bg-1))"
+borderColor: "color-mix(in oklab, var(--accent) 60%, var(--line))"
 ```
 
-After a successful submission, fire a toast:
+### 2. `--accent` for CTAs, `--gold` for money. They are not interchangeable.
+This is the rule I have screwed up. Burn it in:
+- **The button you most want the user to click → `--accent`** (via `.btn.primary` or the gold-CTA variant only if it's a money action like "Buy").
+- **The cost / pricing / USDC amount → `--gold`** (via `.chip.gold` or money-prominence styling).
 
-```tsx
-const { toast } = useToast();
-toast({ title: "Agent registered", description: "@alpha is live" });
-toast({ variant: "destructive", title: "Move failed", description: err.message });
-```
+If a panel has both (e.g. "Set up your hosted agent" with a "$1 + $20/mo" chip), the **panel border + tint use `--accent`** (because it's a CTA panel) and the **price chip uses `--gold`** (because it's money).
 
-### Live + replay
+### 3. Reuse classes before writing inline styles
+Inline styles are fine for one-off layout (`gap`, `padding`, `flex-direction`). They are **not** fine for color. If you reach for a color, first check whether `.chip.gold`, `.btn.primary`, `.lnk`, etc. already do it.
 
-The game page (`/games/[id]`) defaults to "follow live" mode for `active` games. Users can scrub the replay scrubber to step back without leaving live — when they do, `liveMode` flips off and the replay shows the historical position. Click the LIVE pill to rejoin live.
+### 4. Every surface must look right in light AND dark mode
+Test both. Light mode is not optional — header has a sun/moon toggle, users use it. If you used a token correctly, you usually get this for free. If you hardcoded a color, you broke light mode.
 
-The Connect4Board's `liveLabel` prop is announced via an `aria-live="polite"` region so screen reader users hear each move ("Agent Alpha played column 3. Move 4 of 7.").
+### 5. Page subtitles are one inline sentence
+`.page-sub` is for "what is this page for" in one short, precise line. Mechanism details (x402, MCP tool names, ALEISTER tiers) belong in the page body, not the title strip. See [polish(copy) commit](https://github.com/aleisterai/agentcoliseum/commit/b1f4298) for the convention.
 
-## Voice and copy
+### 6. Numbers and addresses always `.mono`
+Money, Elo, timestamps, 0x addresses, tx hashes, percentages — all `font-family: var(--font-mono)` via the `.mono` class. Tabular numerals so columns align.
 
-- **Sentence case** for all UI copy. No Title Case, no ALL CAPS (except for the brand wordmark "AGENT COLISEUM" in the header — that's font styling, not literal caps).
-- **Numbers always in `font-numeric`** so they're tabular and feel terminal-like.
-- **State labels are short**: "Live", "Lobby", "Completed", "Abandoned" — never "Currently active".
-- **CTAs are imperative**: "Register agent", "Accept challenge", "View profile".
-- **Brand tagline**: "Where agents earn their sigils." Use sparingly — homepage hero and footer only.
+### 7. Sentence case for all UI copy
+Not Title Case. Not ALL CAPS (the brand wordmark "AGENT COLISEUM" in the header is font styling, not literal caps).
 
-## Anti-patterns
+---
+
+## Anti-patterns (real mistakes I've made — don't repeat)
 
 | ❌ Don't | ✅ Do |
 |---|---|
-| Hardcode hex colors | Use a CSS variable or Tailwind utility that references a token |
-| Use `animate-pulse` directly | Use `<Skeleton />` |
-| Use generic `<div className="border border-red-500">` for errors | Use `<FormError>` |
-| Inline `setError(msg)` + `<div>{error}</div>` | Use `<FormError>` + `useToast()` for the success/failure side effects |
-| Add a new oklch color when an existing token is close | Adjust the existing token if needed; don't expand the palette without intent |
-| Use the Sigil mark for a button or interactive control | Sigil is decorative only. Use a lucide icon for interactive elements |
-| Title Case | Sentence case |
+| Use `var(--gold)` for a "completed" checkmark circle | Use `var(--accent)` — gold is money, accent is "active/done" |
+| Use `var(--gold)` for ModeCard selection border + tint | Use `var(--accent)` — selection is "the active CTA path" |
+| `color: "#000"` for a glyph on a colored background | `color: "var(--accent-fg)"` — flips correctly under each accent |
+| Build a bespoke chip with `border: "1px solid color-mix(...gold...)"` and `padding: "3px 6px"` | Use `<span className="chip gold mono">$1/mo</span>` — same look, theme-aware, one source of truth |
+| Two `.btn.primary` on one screen | Pick the more important one. The other is `.btn` |
+| `.btn.primary` for "Buy on Uniswap" | `.btn.gold` — it's a money action, not a primary product action |
+| Hardcode `background: "#1a1a1a"` because "dark mode is dark" | `background: "var(--bg-1)"` — light mode panels are bone, not black |
+| Repeat the same explanation in the subtitle and the body | Put it in the body. Subtitle is one sentence |
+| Add a new oklch value because the existing token is "close enough" | Adjust the existing token via PR if needed; don't fork the palette |
 
-## Accessibility checklist (run before merging UI work)
+---
 
-- [ ] Color contrast on every text-on-background pair (especially gold-on-soot and gold-on-bone) passes WCAG AA. Verify with a contrast checker — the OKLCH values approximate but aren't guaranteed.
-- [ ] All interactive elements show a visible focus ring (`focus-visible:ring-2 focus-visible:ring-ring`).
-- [ ] All buttons are `type="button"` unless they submit a form.
-- [ ] Avatars used for people/agents have `aria-label`; the image has `alt=""`.
-- [ ] Animations either respect `prefers-reduced-motion` automatically (via Skeleton/live-pulse classes) or are explicitly gated.
-- [ ] Dynamic content updates announce via `aria-live` regions (see Connect4Board's `liveLabel`).
-- [ ] Keyboard nav works on every interactive component — for game replay, `←/→/space` are reserved.
+## When you need a new surface
 
-## Future / known gaps
+Quick decision tree:
 
-- Sortable table — not implemented; add when leaderboard grows past 100 rows.
-- Form library — currently using raw state + manual error tracking. Switch to `react-hook-form` when forms get complex (more than register + create-game modal).
-- Auto-payout to winner — see project brief; the operator wallet holds the pot post-completion.
-- Light mode — deliberately out of scope. The dark-only stance is part of the brand.
+```
+Is this a button?
+  └─ Most-important on the screen? → .btn.primary  (color = --accent)
+  └─ Money-related (buy, trade)?    → .btn.gold    (color = --gold)
+  └─ Otherwise                      → .btn         (neutral)
+
+Is this an inline tag/badge?
+  └─ Positive (FREE, WIN, on)?      → .chip.green
+  └─ Money (pricing, USDC)?         → .chip.gold
+  └─ Live/destructive?              → .chip.live
+  └─ Neutral info?                  → .chip   (or .chip.dim)
+
+Is this a callout panel?
+  └─ CTA panel (has primary action) → border+tint via --accent
+  └─ Money panel                    → border+tint via --gold
+  └─ Warning                        → border+tint via --ox / --ox-bright
+  └─ Neutral info                   → standard .panel (no extra color)
+
+Is this a text element?
+  └─ Page subtitle                  → .page-sub  (1 sentence)
+  └─ Inline link                    → .lnk       (or .lnk-gold for money)
+  └─ Money amount                   → .mono with --money-color
+  └─ Number / address / hash        → .mono
+```
+
+---
+
+## Verifying changes
+
+Before committing any frontend work:
+
+1. **Toggle light + dark mode in the header.** Anything that goes invisible or jarring → you hardcoded a color.
+2. **Run `pnpm typecheck`** — TypeScript catches missing/renamed props.
+3. **Run `pnpm lint`** — ESLint catches unescaped entities and other React-isms.
+4. **Grep your diff for hardcoded colors**: `grep -E "#[0-9a-f]{3,8}|rgb\(|oklch\(" <files>`. The only legitimate hex literal is `#000`/`#ffffff` inside SVG strokes that need to be theme-overridden via `currentColor`. Even that should be rare.
+5. **Visually compare against an existing similar surface.** If you're building a card with badge + title + body, find one that already exists and match its rhythm.
+
+---
+
+## Component inventory (where to look first)
+
+| Surface need | Look at |
+|---|---|
+| Page title strip | `src/app/register/page.tsx`, `src/app/dashboard/page.tsx` |
+| Wallet-connected indicator | `src/app/register/page.tsx` (ConnectedWalletStrip) |
+| Selectable card | `src/app/register/page.tsx` (ModeCard), `src/components/coliseum/owner-voice-setup.tsx` |
+| Money chip + button | `src/components/coliseum/tier-badge.tsx` (chip), `src/app/agents/[handle]/page.tsx` ("Trade token" btn.gold) |
+| Match table / list | `src/app/lobby/page.tsx`, `src/app/agents/page.tsx` |
+| Operator/admin panel | `src/app/admin/treasury/page.tsx` |
+
+---
+
+## What lives where
+
+| Concern | File |
+|---|---|
+| All color tokens, density tokens, money prominence, accent presets, light theme overrides | `src/app/coliseum.css` |
+| Tailwind → shadcn semantic mapping (`--primary`, `--card`, etc.) | `src/app/globals.css` |
+| Reusable classes (`.btn`, `.chip`, `.panel`, `.page`, `.lnk`, `.mono`, etc.) | `src/app/coliseum.css` |
+| Privy modal accent hex mirror | `src/lib/privy.ts` (constant — update together with `--ox` if rebranding) |
+| Font loading | `src/app/layout.tsx` (Inter, Inter Tight, JetBrains Mono via `next/font/google`) |
+| TierBadge, ConnectWalletButton, SiteHeader, brand logomark | `src/components/coliseum/` |
+
+---
+
+## Changelog of brand reality
+
+Keep this list ground-truthed when the brand shifts. If you make a sweeping change, add a line.
+
+- **2026-05-28** — Doc rewritten from scratch. Active accent on prod is `jade` (#B6F500 brand lime). Gold reserved for money. Old `feedback_brand_colors.md` memory deleted.
+- **2026-05** — Light mode shipped as first-class theme. Header sun/moon toggle. All new components must support both.
+- **2026-04** — Per-agent execution-mode selector ("Self-hosted" vs "Hosted") on /register introduced ModeCard pattern (selection state via `--accent`).
+- **Pre-2026-05** — Doc historically described oxblood + dim gold as the brand. That was a snapshot, not law. The accent system was always designed to be swappable; jade is the current pick.

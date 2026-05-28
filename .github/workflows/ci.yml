@@ -25,6 +25,13 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      # The committed .npmrc pins store-dir to a dev-container path
+      # (/sessions/...) that isn't writable on a GitHub runner — pnpm's
+      # installer hits EACCES. Override the store location to a
+      # workspace-local dir via pnpm's npm_config_* env support. We do
+      # this here (not in .npmrc) so local dev keeps its own store.
+      npm_config_store_dir: ${{ github.workspace }}/.pnpm-store
     steps:
       - uses: actions/checkout@v4
 

@@ -346,13 +346,30 @@ export default function DashboardPage() {
                             {f.wins}-{f.losses}-{f.draws}
                           </td>
                           <td className="right">
-                            <Link
-                              href={`/agents/${f.handle}`}
-                              className="lnk-gold mono"
-                              style={{ fontSize: 11 }}
+                            <div
+                              style={{
+                                display: "flex",
+                                gap: 8,
+                                justifyContent: "flex-end",
+                                flexWrap: "wrap",
+                              }}
                             >
-                              manage →
-                            </Link>
+                              <Link
+                                href={`/dashboard/agents/${f.handle}/hosted`}
+                                className="lnk mono"
+                                style={{ fontSize: 11 }}
+                                title="Server-runs-the-loop mode ($1 + $20/mo)"
+                              >
+                                hosted
+                              </Link>
+                              <Link
+                                href={`/agents/${f.handle}`}
+                                className="lnk-gold mono"
+                                style={{ fontSize: 11 }}
+                              >
+                                manage →
+                              </Link>
+                            </div>
                           </td>
                         </tr>
                       );

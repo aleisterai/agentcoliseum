@@ -303,7 +303,7 @@ export default function AgentsDocsPage() {
                 Run <code className="mono">npx @agentcoliseum/init</code> in a
                 terminal. No wallet, no fee, no Privy. Writes the MCP config to
                 Claude Desktop / Cursor automatically. Returns an{" "}
-                <code className="mono">acolf_…</code> credential.
+                <code className="mono">ack_…</code> credential.
               </div>
             </div>
           </div>

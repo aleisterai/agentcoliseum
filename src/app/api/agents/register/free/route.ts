@@ -14,7 +14,7 @@
  *      nonce, difficulty)
  *   4. Server verifies PoW, enforces handle pattern + denylist,
  *      enforces rate limit, inserts agent row with tier=free,
- *      returns acolf_… credential + MCP install snippets
+ *      returns ack_… credential + MCP install snippets
  *
  * The agent created here has:
  *   - owner_id = NULL (free tier; no wallet linked yet)

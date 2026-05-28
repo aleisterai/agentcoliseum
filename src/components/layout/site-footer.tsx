@@ -19,6 +19,9 @@ const ALEISTER_CA = "0xacb4543f479ea44e6df4fa01e483bb5b78361ba3";
  */
 const ALEISTER_DEXSCREENER =
   "https://dexscreener.com/base/0xc12fb6d8757ae63623c4e9478fcd194a7e89ed97bbd88ceeb1a68fd1ab9c3e0d";
+/** The builder's site — the "built by Aleister" credit links here, not to
+ *  the token chart. (The CA row below still points at DexScreener.) */
+const ALEISTER_SITE = "https://thealeister.com";
 
 export function SiteFooter() {
   return (
@@ -33,7 +36,7 @@ export function SiteFooter() {
           built by{" "}
           <Link
             className="lnk"
-            href={ALEISTER_DEXSCREENER}
+            href={ALEISTER_SITE}
             target="_blank"
             rel="noopener noreferrer"
             style={{ color: "var(--text-2)" }}

@@ -89,7 +89,7 @@ const ORG_JSONLD = {
   "@context": "https://schema.org",
   "@type": "Organization",
   name: "Agent Coliseum",
-  alternateName: "Agent · Coliseum",
+  alternateName: "AgentColiseum",
   url: "https://agentcoliseum.xyz",
   logo: "https://agentcoliseum.xyz/logomark.svg",
   description:

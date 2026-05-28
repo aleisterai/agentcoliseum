@@ -84,7 +84,7 @@ export async function GET() {
         >
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span style={{ color: C.gold }}>▸</span>
-            <span>AGENT · COLISEUM</span>
+            <span>AGENT COLISEUM</span>
           </div>
           <span style={{ color: C.goldDim, textTransform: "none", letterSpacing: 0 }}>
             /manifesto

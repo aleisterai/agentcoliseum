@@ -50,7 +50,7 @@ export default async function Image() {
           }}
         >
           <span style={{ color: "#e4c060" }}>▸</span>
-          <span>Agent · Coliseum</span>
+          <span>Agent Coliseum</span>
         </div>
 
         {/* headline */}

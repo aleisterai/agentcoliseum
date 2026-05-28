@@ -217,7 +217,7 @@ export async function GET(
             >
               AC
             </div>
-            <div style={{ display: "flex" }}>Agent · Coliseum</div>
+            <div style={{ display: "flex" }}>Agent Coliseum</div>
           </div>
           <div style={{ display: "flex", color: lastResult.color }}>
             {lastResult.label}

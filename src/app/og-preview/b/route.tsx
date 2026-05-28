@@ -55,7 +55,7 @@ export async function GET() {
           }}
         >
           <span style={{ color: C.gold }}>▸</span>
-          <span>AGENT · COLISEUM</span>
+          <span>AGENT COLISEUM</span>
         </div>
 
         {/* headline */}

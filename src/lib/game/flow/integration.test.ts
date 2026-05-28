@@ -83,6 +83,7 @@ const { applyMove } = await import("./match");
 const { finalizeMatch } = await import("./finalize");
 const { enforceClockExpiry, findStaleMatches } = await import("./clock");
 const { FIRST_MOVE_TIMEOUT_MS } = await import("../lifecycle");
+const { resumePausedMatchesForAgent } = await import("./pause");
 const {
   IllegalMoveError,
   NotYourTurnError,
@@ -1137,6 +1138,184 @@ describe("finalizeMatch", () => {
         const result = await enforceClockExpiry(created.match.id);
         // Returns null — clock hasn't expired.
         expect(result).toBeNull();
+      });
+    });
+  });
+
+  // Pause/resume primitive (2026-05-28) — fundamental fix for LLM-session
+  // death. Non-tournament matches whose on-turn agent times out PAUSE
+  // (not forfeit). Auto-resume on any MCP contact from the paused agent.
+  describe("pause/resume primitive", () => {
+    it("non-tournament clock-out + moveCount>=1 → status='paused', not time_forfeit", async () => {
+      await withTestDb(async ({ db }) => {
+        currentDb = db;
+        const { agent: p1 } = await seedOwnerAgent(db, { handle: "pause_p1" });
+        const { agent: p2 } = await seedOwnerAgent(db, { handle: "pause_p2" });
+        const created = await postChallenge({
+          gameType: "tic-tac-toe",
+          initiatorAgentId: p1.id,
+          mode: "free",
+        });
+        if (created.kind !== "challenge") throw new Error("expected challenge");
+        const matchObj = await acceptChallenge({
+          challengeId: created.challenge.id,
+          acceptorAgentId: p2.id,
+        });
+
+        // Expire the clock with moveCount=1 (real play underway). Without
+        // this commit, the result_reason would have been 'time_forfeit'
+        // with p2 winning. With pause/resume, it becomes 'paused'.
+        await db
+          .update(matches)
+          .set({
+            moveCount: 1,
+            turnStartedAt: new Date(Date.now() - 999_999),
+            agentReadyAt: new Date(Date.now() - 999_999),
+          })
+          .where(eq(matches.id, matchObj.id));
+
+        const result = await enforceClockExpiry(matchObj.id);
+        expect(result).not.toBeNull();
+        expect(result!.status).toBe("paused");
+        // Did NOT finalize. winnerAgentId stays null; ELO deltas null.
+        expect(result!.winnerAgentId).toBeNull();
+        expect(result!.resultReason).toBeNull();
+        // Pause metadata populated.
+        expect(result!.pausedReason).toBe("idle_timeout");
+        expect(result!.pauseCount).toBe(1);
+        expect(result!.pausedPlayerId).toBe(matchObj.currentTurnPlayerId);
+        expect(result!.pausedAt).not.toBeNull();
+      });
+    });
+
+    it("auto-resumes when the paused agent calls any MCP/REST tool", async () => {
+      await withTestDb(async ({ db }) => {
+        currentDb = db;
+        const { agent: p1 } = await seedOwnerAgent(db, { handle: "ar_p1" });
+        const { agent: p2 } = await seedOwnerAgent(db, { handle: "ar_p2" });
+        const created = await postChallenge({
+          gameType: "tic-tac-toe",
+          initiatorAgentId: p1.id,
+          mode: "free",
+        });
+        if (created.kind !== "challenge") throw new Error("expected challenge");
+        const matchObj = await acceptChallenge({
+          challengeId: created.challenge.id,
+          acceptorAgentId: p2.id,
+        });
+
+        // Pause the match: p1 (currentTurnPlayerId='0') is on the clock
+        // and times out. Match goes to paused.
+        await db
+          .update(matches)
+          .set({
+            moveCount: 1,
+            turnStartedAt: new Date(Date.now() - 999_999),
+            agentReadyAt: new Date(Date.now() - 999_999),
+          })
+          .where(eq(matches.id, matchObj.id));
+        await enforceClockExpiry(matchObj.id);
+        let row = await db.query.matches.findFirst({
+          where: eq(matches.id, matchObj.id),
+        });
+        expect(row!.status).toBe("paused");
+        expect(row!.pausedPlayerId).toBe("0"); // p1 was on the clock
+
+        // Auto-resume happens on any agent call. Simulate by calling
+        // resumePausedMatchesForAgent directly — this is what the MCP +
+        // REST dispatchers fire as a fire-and-forget on every request.
+        const resumed = await resumePausedMatchesForAgent(p1.id);
+        expect(resumed).toContain(matchObj.id);
+
+        // Match is back to active with fresh clock state.
+        row = await db.query.matches.findFirst({
+          where: eq(matches.id, matchObj.id),
+        });
+        expect(row!.status).toBe("active");
+        expect(row!.pausedAt).toBeNull();
+        expect(row!.pausedReason).toBeNull();
+        expect(row!.pausedPlayerId).toBeNull();
+        // turnStartedAt was reset to ~now (fresh per-move clock).
+        const elapsedSinceReset = Date.now() - row!.turnStartedAt.getTime();
+        expect(elapsedSinceReset).toBeLessThan(5_000);
+        // pauseCount is PRESERVED across the resume — needed for the
+        // anti-grief 3-strike floor.
+        expect(row!.pauseCount).toBe(1);
+        // totalPausedMs has accumulated the pause duration.
+        expect(row!.totalPausedMs).toBeGreaterThan(0);
+      });
+    });
+
+    it("does NOT auto-resume the other agent's paused matches", async () => {
+      // A paused match where p1 timed out should NOT auto-resume just
+      // because p2 calls something. Resume is keyed on pausedPlayerId.
+      await withTestDb(async ({ db }) => {
+        currentDb = db;
+        const { agent: p1 } = await seedOwnerAgent(db, { handle: "x_p1" });
+        const { agent: p2 } = await seedOwnerAgent(db, { handle: "x_p2" });
+        const created = await postChallenge({
+          gameType: "tic-tac-toe",
+          initiatorAgentId: p1.id,
+          mode: "free",
+        });
+        if (created.kind !== "challenge") throw new Error("expected challenge");
+        const matchObj = await acceptChallenge({
+          challengeId: created.challenge.id,
+          acceptorAgentId: p2.id,
+        });
+        await db
+          .update(matches)
+          .set({
+            moveCount: 1,
+            turnStartedAt: new Date(Date.now() - 999_999),
+            agentReadyAt: new Date(Date.now() - 999_999),
+          })
+          .where(eq(matches.id, matchObj.id));
+        await enforceClockExpiry(matchObj.id);
+        // p2 calls in — but p1 is the paused side. No resume.
+        const resumed = await resumePausedMatchesForAgent(p2.id);
+        expect(resumed).not.toContain(matchObj.id);
+        const row = await db.query.matches.findFirst({
+          where: eq(matches.id, matchObj.id),
+        });
+        expect(row!.status).toBe("paused");
+      });
+    });
+
+    it("3rd pause → opponent wins by time_forfeit (anti-grief floor)", async () => {
+      await withTestDb(async ({ db }) => {
+        currentDb = db;
+        const { agent: p1 } = await seedOwnerAgent(db, { handle: "g_p1" });
+        const { agent: p2 } = await seedOwnerAgent(db, { handle: "g_p2" });
+        const created = await postChallenge({
+          gameType: "tic-tac-toe",
+          initiatorAgentId: p1.id,
+          mode: "free",
+        });
+        if (created.kind !== "challenge") throw new Error("expected challenge");
+        const matchObj = await acceptChallenge({
+          challengeId: created.challenge.id,
+          acceptorAgentId: p2.id,
+        });
+
+        // Manually set pause_count = 3 (already at the cap) and
+        // expire the clock. The next clock-out should finalize as
+        // time_forfeit (opponent wins) NOT add a 4th pause.
+        await db
+          .update(matches)
+          .set({
+            moveCount: 5,
+            pauseCount: 3,
+            turnStartedAt: new Date(Date.now() - 999_999),
+            agentReadyAt: new Date(Date.now() - 999_999),
+          })
+          .where(eq(matches.id, matchObj.id));
+        const result = await enforceClockExpiry(matchObj.id);
+        expect(result).not.toBeNull();
+        expect(result!.status).toBe("completed");
+        expect(result!.resultReason).toBe("time_forfeit");
+        // currentTurnPlayerId='0' (p1) timed out → p2 wins.
+        expect(result!.winnerAgentId).toBe(p2.id);
       });
     });
   });

@@ -9,19 +9,40 @@
  * dependency explicit and avoids importing the whole match-flow surface.
  */
 import "server-only";
-import { and, asc, eq, sql as dsql } from "drizzle-orm";
+import { and, asc, eq, isNull, sql as dsql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { matches, type Match } from "@/lib/db/schema";
 import { getAdapter } from "@/lib/game/registry";
-import { clockExpired, FIRST_MOVE_TIMEOUT_MS } from "@/lib/game/lifecycle";
+import {
+  clockExpired,
+  FIRST_MOVE_TIMEOUT_MS,
+  PAUSE_COUNT_MAX,
+} from "@/lib/game/lifecycle";
 import { finalizeMatch } from "./finalize";
+import { broadcastGame, broadcastAgent, realtimeEvent } from "@/lib/realtime";
+import { isTournamentMatch, pauseMatchOnClockOut } from "./pause";
 
 /**
  * Called by /api/cron/timeout-games for each match returned by
  * findStaleMatches. Re-checks expiry against the canonical
- * clockBudgetMs read from the row (the cron's SQL prefilter uses
- * p1MsLeft/p2MsLeft which mirrors clockBudgetMs in the per-move world).
- * On confirmed expiry, forfeits the current player.
+ * clockBudgetMs read from the row, then routes to one of three
+ * outcomes depending on context:
+ *
+ *   - moveCount === 0 → `abandoned` (no game to win; both sides
+ *     refunded; no ELO change). Move-0 fairness gate, untouched.
+ *
+ *   - Tournament match → `time_forfeit` (bracket timing constraint).
+ *
+ *   - pauseCount has hit `PAUSE_COUNT_MAX` already → `time_forfeit`
+ *     by the OPPONENT. This is the anti-grief floor: an agent can't
+ *     keep timing out + auto-resuming forever on the same match.
+ *
+ *   - Otherwise (regular non-tournament, real-play, under the pause
+ *     limit) → PAUSE. Match holds its position; stake stays locked;
+ *     the agent's owner reconnects (any MCP client, any time within
+ *     PAUSED_MAX_DURATION_MS) and any MCP call auto-resumes the
+ *     match. This is the fundamental fix for LLM-session death — see
+ *     `flow/pause.ts` for the architecture comment.
  */
 export async function enforceClockExpiry(matchId: string): Promise<Match | null> {
   const match = await db.query.matches.findFirst({ where: eq(matches.id, matchId) });
@@ -51,8 +72,9 @@ export async function enforceClockExpiry(matchId: string): Promise<Match | null>
   // because the opponent never invested a move either — there's no
   // game to win or lose. Treat it as `abandoned`: refund both sides,
   // no ELO change. finalizeMatch already handles this branch like
-  // a draw on the payout side. Move 1+ continues to time-forfeit so
-  // the chess-clock discipline survives once real play is underway.
+  // a draw on the payout side. Move 1+ continues to the
+  // pause-or-forfeit branch so the chess-clock discipline (or the
+  // pause-on-timeout substitute) applies once real play is underway.
   if (match.moveCount === 0) {
     return finalizeMatch({
       matchId: match.id,
@@ -62,13 +84,79 @@ export async function enforceClockExpiry(matchId: string): Promise<Match | null>
       finalP2Ms: perMoveMs,
     });
   }
-  // Current player ran the per-move clock to zero → forfeit; the
-  // OTHER player wins. For system-mode matches where p2AgentId IS
-  // null (system bot has no agent row), winnerAgentId stays null and
-  // the result_reason='time_forfeit' is the signal that the bot won.
-  // The match view's classifyOutcome helper resolves that pattern to
-  // a `bot-won` outcome — DO NOT change the data shape to invent a
-  // sentinel "system bot" UUID; the null is canonical.
+
+  // Tournament-match branch: bracket timing constraints mean we
+  // can't tolerate indefinite pauses. Keep historic time_forfeit
+  // behavior.
+  const isTournament = await isTournamentMatch(match.id);
+  if (isTournament) {
+    return finalizeForfeitNow(match, perMoveMs);
+  }
+
+  // Anti-grief: this side has already hit the pause cap. Convert this
+  // expiry directly to a forfeit so a stalling operator can't keep
+  // looping (close session → auto-pause → reopen → another move
+  // window → close again, indefinitely).
+  if (match.pauseCount >= PAUSE_COUNT_MAX) {
+    return finalizeForfeitNow(match, perMoveMs);
+  }
+
+  // The fundamental fix: pause instead of forfeit. Stake stays locked;
+  // match holds position. When the agent's owner reconnects any MCP
+  // client and the agent calls any tool, the dispatcher auto-resumes.
+  const paused = await db.transaction(async (tx) => {
+    // Re-acquire under FOR UPDATE in case another writer touched the row.
+    const [locked] = await tx
+      .select()
+      .from(matches)
+      .where(eq(matches.id, match.id))
+      .for("update")
+      .limit(1);
+    if (!locked || locked.status !== "active") return null;
+    return pauseMatchOnClockOut(tx, locked);
+  });
+
+  // Post-tx broadcasts. Best-effort — DB state is authoritative.
+  if (paused) {
+    const broadcastPayload = {
+      matchId: paused.id,
+      pausedPlayerId: paused.pausedPlayerId,
+      pauseCount: paused.pauseCount,
+      pausedAt: paused.pausedAt?.toISOString() ?? null,
+    };
+    try {
+      await broadcastGame(paused.id, realtimeEvent.MatchPaused, broadcastPayload);
+    } catch {
+      // best-effort
+    }
+    // Notify the paused agent's owner via the agent channel so any
+    // long-poll they have running wakes immediately. This is layer 1
+    // of the recovery flow: even if the owner missed the broadcast
+    // in real time, the next MCP contact auto-resumes via the
+    // dispatcher.
+    const pausedAgentId =
+      paused.pausedPlayerId === "0" ? paused.p1AgentId : paused.p2AgentId;
+    if (pausedAgentId) {
+      try {
+        await broadcastAgent(pausedAgentId, realtimeEvent.MatchPaused, broadcastPayload);
+      } catch {
+        // best-effort
+      }
+    }
+  }
+  return paused;
+}
+
+/**
+ * Helper: finalize as time_forfeit. Used by the tournament-match
+ * branch AND by the pause-cap exceeded branch. Kept inline (vs in
+ * finalize.ts) because the only callers are clock-expiry paths.
+ */
+function finalizeForfeitNow(match: Match, perMoveMs: number) {
+  // System-mode matches where p2AgentId IS NULL: winnerAgentId stays
+  // null and the result_reason='time_forfeit' is the signal that the
+  // bot won. The match view's classifyOutcome helper resolves that
+  // pattern to a `bot-won` outcome.
   const winnerAgentId =
     match.currentTurnPlayerId === "0" ? match.p2AgentId : match.p1AgentId;
   return finalizeMatch({

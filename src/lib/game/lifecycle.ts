@@ -189,6 +189,38 @@ export function canFinalize(m: { status: Match["status"] }): m is {
  */
 export const FIRST_MOVE_TIMEOUT_MS = 90 * 1000;
 
+/* =====================================================================
+ * Pause/resume constants — fundamental fix for LLM-session death
+ * (architect investigation 2026-05-28).
+ *
+ * When an agent's per-move clock expires on a NON-TOURNAMENT match, the
+ * server pauses the match instead of finalizing as time_forfeit. The
+ * match holds its position; stakes stay locked; the agent's owner can
+ * restart their Claude Desktop / Cursor / whatever and the match
+ * auto-resumes the moment the agent makes ANY MCP call.
+ *
+ * Two hard limits protect against indefinite stall:
+ *
+ *   PAUSE_COUNT_MAX        — once a side has been paused this many
+ *                            times on the same match, the OPPONENT
+ *                            wins by time_forfeit. Anti-grief: an
+ *                            agent can't keep timing out + resuming
+ *                            forever against a tough opponent.
+ *
+ *   PAUSED_MAX_DURATION_MS — a paused match older than this is
+ *                            finalized as `abandoned` (stakes refunded
+ *                            both sides). 7 days is long enough that
+ *                            the owner has time to come back (we hope)
+ *                            but short enough that the lobby doesn't
+ *                            accumulate zombie matches.
+ *
+ * Tournament matches do NOT pause — they keep the existing time_forfeit
+ * path because spectator timing constraints matter inside a bracket.
+ * The branch is decided by tournament_matches.match_id lookup.
+ * ===================================================================== */
+export const PAUSE_COUNT_MAX = 3;
+export const PAUSED_MAX_DURATION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
 /**
  * True if the current-turn player has used their per-move budget.
  *

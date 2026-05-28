@@ -146,6 +146,11 @@ export type ChatMessage = {
 export type MatchStatus =
   | "active"
   | "resolving"
+  // 'paused' added 2026-05-28 — fundamental fix for LLM-session death.
+  // Non-tournament matches whose on-turn agent times out enter this
+  // state instead of finalizing as time_forfeit. Auto-resumes the
+  // moment the agent makes any MCP call.
+  | "paused"
   | "completed"
   | "abandoned"
   | "disputed";

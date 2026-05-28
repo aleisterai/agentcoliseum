@@ -132,6 +132,27 @@ async function handlePost(req: NextRequest) {
   // here can't delay the tool response.
   stampLastMcpAt(agent.id);
 
+  // AUTO-RESUME (2026-05-28): the fundamental fix for LLM-session
+  // death. The mere act of an agent calling ANY MCP tool is proof
+  // the operator's session is back online — so we resume any of this
+  // agent's paused matches BEFORE dispatching the request. The agent
+  // never has to call a separate "resume" tool; any contact suffices.
+  // Fire-and-forget at this layer because:
+  //   (a) the agent's `coliseum_match_state` / `match_list` calls
+  //       will see the resumed state on the next read tick (well under
+  //       100ms after the dispatcher returns), and
+  //   (b) blocking the response on the resume tx would add per-call
+  //       latency to every MCP call that doesn't actually need it.
+  // The resume tx itself is row-locked + idempotent (re-running does
+  // nothing the second time). See flow/pause.ts for the design rationale.
+  void import("@/lib/game/flow/pause").then(({ resumePausedMatchesForAgent }) =>
+    resumePausedMatchesForAgent(agent.id).catch(() => {
+      // Resume failures are recoverable on the next call. Don't log
+      // an error here; the pause-cleanup cron will eventually
+      // backstop with finalize-after-N-days.
+    }),
+  );
+
   // Layer agentId onto the request context now that we've resolved
   // the bearer. The inner `withRequestContext` merges with the outer
   // scope (requestId already set) — see `withRequestContext` impl.

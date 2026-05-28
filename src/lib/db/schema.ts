@@ -27,6 +27,7 @@ import {
   uuid,
   text,
   integer,
+  bigint,
   real,
   timestamp,
   jsonb,
@@ -89,9 +90,30 @@ export const challengeStatusEnum = pgEnum("challenge_status", [
 export const matchStatusEnum = pgEnum("match_status", [
   "active",
   "resolving",
+  // 'paused' added in migration 0011 — fundamental fix for LLM-session
+  // death (architect investigation 2026-05-28). Non-tournament matches
+  // whose on-turn agent times out transition to 'paused' instead of
+  // finalizing as time_forfeit. Owner restarts session, calls
+  // coliseum_match_resume to put the match back to 'active' with a
+  // fresh clock. Stake stays locked across pauses. Limits enforced by
+  // the pause-cleanup cron (PAUSE_COUNT_MAX, PAUSED_MAX_MS).
+  "paused",
   "completed",
   "abandoned",
   "disputed",
+]);
+
+// Why an agent's clock expired into a `paused` state. Set on the
+// matches row alongside `paused_at` / `paused_player_id`. The
+// reason gates how the pause-cleanup cron handles the row:
+//   idle_timeout    — automatic, the agent stopped responding
+//   operator_pause  — owner intentionally pulled their agent off the
+//                     board (e.g. for a config change). Same recovery
+//                     path; just doesn't count toward the auto-forfeit
+//                     pause-count limit.
+export const pauseReasonEnum = pgEnum("pause_reason", [
+  "idle_timeout",
+  "operator_pause",
 ]);
 export const resultReasonEnum = pgEnum("result_reason", [
   "natural",
@@ -459,6 +481,35 @@ export const matches = pgTable(
     //
     // Default 0 so existing rows are valid; first event sets to 1.
     lastEventSeq: integer("last_event_seq").default(0).notNull(),
+
+    /* ===== Pause/resume (migration 0011, 2026-05-28) ====================
+     *
+     * Non-tournament clock expiry transitions a match to status='paused'
+     * instead of finalizing as time_forfeit. The columns below carry the
+     * state needed by the resume MCP tool + pause-cleanup cron:
+     *
+     *   pausedAt          when the clock-out triggered the pause
+     *   pausedReason      'idle_timeout' (cron) | 'operator_pause' (owner)
+     *   pausedPlayerId    which side ran out of time (whose turn it was)
+     *   pauseCount        how many times this match has been paused; the
+     *                     pause-cleanup cron force-finalizes as
+     *                     time_forfeit (opponent wins) once this hits 3
+     *   totalPausedMs     cumulative time spent in paused state across
+     *                     the match's lifetime. Surfaced on /live for
+     *                     transparency and used by the
+     *                     "paused too long" check (> 7 days → abandoned).
+     *
+     * Tournament matches keep the existing time_forfeit behavior — they
+     * have spectator-timing constraints. The pause path branches on the
+     * presence of `tournamentMatchId`.
+     */
+    pausedAt: timestamp("paused_at", { withTimezone: true }),
+    pausedReason: pauseReasonEnum("paused_reason"),
+    pausedPlayerId: playerIdEnum("paused_player_id"),
+    pauseCount: integer("pause_count").default(0).notNull(),
+    totalPausedMs: bigint("total_paused_ms", { mode: "number" })
+      .default(0)
+      .notNull(),
   },
   (table) => [
     index("matches_status_idx").on(table.status),

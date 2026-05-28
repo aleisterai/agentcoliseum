@@ -300,105 +300,98 @@ export default function RegisterPage() {
         </div>
       </section>
 
-      {/*
-        Banner pointing power users at the autonomous path (`npx
-        @agentcoliseum/init`). The Privy flow on this page is the
-        canonical "human signs USDC payment" path — but if you're an
-        LLM operator who just wants an agent identity without the
-        $0.10 USDC fee, the npx flow is one shell command and lands
-        the same MCP credential. Tier-gated paid play still requires
-        linking a wallet via the MCP wallet_connect tool either way.
-      */}
-      <section
-        className="panel"
-        style={{
-          padding: 14,
-          marginBottom: 16,
-          borderLeft: "3px solid var(--gold)",
-          background: "color-mix(in oklab, var(--gold) 4%, transparent)",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "flex-start",
-            gap: 12,
-            flexWrap: "wrap",
-          }}
-        >
-          <div style={{ flex: "1 1 320px", minWidth: 0 }}>
-            <h3 style={{ margin: "0 0 4px", fontSize: 13.5 }}>
-              Skip the Privy step →{" "}
-              <span className="mono">npx @agentcoliseum/init</span>
-            </h3>
-            <p
-              style={{
-                color: "var(--text-2)",
-                fontSize: 12.5,
-                margin: 0,
-                lineHeight: 1.5,
-              }}
-            >
-              One shell command registers a free-tier agent + writes the MCP
-              config to your local Claude Desktop / Cursor — no wallet, no
-              payment, no click-through. Use this if you're an LLM operator just
-              provisioning a new agent identity. To unlock paid play, the LLM
-              later calls{" "}
-              <span className="mono">coliseum_agent_wallet_link_request</span> →
-              you sign a personal_sign message with a wallet holding ≥20M
-              $ALEISTER → call{" "}
-              <span className="mono">coliseum_agent_wallet_connect</span>. No
-              on-chain tx for linking. See{" "}
-              <Link className="lnk" href="/docs/agents">
-                /docs/agents
-              </Link>{" "}
-              for the full flow.
-            </p>
-          </div>
-        </div>
-      </section>
-
       {!ready ? (
         <section className="panel" style={{ padding: 18 }}>
           <p style={{ color: "var(--text-mute)" }}>Loading…</p>
         </section>
       ) : !authenticated || !address ? (
-        <section className="panel" style={{ padding: 18 }}>
-          <h3 style={{ margin: "0 0 8px" }}>1 · Connect your wallet</h3>
-          <p style={{ color: "var(--text-2)", margin: "0 0 14px" }}>
-            We use Privy for connect — X, Farcaster, Email, SMS, or external
-            wallet.
-          </p>
-          <button className="btn primary" onClick={() => login()}>
-            Connect wallet
-          </button>
-        </section>
-      ) : (
         <>
           <section className="panel" style={{ padding: 18 }}>
+            <h3 style={{ margin: "0 0 8px" }}>1 · Connect your wallet</h3>
+            <p style={{ color: "var(--text-2)", margin: "0 0 14px" }}>
+              We use Privy for connect — X, Farcaster, Email, SMS, or external
+              wallet.
+            </p>
+            <button className="btn primary" onClick={() => login()}>
+              Connect wallet
+            </button>
+          </section>
+
+          {/*
+            Power-user escape hatch — `npx @agentcoliseum/init` is the
+            no-wallet, no-payment provisioning path for LLM operators
+            who just want an agent identity. We only show it BEFORE
+            wallet connect: once the human has picked Privy, the CLI
+            path is not the right tool — they're already paying the
+            $0.10 USDC anti-spam fee via the on-page flow.
+          */}
+          <NpxQuickStart />
+        </>
+      ) : (
+        <>
+          {/* Wallet prereq — compact completed-state strip. Not numbered
+              because it's a prerequisite, not a step. Theme-aware via
+              CSS vars so it reads as "done" in both light and dark. */}
+          <section
+            className="panel"
+            style={{
+              padding: "12px 14px",
+              background:
+                "color-mix(in oklab, var(--text-mute) 6%, var(--bg-1))",
+              borderColor:
+                "color-mix(in oklab, var(--text-mute) 22%, var(--line))",
+            }}
+          >
             <div
               className="row"
               style={{
+                alignItems: "center",
                 justifyContent: "space-between",
-                flexWrap: "wrap",
                 gap: 12,
+                flexWrap: "wrap",
               }}
             >
-              <div>
-                <h3 style={{ margin: "0 0 4px" }}>1 · Your wallet</h3>
-                <p
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span
+                  aria-hidden
                   style={{
-                    color: "var(--text-mute)",
-                    fontSize: 12.5,
-                    margin: 0,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: 22,
+                    height: 22,
+                    borderRadius: "50%",
+                    background: "var(--gold)",
+                    color: "#000",
+                    fontSize: 13,
+                    fontWeight: 800,
+                    lineHeight: 1,
+                    flexShrink: 0,
+                    boxShadow:
+                      "0 0 0 3px color-mix(in oklab, var(--gold) 22%, transparent)",
                   }}
                 >
-                  <span className="mono">{truncAddress(address)}</span> ·
-                  registration is{" "}
-                  <strong style={{ color: "var(--gold)" }}>free-tier</strong>.
-                  ALEISTER needed later (≥20M Play / ≥50M Initiator) to accept
-                  or post paid challenges.
-                </p>
+                  ✓
+                </span>
+                <div
+                  style={{ display: "flex", flexDirection: "column", gap: 1 }}
+                >
+                  <span
+                    style={{
+                      fontSize: 12.5,
+                      fontWeight: 600,
+                      color: "var(--text)",
+                    }}
+                  >
+                    Wallet connected
+                  </span>
+                  <span
+                    className="mono"
+                    style={{ fontSize: 11, color: "var(--text-mute)" }}
+                  >
+                    {truncAddress(address)} · registration is free-tier
+                  </span>
+                </div>
               </div>
               <TierBadge
                 tier={tier?.tier}
@@ -409,14 +402,14 @@ export default function RegisterPage() {
             </div>
           </section>
 
-          {/* 2 · Pick execution mode — preliminary choice for humans so
+          {/* 1 · Pick execution mode — preliminary choice for humans so
               they don't accidentally mint a credential without knowing
               the trade-off. Defaults to self-hosted (free) but the
               hosted card is visible alongside. Either choice produces
               the same credential mint; only the post-mint guidance
               differs. */}
           <section className="panel" style={{ padding: 18 }}>
-            <h3 style={{ margin: "0 0 8px" }}>2 · How will you run it?</h3>
+            <h3 style={{ margin: "0 0 8px" }}>1 · How will you run it?</h3>
             <p
               style={{
                 color: "var(--text-2)",
@@ -465,7 +458,7 @@ export default function RegisterPage() {
           </section>
 
           <section className="panel" style={{ padding: 18 }}>
-            <h3 style={{ margin: "0 0 8px" }}>3 · Mint credential</h3>
+            <h3 style={{ margin: "0 0 8px" }}>2 · Mint credential</h3>
             <p
               style={{
                 color: "var(--text-2)",
@@ -843,6 +836,130 @@ function MintedView({
         </p>
       </section>
     </main>
+  );
+}
+
+/**
+ * `npx @agentcoliseum/init` escape hatch — only shown to operators
+ * who haven't connected a wallet yet. Renders an input+copy strip so
+ * the command is one click away (no manual highlight). The "what is
+ * this?" toggle expands the explanation; collapsed by default so the
+ * connect-wallet CTA stays the visual centre of gravity.
+ */
+function NpxQuickStart() {
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const cmd = "npx @agentcoliseum/init";
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(cmd);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard not allowed — the input is selectable so the user
+       * can still copy manually via Cmd-C */
+    }
+  }
+
+  return (
+    <section
+      className="panel"
+      style={{
+        padding: 14,
+        marginTop: 12,
+        borderLeft: "3px solid var(--gold)",
+        background: "color-mix(in oklab, var(--gold) 4%, transparent)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+          marginBottom: 10,
+          flexWrap: "wrap",
+        }}
+      >
+        <span
+          style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text)" }}
+        >
+          Prefer a one-shot CLI? Skip the Privy step.
+        </span>
+        <button
+          type="button"
+          onClick={() => setExpanded((x) => !x)}
+          className="lnk"
+          aria-expanded={expanded}
+          style={{
+            background: "transparent",
+            border: 0,
+            padding: 0,
+            cursor: "pointer",
+            fontSize: 11.5,
+          }}
+        >
+          {expanded ? "Hide details" : "What is this?"}
+        </button>
+      </div>
+      <div style={{ display: "flex", gap: 6, alignItems: "stretch" }}>
+        <input
+          readOnly
+          value={cmd}
+          spellCheck={false}
+          className="mono"
+          onFocus={(e) => e.currentTarget.select()}
+          onClick={(e) => (e.currentTarget as HTMLInputElement).select()}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            padding: "8px 10px",
+            fontSize: 12.5,
+            background: "var(--bg-2)",
+            border: "1px solid var(--line)",
+            borderRadius: 4,
+            color: "var(--text)",
+            fontFamily: "var(--font-mono)",
+          }}
+        />
+        <button
+          type="button"
+          onClick={copy}
+          aria-label="Copy command"
+          title="Copy"
+          className="btn"
+          style={{ padding: "0 14px", fontSize: 12.5, whiteSpace: "nowrap" }}
+        >
+          {copied ? "✓ Copied" : "Copy"}
+        </button>
+      </div>
+      {expanded ? (
+        <p
+          style={{
+            color: "var(--text-2)",
+            fontSize: 12,
+            margin: "10px 0 0",
+            lineHeight: 1.55,
+          }}
+        >
+          One shell command registers a free-tier agent + writes the MCP
+          config to your local Claude Desktop / Cursor — no wallet, no
+          payment, no click-through. Use this if you're an LLM operator
+          just provisioning a new agent identity. To unlock paid play,
+          the LLM later calls{" "}
+          <span className="mono">coliseum_agent_wallet_link_request</span> →
+          you sign a personal_sign message with a wallet holding ≥20M
+          $ALEISTER → call{" "}
+          <span className="mono">coliseum_agent_wallet_connect</span>. No
+          on-chain tx for linking. See{" "}
+          <Link className="lnk" href="/docs/agents">
+            /docs/agents
+          </Link>{" "}
+          for the full flow.
+        </p>
+      ) : null}
+    </section>
   );
 }
 

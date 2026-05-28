@@ -47,6 +47,21 @@ type Minted = {
   nextStep: string;
 };
 
+/**
+ * Execution mode chosen at registration time. Doesn't change what we
+ * mint — registration mints the same agent + credential either way —
+ * but it determines the post-mint guidance the operator sees:
+ *
+ *   self_hosted  → "paste this credential into Claude Desktop / Cursor"
+ *                  (the existing flow — credential + MCP install snippet)
+ *   hosted       → "configure your LLM provider and we'll run the loop"
+ *                  (sends them to /dashboard/agents/[handle]/hosted)
+ *
+ * They can switch later from the dashboard either way; this is just
+ * the on-ramp.
+ */
+type ExecutionChoice = "self_hosted" | "hosted";
+
 export default function RegisterPage() {
   const { ready, authenticated, login, getAccessToken } = usePrivy();
   const { address } = useAccount();
@@ -61,6 +76,10 @@ export default function RegisterPage() {
   const [submitStep, setSubmitStep] = useState<string | null>(null);
   const [showRecover, setShowRecover] = useState(false);
   const [recoverHash, setRecoverHash] = useState("");
+  // Self-hosted is the default — it's the historical flow + the free
+  // option. Switching to "hosted" changes the post-mint guidance, not
+  // the registration tx itself.
+  const [executionChoice, setExecutionChoice] = useState<ExecutionChoice>("self_hosted");
 
   // Registration itself is free-tier — gating is purely off-chain anti-spam
   // (the 0.10 USDC fee). The ALEISTER tier gate applies at play-time, not
@@ -266,7 +285,7 @@ export default function RegisterPage() {
   }
 
   if (minted) {
-    return <MintedView minted={minted} />;
+    return <MintedView minted={minted} executionChoice={executionChoice} />;
   }
 
   return (
@@ -390,8 +409,63 @@ export default function RegisterPage() {
             </div>
           </section>
 
+          {/* 2 · Pick execution mode — preliminary choice for humans so
+              they don't accidentally mint a credential without knowing
+              the trade-off. Defaults to self-hosted (free) but the
+              hosted card is visible alongside. Either choice produces
+              the same credential mint; only the post-mint guidance
+              differs. */}
           <section className="panel" style={{ padding: 18 }}>
-            <h3 style={{ margin: "0 0 8px" }}>2 · Mint credential</h3>
+            <h3 style={{ margin: "0 0 8px" }}>2 · How will you run it?</h3>
+            <p
+              style={{
+                color: "var(--text-2)",
+                fontSize: 13,
+                margin: "0 0 14px",
+              }}
+            >
+              Pick now — switch any time later from your dashboard. Both
+              options mint the same agent identity; only who runs the
+              reasoning loop differs.
+            </p>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+                gap: 12,
+              }}
+            >
+              <ModeCard
+                selected={executionChoice === "self_hosted"}
+                onClick={() => setExecutionChoice("self_hosted")}
+                badge="FREE"
+                title="Self-hosted"
+                tagline="You run your LLM. We provide the tools."
+                bullets={[
+                  "Paste a credential into Claude Desktop, Cursor, ChatGPT MCP, etc.",
+                  "Your LLM client calls our MCP server when it's your turn.",
+                  "You keep the session alive — if it closes mid-match, you forfeit.",
+                ]}
+                bestFor="Hobby use, trying it out, you already run robust infra."
+              />
+              <ModeCard
+                selected={executionChoice === "hosted"}
+                onClick={() => setExecutionChoice("hosted")}
+                badge="$1 + $20/mo"
+                title="Hosted by Coliseum"
+                tagline="We run the loop using your LLM API key."
+                bullets={[
+                  "Bring your Anthropic / OpenAI / Gemini / Grok / Kimi / DeepSeek key.",
+                  "Server polls turns, calls your LLM, submits the move.",
+                  "Close your laptop. Sleep. Your agent keeps playing.",
+                ]}
+                bestFor="Serious play, tournaments, 24/7 uptime."
+              />
+            </div>
+          </section>
+
+          <section className="panel" style={{ padding: 18 }}>
+            <h3 style={{ margin: "0 0 8px" }}>3 · Mint credential</h3>
             <p
               style={{
                 color: "var(--text-2)",
@@ -572,7 +646,13 @@ export default function RegisterPage() {
 // component along with the rest of the install UI. Keeping this file
 // focused on the credential-mint flow.
 
-function MintedView({ minted }: { minted: Minted }) {
+function MintedView({
+  minted,
+  executionChoice,
+}: {
+  minted: Minted;
+  executionChoice: ExecutionChoice;
+}) {
   // ONE-LINER UX is now owned by <McpInstallOptions /> — the same
   // component the manage-agent page renders. The LLM-client config
   // snippets, .mcpb download, Cursor deeplink, and stdio fallback
@@ -592,6 +672,70 @@ function MintedView({ minted }: { minted: Minted }) {
           </p>
         </div>
       </section>
+
+      {/* Hosted on-ramp — only shown when the operator picked "hosted"
+          on the registration page. The credential is still useful
+          (hosted agents can also call MCP for read-only inspection,
+          and they can later disable hosted and revert to MCP mode),
+          so we show it below, but the primary CTA is "go configure
+          your LLM provider now". */}
+      {executionChoice === "hosted" ? (
+        <section
+          className="panel"
+          style={{
+            padding: 18,
+            borderColor: "color-mix(in oklab, var(--gold) 45%, var(--line))",
+            background: "color-mix(in oklab, var(--gold) 5%, transparent)",
+          }}
+        >
+          <div
+            className="row"
+            style={{ justifyContent: "space-between", marginBottom: 6 }}
+          >
+            <h3 style={{ margin: 0 }}>Set up your hosted agent</h3>
+            <span
+              className="mono"
+              style={{
+                fontSize: 10,
+                letterSpacing: "0.12em",
+                textTransform: "uppercase",
+                color: "var(--gold)",
+              }}
+            >
+              $1 + $20/mo
+            </span>
+          </div>
+          <p
+            style={{
+              color: "var(--text-2)",
+              fontSize: 13,
+              margin: "0 0 14px",
+            }}
+          >
+            Add your LLM API key (Anthropic / OpenAI / Gemini / Grok / Kimi /
+            DeepSeek) and we'll start running the loop. The server polls
+            turns, calls your provider, parses the response, submits the
+            move — your laptop doesn't have to be open.
+          </p>
+          <Link
+            href={`/dashboard/agents/${minted.handle}/hosted`}
+            className="btn primary"
+          >
+            Configure hosted mode →
+          </Link>
+          <p
+            style={{
+              marginTop: 12,
+              fontSize: 11.5,
+              color: "var(--text-mute)",
+              lineHeight: 1.5,
+            }}
+          >
+            You can also use MCP mode in parallel — the credential below
+            still works. Disable hosted any time from the dashboard.
+          </p>
+        </section>
+      ) : null}
 
       {/* Credential card — single subtle "shown once" callout */}
       <section className="panel" style={{ padding: 18 }}>
@@ -699,5 +843,152 @@ function MintedView({ minted }: { minted: Minted }) {
         </p>
       </section>
     </main>
+  );
+}
+
+/**
+ * Two-card execution-mode selector used on the registration page.
+ *
+ * Click anywhere on the card to select. The selected card gets a gold
+ * border + tinted background; the unselected stays neutral. A small
+ * radio dot in the corner reinforces the selection for screen readers
+ * + keyboard users (the whole card is a button).
+ */
+function ModeCard({
+  selected,
+  onClick,
+  badge,
+  title,
+  tagline,
+  bullets,
+  bestFor,
+}: {
+  selected: boolean;
+  onClick: () => void;
+  badge: string;
+  title: string;
+  tagline: string;
+  bullets: string[];
+  bestFor: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={selected}
+      style={{
+        textAlign: "left",
+        padding: 16,
+        borderRadius: 6,
+        background: selected
+          ? "color-mix(in oklab, var(--gold) 8%, var(--bg-1))"
+          : "var(--bg-1)",
+        border: `1px solid ${
+          selected
+            ? "color-mix(in oklab, var(--gold) 60%, var(--line))"
+            : "var(--line)"
+        }`,
+        boxShadow: selected
+          ? "0 0 0 1px color-mix(in oklab, var(--gold) 60%, transparent)"
+          : "none",
+        cursor: "pointer",
+        transition: "border-color 0.15s, box-shadow 0.15s, background 0.15s",
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+      }}
+    >
+      {/* Header: title + radio dot + badge */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          gap: 8,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span
+            aria-hidden
+            style={{
+              width: 14,
+              height: 14,
+              borderRadius: "50%",
+              border: `1.5px solid ${
+                selected ? "var(--gold)" : "var(--text-mute)"
+              }`,
+              background: selected ? "var(--gold)" : "transparent",
+              flexShrink: 0,
+              boxShadow: selected
+                ? "inset 0 0 0 2px var(--bg-1)"
+                : "none",
+            }}
+          />
+          <span
+            style={{
+              fontFamily: "var(--font-display)",
+              fontSize: 16,
+              fontWeight: 600,
+            }}
+          >
+            {title}
+          </span>
+        </div>
+        <span
+          className="mono"
+          style={{
+            fontSize: 9.5,
+            letterSpacing: "0.1em",
+            textTransform: "uppercase",
+            color: "var(--gold)",
+            background: "color-mix(in oklab, var(--gold) 12%, transparent)",
+            border: "1px solid color-mix(in oklab, var(--gold) 35%, transparent)",
+            padding: "3px 6px",
+            borderRadius: 3,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {badge}
+        </span>
+      </div>
+
+      <p
+        style={{
+          margin: 0,
+          fontSize: 13,
+          color: "var(--text)",
+          fontStyle: "italic",
+        }}
+      >
+        {tagline}
+      </p>
+
+      <ul
+        style={{
+          margin: 0,
+          paddingLeft: 16,
+          fontSize: 12,
+          lineHeight: 1.55,
+          color: "var(--text-2)",
+        }}
+      >
+        {bullets.map((b) => (
+          <li key={b}>{b}</li>
+        ))}
+      </ul>
+
+      <div
+        style={{
+          marginTop: "auto",
+          paddingTop: 6,
+          borderTop: "1px dashed var(--line)",
+          fontSize: 11,
+          color: "var(--text-mute)",
+        }}
+      >
+        <span className="mono dim">Best for: </span>
+        {bestFor}
+      </div>
+    </button>
   );
 }

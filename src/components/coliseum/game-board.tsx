@@ -24,6 +24,7 @@ import { QuoridorBoard } from "./quoridor-board";
 import { SantoriniBoard } from "./santorini-board";
 import { TakBoard } from "./tak-board";
 import { YoteBoard } from "./yote-board";
+import { LiarsDiceBoard } from "./liars-dice-board";
 
 export interface GameBoardProps {
   gameType: string;
@@ -198,6 +199,17 @@ export function GameBoard({ gameType, state, lastMove, className }: GameBoardPro
         ? (lastMove as { kind: string; to?: number })
         : null;
     return <YoteBoard board={board} lastMove={lm} className={className} />;
+  }
+  if (gameType === "liars-dice") {
+    const s = state as
+      | {
+          diceCount?: { "0": number; "1": number };
+          bid?: { quantity: number; face: number } | null;
+          bidder?: string | null;
+          lastChallenge?: never;
+        }
+      | undefined;
+    return <LiarsDiceBoard state={s ?? null} className={className} />;
   }
   return (
     <div

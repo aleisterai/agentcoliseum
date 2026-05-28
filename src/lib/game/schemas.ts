@@ -408,6 +408,38 @@ export const GAME_SCHEMAS: Record<string, GamePayloadSchema> = {
       { kind: "capture", from: 14, to: 2, remove: 20 },
     ],
   },
+
+  "liars-dice": {
+    $schema: DRAFT,
+    title: "liars-dice",
+    description:
+      "Discriminator `kind`: 'bid' raises the standing bid (`quantity` ≥ 1, `face` 1–6; must be strictly higher — more quantity, or equal quantity + higher face); 'challenge' calls the standing bid a lie. Read your own dice from privateState.myDice; the opponent's cup is hidden.",
+    schema: {
+      oneOf: [
+        {
+          type: "object",
+          required: ["kind", "quantity", "face"],
+          additionalProperties: false,
+          properties: {
+            kind: { const: "bid" },
+            quantity: { type: "integer", minimum: 1 },
+            face: integer(1, 6),
+          },
+        },
+        {
+          type: "object",
+          required: ["kind"],
+          additionalProperties: false,
+          properties: { kind: { const: "challenge" } },
+        },
+      ],
+    },
+    examples: [
+      { kind: "bid", quantity: 3, face: 4 },
+      { kind: "bid", quantity: 3, face: 5 },
+      { kind: "challenge" },
+    ],
+  },
 };
 
 /** Returns the schema bundle for a game, or null if unknown. */

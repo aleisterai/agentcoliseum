@@ -9,11 +9,11 @@
  * dependency explicit and avoids importing the whole match-flow surface.
  */
 import "server-only";
-import { and, desc, eq, sql as dsql } from "drizzle-orm";
+import { and, asc, eq, sql as dsql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { matches, type Match } from "@/lib/db/schema";
 import { getAdapter } from "@/lib/game/registry";
-import { clockExpired } from "@/lib/game/lifecycle";
+import { clockExpired, FIRST_MOVE_TIMEOUT_MS } from "@/lib/game/lifecycle";
 import { finalizeMatch } from "./finalize";
 
 /**
@@ -81,11 +81,34 @@ export async function enforceClockExpiry(matchId: string): Promise<Match | null>
 }
 
 /**
- * SQL-level prefilter for the timeout-games cron. Returns active
- * matches whose `turn_started_at` is older than the per-move budget
- * stored in p1MsLeft/p2MsLeft (under the per-move model these mirror
- * clockBudgetMs and never decrement mid-game). Bounded to 50 rows so
- * a misconfigured cron can't take the whole API down.
+ * SQL-level prefilter for the match-tick cron. Returns active matches
+ * that have actually crossed some clock threshold. Two cases:
+ *
+ *   (1) Real per-move expiry — `move_count >= 1` (real play underway)
+ *       AND `turn_started_at + clock_budget_ms <= now()`. This is the
+ *       chess-clock discipline: the on-turn agent ran out of time.
+ *
+ *   (2) First-move stall — `move_count = 0 AND agent_ready_at IS NOT
+ *       NULL AND agent_ready_at + FIRST_MOVE_TIMEOUT_MS <= now()`. The
+ *       agent went ready but never played; tighter timeout than the
+ *       full per-move budget (architect P0-#136). This used to fall
+ *       under the regular per-move check, which meant up to 10 min of
+ *       "live but stuck" time for long-clock games like chess.
+ *
+ * Matches with `move_count = 0 AND agent_ready_at IS NULL` are NOT
+ * returned here — those are pre-ready "frozen" matches, swept by
+ * `refund-unready-matches` after 30 min instead. Excluding them at
+ * the SQL level fixes the under-forfeit bug (architect P1-#135):
+ * before this fix they'd return inside the 50-row batch and crowd
+ * out the actual expirations that needed action.
+ *
+ * Order: `turn_started_at ASC` (oldest first) so the most-overdue
+ * matches get attention before newer expirations. Combined with the
+ * exclusion above, this means a 50-row batch is now ~100% actionable
+ * — every row will either forfeit or abandon in `enforceClockExpiry`.
+ *
+ * Bounded to 50 rows so a misconfigured cron can't take the whole
+ * API down.
  */
 export async function findStaleMatches(): Promise<Match[]> {
   const rows = await db
@@ -94,13 +117,16 @@ export async function findStaleMatches(): Promise<Match[]> {
     .where(
       and(
         eq(matches.status, "active"),
-        dsql`extract(epoch from (now() - ${matches.turnStartedAt})) * 1000 >= case
-              when ${matches.currentTurnPlayerId} = '0' then ${matches.p1MsLeft}
-              else ${matches.p2MsLeft}
-            end`,
+        dsql`(
+          -- Case 1: per-move expiry on moves 1+ (real play).
+          (${matches.moveCount} >= 1 AND extract(epoch from (now() - ${matches.turnStartedAt})) * 1000 >= ${matches.clockBudgetMs})
+          OR
+          -- Case 2: first-move stall (agent went ready but never moved).
+          (${matches.moveCount} = 0 AND ${matches.agentReadyAt} IS NOT NULL AND extract(epoch from (now() - ${matches.turnStartedAt})) * 1000 >= ${FIRST_MOVE_TIMEOUT_MS})
+        )`,
       ),
     )
-    .orderBy(desc(matches.turnStartedAt))
+    .orderBy(asc(matches.turnStartedAt))
     .limit(50);
   return rows;
 }

@@ -4,6 +4,7 @@ import {
   msLeftThisMove,
   payoutSplit,
   eloUpdate,
+  FIRST_MOVE_TIMEOUT_MS,
 } from "./lifecycle";
 
 describe("payoutSplit", () => {
@@ -68,6 +69,93 @@ describe("clockExpired (per-move)", () => {
     const now = new Date(1_000_000 + 30_000);
     expect(clockExpired({ turnStartedAt, perMoveMs: 30_000, now })).toBe(true);
   });
+
+  describe("move-0 unready gate", () => {
+    // Pre-readiness frozen state: clock NEVER expires regardless of how
+    // much time has passed. The long-tail `refund-unready-matches` cron
+    // is the one that sweeps these (after 30 min).
+    it("never expires when moveCount=0 AND agentReadyAt is null, even at huge elapsed", () => {
+      const turnStartedAt = new Date(1_000_000);
+      const now = new Date(1_000_000 + 24 * 60 * 60 * 1000); // +24h
+      expect(
+        clockExpired({
+          turnStartedAt,
+          perMoveMs: 30_000,
+          now,
+          moveCount: 0,
+          agentReadyAt: null,
+        }),
+      ).toBe(false);
+    });
+  });
+
+  describe("move-0 ready first-move timeout (architect P0-#136 fix)", () => {
+    // When the agent has gone ready but stalled on move 0, we apply
+    // the TIGHTER FIRST_MOVE_TIMEOUT_MS budget (currently 90s) rather
+    // than the full per-move budget. Locks in that long-clock games
+    // (chess: 600s) don't sit "live but stuck" for 10 min.
+    it("returns false while sinceReady < FIRST_MOVE_TIMEOUT_MS", () => {
+      const turnStartedAt = new Date(1_000_000);
+      const now = new Date(1_000_000 + FIRST_MOVE_TIMEOUT_MS - 1);
+      expect(
+        clockExpired({
+          turnStartedAt,
+          perMoveMs: 600_000, // chess-length, deliberately >> first-move budget
+          now,
+          moveCount: 0,
+          agentReadyAt: turnStartedAt,
+        }),
+      ).toBe(false);
+    });
+
+    it("returns true once sinceReady >= FIRST_MOVE_TIMEOUT_MS", () => {
+      const turnStartedAt = new Date(1_000_000);
+      const now = new Date(1_000_000 + FIRST_MOVE_TIMEOUT_MS);
+      expect(
+        clockExpired({
+          turnStartedAt,
+          perMoveMs: 600_000,
+          now,
+          moveCount: 0,
+          agentReadyAt: turnStartedAt,
+        }),
+      ).toBe(true);
+    });
+
+    it("uses the tighter budget even when perMoveMs is small (no regression for short-clock games)", () => {
+      // tic-tac-toe-style 120s perMoveMs. The first-move budget is
+      // still smaller (90s), so behavior is unchanged for short games.
+      const turnStartedAt = new Date(1_000_000);
+      const now = new Date(1_000_000 + 100_000); // 100s
+      expect(
+        clockExpired({
+          turnStartedAt,
+          perMoveMs: 120_000,
+          now,
+          moveCount: 0,
+          agentReadyAt: turnStartedAt,
+        }),
+      ).toBe(true); // 100s > 90s, expired
+    });
+  });
+
+  describe("move-1+ falls back to perMoveMs (normal chess-clock)", () => {
+    it("uses perMoveMs once real play is underway, even with agentReadyAt set", () => {
+      const turnStartedAt = new Date(1_000_000);
+      const now = new Date(1_000_000 + 95_000); // 95s elapsed
+      // 95s > FIRST_MOVE_TIMEOUT_MS but < perMoveMs (600s).
+      // moveCount=1 → first-move budget DOES NOT apply.
+      expect(
+        clockExpired({
+          turnStartedAt,
+          perMoveMs: 600_000,
+          now,
+          moveCount: 1,
+          agentReadyAt: new Date(900_000),
+        }),
+      ).toBe(false);
+    });
+  });
 });
 
 describe("msLeftThisMove", () => {
@@ -81,6 +169,54 @@ describe("msLeftThisMove", () => {
     const turnStartedAt = new Date(1_000_000);
     const now = new Date(1_000_000 + 10_000);
     expect(msLeftThisMove({ turnStartedAt, perMoveMs: 30_000, now })).toBe(20_000);
+  });
+
+  describe("move-0 unready: full per-move budget", () => {
+    it("reports the FULL per-move budget while the clock is paused", () => {
+      const turnStartedAt = new Date(1_000_000);
+      const now = new Date(1_000_000 + 99_999_999);
+      expect(
+        msLeftThisMove({
+          turnStartedAt,
+          perMoveMs: 30_000,
+          now,
+          moveCount: 0,
+          agentReadyAt: null,
+        }),
+      ).toBe(30_000);
+    });
+  });
+
+  describe("move-0 ready: tighter first-move countdown", () => {
+    // After the agent reads state once, the spectator UI should show
+    // the FIRST_MOVE_TIMEOUT_MS countdown — not the full per-move
+    // budget. Honest deadline so users aren't surprised by the cron.
+    it("counts down from FIRST_MOVE_TIMEOUT_MS, not perMoveMs", () => {
+      const turnStartedAt = new Date(1_000_000);
+      const now = new Date(1_000_000 + 30_000); // 30s in
+      const ms = msLeftThisMove({
+        turnStartedAt,
+        perMoveMs: 600_000,
+        now,
+        moveCount: 0,
+        agentReadyAt: turnStartedAt,
+      });
+      // 90_000 - 30_000 = 60_000
+      expect(ms).toBe(FIRST_MOVE_TIMEOUT_MS - 30_000);
+    });
+
+    it("clamps to 0 once the first-move budget is gone", () => {
+      const turnStartedAt = new Date(1_000_000);
+      const now = new Date(1_000_000 + 999_999);
+      const ms = msLeftThisMove({
+        turnStartedAt,
+        perMoveMs: 600_000,
+        now,
+        moveCount: 0,
+        agentReadyAt: turnStartedAt,
+      });
+      expect(ms).toBe(0);
+    });
   });
 });
 

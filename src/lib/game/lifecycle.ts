@@ -169,6 +169,27 @@ export function canFinalize(m: { status: Match["status"] }): m is {
  */
 
 /**
+ * Hard cap for the FIRST move after an agent confirms readiness.
+ *
+ * Why a separate, shorter budget than `perMoveMs`: an agent who has
+ * already called `coliseum_match_state` (so we know its MCP is live
+ * and the user approved the tools) but then sits on move 0 for the
+ * full per-move budget (up to 600s for chess) is almost never
+ * "thinking deeply" — it's stuck, hung, or its operator walked away.
+ * Holding the lobby slot open for 10 minutes on those stalls hurt
+ * the visible "live games" count during the sim run that surfaced
+ * this bug (architect P0-#136: "40 live games at 0 moves").
+ *
+ * 90 seconds is generous enough to cover a slow first-token-latency
+ * LLM call (Claude/GPT median TTFT ~1s; p99 ~30s for a 240-token
+ * reasoning block) while still being short enough that the lobby
+ * doesn't fill up with abandoned matches. The full `perMoveMs`
+ * budget remains in effect for moves 1+ where the agent has already
+ * proven it's responsive.
+ */
+export const FIRST_MOVE_TIMEOUT_MS = 90 * 1000;
+
+/**
  * True if the current-turn player has used their per-move budget.
  *
  * Move-0 gate: a freshly-created match where `moveCount === 0` and
@@ -179,8 +200,15 @@ export function canFinalize(m: { status: Match["status"] }): m is {
  * how much wall time has elapsed since match creation; a separate
  * long-tail cron (`refund-unready-matches`) sweeps them after 30 min.
  *
- * From move 1+ this gate is moot — agentReadyAt is set, turnStartedAt
- * is authoritative, and the per-move budget applies normally.
+ * Move-0-ready short-circuit: when `moveCount === 0` AND
+ * `agentReadyAt` IS set, we use the shorter `FIRST_MOVE_TIMEOUT_MS`
+ * budget (currently 90s) instead of the full `perMoveMs`. See the
+ * doc comment on FIRST_MOVE_TIMEOUT_MS for the rationale. This is
+ * the move-0 stall fix for architect P0-#136.
+ *
+ * From move 1+ both gates are moot — agentReadyAt is set,
+ * turnStartedAt is authoritative, and the per-move budget applies
+ * normally.
  */
 export function clockExpired(args: {
   turnStartedAt: Date;
@@ -190,6 +218,14 @@ export function clockExpired(args: {
   agentReadyAt?: Date | null;
 }): boolean {
   if (args.moveCount === 0 && !args.agentReadyAt) return false;
+  // Move-0 stall: tighter timeout when the agent has gone ready but
+  // never played its opener. Measured from `turnStartedAt` (set by
+  // the first match_state call to the same `now` that stamped
+  // `agentReadyAt`) so the two timestamps are interchangeable.
+  if (args.moveCount === 0 && args.agentReadyAt) {
+    const sinceReady = args.now.getTime() - args.turnStartedAt.getTime();
+    return sinceReady >= FIRST_MOVE_TIMEOUT_MS;
+  }
   const elapsed = args.now.getTime() - args.turnStartedAt.getTime();
   return elapsed >= args.perMoveMs;
 }
@@ -212,6 +248,15 @@ export function msLeftThisMove(args: {
   agentReadyAt?: Date | null;
 }): number {
   if (args.moveCount === 0 && !args.agentReadyAt) return args.perMoveMs;
+  // Move-0 ready: tighter first-move budget. Keep the live ms-left
+  // honest so the spectator UI countdown matches when the cron will
+  // actually fire.
+  if (args.moveCount === 0 && args.agentReadyAt) {
+    return Math.max(
+      0,
+      FIRST_MOVE_TIMEOUT_MS - (args.now.getTime() - args.turnStartedAt.getTime()),
+    );
+  }
   return Math.max(0, args.perMoveMs - (args.now.getTime() - args.turnStartedAt.getTime()));
 }
 

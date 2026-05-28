@@ -20,6 +20,15 @@
  *                  'critical' (<10%) — quick categorical hint so the LLM
  *                  can short-circuit deep thinking when ms are tight.
  *
+ * **First-move timeout** (move 0 only): if `moveCount === 0` AND
+ * `agentReadyAt` is set (you've already called match_state once), the
+ * effective deadline is TIGHTER than clockBudgetMs — currently 90s
+ * regardless of game. The response's `myMsLeftLive`, `turnDeadline`,
+ * and `urgency` all use the 90s budget so you see the real deadline
+ * the cron will enforce. Plan your opener accordingly. This stops
+ * long-clock games (chess 600s) from holding lobby slots for 10 min
+ * when an agent goes ready but never plays.
+ *
  * Phase A added voice + structured-reasoning continuity:
  *
  *   myVoice          { voicePackId, catchphrase, winLine, lossLine,
@@ -51,6 +60,7 @@ import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db/client";
 import { agents, matches, matchChatMessages, matchMoves } from "@/lib/db/schema";
+import { FIRST_MOVE_TIMEOUT_MS } from "@/lib/game/lifecycle";
 import { SYSTEM_BOT_VOICE, voicePackById } from "@/lib/voice-packs";
 import type { ToolDef } from "./_types";
 
@@ -646,23 +656,35 @@ export const matchState: ToolDef = {
     // every game uses the same per-move clock model (see
     // src/lib/game/lifecycle.ts:clockExpired). Fixed in one place
     // applies to all 14 games.
+    //
+    // Move-0 nuance (architect P0-#136): when the agent has gone
+    // ready but hasn't played its opener, the active budget is the
+    // tighter FIRST_MOVE_TIMEOUT_MS (90s), not the full
+    // clockBudgetMs. Surface the SHORTER deadline so an LLM checking
+    // `turnDeadline` sees the truth — the cron is going to reap at
+    // 90s regardless of what clockBudgetMs says.
     const now = new Date();
     const isMyTurn = match.currentTurnAgentId === agent.id;
     const clockIsTickingOnSomeone = match.status === "active";
+    const isFirstMoveStanding =
+      match.moveCount === 0 && match.agentReadyAt != null;
+    const effectiveBudget = isFirstMoveStanding
+      ? FIRST_MOVE_TIMEOUT_MS
+      : match.clockBudgetMs;
     const elapsedThisTurn = Math.max(0, now.getTime() - match.turnStartedAt.getTime());
     const liveRemaining = clockIsTickingOnSomeone
-      ? Math.max(0, match.clockBudgetMs - elapsedThisTurn)
-      : match.clockBudgetMs;
-    const myMsLeftLive = isMyTurn ? liveRemaining : match.clockBudgetMs;
+      ? Math.max(0, effectiveBudget - elapsedThisTurn)
+      : effectiveBudget;
+    const myMsLeftLive = isMyTurn ? liveRemaining : effectiveBudget;
     const opponentMsLeftLive = !isMyTurn && clockIsTickingOnSomeone
       ? liveRemaining
-      : match.clockBudgetMs;
+      : effectiveBudget;
     const turnDeadline = clockIsTickingOnSomeone
-      ? new Date(match.turnStartedAt.getTime() + match.clockBudgetMs).toISOString()
+      ? new Date(match.turnStartedAt.getTime() + effectiveBudget).toISOString()
       : null;
     const urgency = computeUrgency(
       isMyTurn ? myMsLeftLive : opponentMsLeftLive,
-      match.clockBudgetMs,
+      effectiveBudget,
     );
 
     // Phase A++++: synthesize a top-of-response "what just happened
@@ -743,9 +765,20 @@ export const matchState: ToolDef = {
       turnDeadline,
       urgency,
       clockBudgetMs: match.clockBudgetMs,
+      // First-move timeout signal (architect P0-#136). When you're on
+      // move 0 with agentReadyAt set, the live ms-left, turnDeadline,
+      // and urgency above use the SHORTER `effectiveBudgetMs` — not
+      // clockBudgetMs. Surface both numbers + a boolean so the LLM
+      // can detect "I'm under the fast clock now" without inferring
+      // it from moveCount.
+      effectiveBudgetMs: effectiveBudget,
+      firstMoveTimeoutActive: isFirstMoveStanding,
+      firstMoveTimeoutMs: FIRST_MOVE_TIMEOUT_MS,
       // Explicit one-line rule so an agent sees it on every state
       // read — no hunting through docs to remember the model.
-      clockRule: "per-move wall-clock; resets on every move",
+      clockRule: isFirstMoveStanding
+        ? `move-0 first-move timeout: ${FIRST_MOVE_TIMEOUT_MS / 1000}s from agentReadyAt (NOT clockBudgetMs)`
+        : "per-move wall-clock; resets on every move",
       serverNow: now.toISOString(),
       myInvalidCount,
       isMyTurn,

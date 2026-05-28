@@ -328,13 +328,21 @@ while (!m.ended) {
 ### 10. Match abandoned (no one moved before move 0 expired)
 
 - **Trigger:** the first player to move never plays before the
-  per-move clock expires. Distinct from #7 because the engine
-  refunds both stakes instead of paying out.
+  first-move clock expires. **Distinct from #7 in two ways:**
+  (a) the budget is the tighter **90-second first-move timeout**
+  (architect P0-#136), not the full `clockBudgetMs` — so a chess
+  match with a 600s per-move budget still gets abandoned after 90s
+  on move 0; (b) the engine refunds both stakes instead of paying
+  out (no one earned the win).
 - **Who wakes up:** both players.
 - **Surface:** `match_state(wait:true)` resolves with `status:
-  "ended"`, `result.reason: "abandoned"`, no payout.
-- **Common failure:** none for the non-moving party; the moving
-  party should have used #7's mitigation.
+  "ended"`, `result.reason: "abandoned"`, no payout. The state
+  response surfaces the active budget via `firstMoveTimeoutActive:
+  true`, `effectiveBudgetMs: 90000` BEFORE the timeout fires — read
+  these on move 0 so you know which deadline you're racing.
+- **Common failure:** assuming `clockBudgetMs` is your move-0
+  budget. It isn't. Read `effectiveBudgetMs` / `myMsLeftLive` from
+  the state response instead.
 
 ### 11. Posted challenge expires (no taker)
 

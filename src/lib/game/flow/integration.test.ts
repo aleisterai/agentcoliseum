@@ -81,7 +81,8 @@ const { postChallenge } = await import("./lobby");
 const { acceptChallenge } = await import("./lobby");
 const { applyMove } = await import("./match");
 const { finalizeMatch } = await import("./finalize");
-const { enforceClockExpiry } = await import("./clock");
+const { enforceClockExpiry, findStaleMatches } = await import("./clock");
+const { FIRST_MOVE_TIMEOUT_MS } = await import("../lifecycle");
 const {
   IllegalMoveError,
   NotYourTurnError,
@@ -1018,6 +1019,128 @@ describe("finalizeMatch", () => {
     });
   });
 
+  // Architect P0-#136 + P1-#135 — first-move-timeout cron path.
+  // Covers: a match where the agent went "ready" (called match_state
+  // once) but never submitted a move, and the FIRST_MOVE_TIMEOUT_MS
+  // window has elapsed. The new behavior reaps it as `abandoned`
+  // BEFORE the full clockBudgetMs runs (which can be 10 min on chess).
+  describe("first-move timeout (architect P0-#136)", () => {
+    it("findStaleMatches includes move-0 + ready + past first-move-timeout", async () => {
+      await withTestDb(async ({ db }) => {
+        currentDb = db;
+        const { agent } = await seedOwnerAgent(db, { handle: "fmt_includes" });
+        const created = await postChallenge({
+          gameType: "chess", // long clockBudgetMs (600s) — the stall case
+          initiatorAgentId: agent.id,
+          mode: "system",
+          systemBotDifficulty: "easy",
+        });
+        if (created.kind !== "match") throw new Error("expected match");
+
+        // Move 0, agent went ready, time is 95s past readiness. Full
+        // clockBudgetMs would NOT have expired (600s), but the
+        // tighter 90s first-move timeout HAS.
+        const past = new Date(Date.now() - 95_000);
+        await db
+          .update(matches)
+          .set({ turnStartedAt: past, agentReadyAt: past })
+          .where(eq(matches.id, created.match.id));
+
+        const stale = await findStaleMatches();
+        const ids = stale.map((m) => m.id);
+        expect(ids).toContain(created.match.id);
+      });
+    });
+
+    it("findStaleMatches EXCLUDES move-0 + NOT ready (refund-unready-matches handles it)", async () => {
+      // Architect P1-#135 fix: the SQL prefilter now excludes pre-
+      // readiness matches so they don't crowd out actual expirations
+      // inside the 50-row batch. The refund-unready-matches cron
+      // (separate handler) reaps these after 30 min.
+      await withTestDb(async ({ db }) => {
+        currentDb = db;
+        const { agent } = await seedOwnerAgent(db, { handle: "fmt_excludes" });
+        const created = await postChallenge({
+          gameType: "tic-tac-toe",
+          initiatorAgentId: agent.id,
+          mode: "system",
+          systemBotDifficulty: "easy",
+        });
+        if (created.kind !== "match") throw new Error("expected match");
+
+        // moveCount=0, agentReadyAt is still NULL (default). Even
+        // though turnStartedAt is ancient, the SQL filter should
+        // skip this row — frozen-pre-readiness matches belong to
+        // refund-unready-matches, not match-tick.
+        const ancient = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        await db
+          .update(matches)
+          .set({ turnStartedAt: ancient }) // agentReadyAt stays NULL
+          .where(eq(matches.id, created.match.id));
+
+        const stale = await findStaleMatches();
+        const ids = stale.map((m) => m.id);
+        expect(ids).not.toContain(created.match.id);
+      });
+    });
+
+    it("enforceClockExpiry resolves first-move stall as abandoned (no ELO change)", async () => {
+      await withTestDb(async ({ db }) => {
+        currentDb = db;
+        const { agent } = await seedOwnerAgent(db, { handle: "fmt_resolve" });
+        const created = await postChallenge({
+          gameType: "chess",
+          initiatorAgentId: agent.id,
+          mode: "system",
+          systemBotDifficulty: "easy",
+        });
+        if (created.kind !== "match") throw new Error("expected match");
+
+        const past = new Date(Date.now() - FIRST_MOVE_TIMEOUT_MS - 5_000);
+        await db
+          .update(matches)
+          .set({ turnStartedAt: past, agentReadyAt: past })
+          .where(eq(matches.id, created.match.id));
+
+        const result = await enforceClockExpiry(created.match.id);
+        expect(result).not.toBeNull();
+        expect(result!.status).toBe("completed");
+        // Move-0 fairness gate: abandoned, NOT time_forfeit. Neither
+        // side played a move, so neither side gets the win.
+        expect(result!.resultReason).toBe("abandoned");
+        expect(result!.winnerAgentId).toBeNull();
+        // No ELO change: agent didn't get to play, so no rating
+        // movement either way.
+        expect(result!.p1EloDelta).toBe(0);
+      });
+    });
+
+    it("enforceClockExpiry does NOT fire while inside the first-move window", async () => {
+      await withTestDb(async ({ db }) => {
+        currentDb = db;
+        const { agent } = await seedOwnerAgent(db, { handle: "fmt_inside" });
+        const created = await postChallenge({
+          gameType: "tic-tac-toe",
+          initiatorAgentId: agent.id,
+          mode: "system",
+          systemBotDifficulty: "easy",
+        });
+        if (created.kind !== "match") throw new Error("expected match");
+
+        // 30s after agentReadyAt — well inside the 90s budget.
+        const past = new Date(Date.now() - 30_000);
+        await db
+          .update(matches)
+          .set({ turnStartedAt: past, agentReadyAt: past })
+          .where(eq(matches.id, created.match.id));
+
+        const result = await enforceClockExpiry(created.match.id);
+        // Returns null — clock hasn't expired.
+        expect(result).toBeNull();
+      });
+    });
+  });
+
   it("time_forfeit sets winnerAgentId to the OTHER player", async () => {
     await withTestDb(async ({ db }) => {
       currentDb = db;
@@ -1292,10 +1415,21 @@ describe("coliseum_match_state — wall-clock fields (all games)", () => {
         // backdated timestamp we just set up. With agentReadyAt
         // already set, the gate is a no-op and the live remaining
         // computation walks the backdated turnStartedAt as intended.
+        //
+        // We also bump moveCount=1 so the response uses the FULL
+        // clockBudgetMs as the live budget. On moveCount=0 the new
+        // first-move-timeout shortcut (architect P0-#136) caps the
+        // effective budget at 90s regardless of game — that path has
+        // its own coverage below. Here we're testing the long-play
+        // chess-clock semantics, which need a non-zero moveCount.
         const tenSecAgo = new Date(Date.now() - 10_000);
         await db
           .update(matches)
-          .set({ turnStartedAt: tenSecAgo, agentReadyAt: tenSecAgo })
+          .set({
+            turnStartedAt: tenSecAgo,
+            agentReadyAt: tenSecAgo,
+            moveCount: 1,
+          })
           .where(eq(matches.id, matchId));
 
         const state = (await matchState.handler({ matchId }, {
@@ -1305,6 +1439,9 @@ describe("coliseum_match_state — wall-clock fields (all games)", () => {
         // Static budget field stays equal to clockBudgetMs.
         expect(state.clockBudgetMs).toBe(budget);
         expect(state.myMsLeft).toBe(budget);
+        // Effective budget equals clockBudgetMs once moveCount >= 1.
+        expect(state.effectiveBudgetMs).toBe(budget);
+        expect(state.firstMoveTimeoutActive).toBe(false);
 
         // Live remaining decrements with wall clock — ~(budget-10s)
         // with some tolerance for test-runner jitter.
@@ -1348,9 +1485,18 @@ describe("coliseum_match_state — wall-clock fields (all games)", () => {
       // Mark agent as ready up front so subsequent state reads don't
       // reset turnStartedAt (the moveCount=0 readiness gate fires once
       // on first state read by the on-turn agent).
+      //
+      // ALSO bump moveCount=1 so the urgency derivation walks the
+      // FULL clockBudgetMs instead of the 90s first-move timeout.
+      // This test parameterizes urgency over % of budget elapsed,
+      // which only matches its assertions when the full budget is
+      // in play (the first-move-timeout shortcut would cap effective
+      // budget at 90s regardless of game and break the 50% / 80% /
+      // 95% elapsed assertions for tic-tac-toe (60s) since 50% of
+      // 60s ≠ 50% of 90s).
       await db
         .update(matches)
-        .set({ agentReadyAt: new Date() })
+        .set({ agentReadyAt: new Date(), moveCount: 1 })
         .where(eq(matches.id, matchId));
 
       // fresh: just started — 100% remaining (turnStartedAt = now)

@@ -34,7 +34,7 @@
  * Bearer `${CRON_SECRET}`. Dev (no CRON_SECRET) accepts any caller.
  */
 import { NextResponse } from "next/server";
-import { eq, inArray, sql as dsql } from "drizzle-orm";
+import { and, eq, inArray, ne, sql as dsql } from "drizzle-orm";
 import { encodeFunctionData, erc20Abi, type Hex } from "viem";
 import { db } from "@/lib/db/client";
 import { matches, matchPayouts, tournaments, tournamentPayouts } from "@/lib/db/schema";
@@ -361,7 +361,15 @@ async function drainTournamentPayouts(): Promise<TournamentDrainResult> {
             await tx
               .update(tournaments)
               .set({ status: "completed", completedAt: new Date() })
-              .where(eq(tournaments.id, row.tournamentId));
+              // Guard: a refund payout (tournament was 'cancelled') must
+              // NOT resurrect the tournament to 'completed'. Only prize
+              // payouts on a live/paying-out tournament finalize it.
+              .where(
+                and(
+                  eq(tournaments.id, row.tournamentId),
+                  ne(tournaments.status, "cancelled"),
+                ),
+              );
           });
           resumed++;
         } else {

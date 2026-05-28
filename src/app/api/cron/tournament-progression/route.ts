@@ -21,7 +21,7 @@
  * Idempotent + bounded. Safe to run repeatedly. CRON_SECRET-gated.
  */
 import { NextResponse } from "next/server";
-import { and, asc, eq, isNotNull, isNull } from "drizzle-orm";
+import { and, asc, count, eq, isNotNull, lt } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import {
   agents,
@@ -32,6 +32,7 @@ import {
   tournamentMatches,
   tournamentPayouts,
 } from "@/lib/db/schema";
+import { cancelTournament } from "@/lib/tournament-cancel";
 import { jsonError } from "@/lib/http";
 import { buildEngine } from "@/lib/game/engine";
 import { getAdapter } from "@/lib/game/registry";
@@ -77,6 +78,13 @@ async function handleTournamentProgression({
   setItems: (n: number) => void;
   setMetadata: (m: Record<string, unknown>) => void;
 }) {
+  // Auto-cancel stale, under-filled tournaments first. A 'registering'
+  // tournament whose operator-set registrationCloseAt has passed without
+  // reaching `size` entries can never start (start requires an exact
+  // fill) — so its entrants' fees would be stranded. Cancel + refund.
+  // Defensive: a failure here must never block prize progression below.
+  const staleCancelled = await cancelStaleTournaments();
+
   const running = await db
     .select()
     .from(tournaments)
@@ -119,8 +127,65 @@ async function handleTournamentProgression({
     matchesAdvanced: advanced,
     tournamentsCompleted: completed,
     erroredTournaments,
+    staleCancelled: staleCancelled.length,
   });
-  return NextResponse.json({ ok: true, processed: running.length, summary });
+  return NextResponse.json({
+    ok: true,
+    processed: running.length,
+    summary,
+    staleCancelled,
+  });
+}
+
+/**
+ * Find 'registering' tournaments whose registrationCloseAt has passed
+ * but that never reached `size` entries, and cancel + refund them via
+ * the shared cancelTournament helper (enqueues entry-fee refunds into
+ * tournament_payouts). Returns the ids that were cancelled this tick.
+ *
+ * Only tournaments with an explicit registrationCloseAt are eligible —
+ * an open-ended tournament (null close time) is left for manual operator
+ * cancellation. Each cancel is wrapped so one failure can't abort the
+ * sweep or the prize progression that runs after it.
+ */
+async function cancelStaleTournaments(): Promise<string[]> {
+  const now = new Date();
+  const stale = await db
+    .select({
+      id: tournaments.id,
+      size: tournaments.size,
+      entryFeeUsdc: tournaments.entryFeeUsdc,
+    })
+    .from(tournaments)
+    .where(
+      and(
+        eq(tournaments.status, "registering"),
+        isNotNull(tournaments.registrationCloseAt),
+        lt(tournaments.registrationCloseAt, now),
+      ),
+    )
+    .limit(20);
+
+  const cancelled: string[] = [];
+  for (const t of stale) {
+    try {
+      const [{ c: filled }] = await db
+        .select({ c: count() })
+        .from(tournamentEntries)
+        .where(eq(tournamentEntries.tournamentId, t.id));
+      // Full tournaments past close are startable — leave them for the
+      // operator / auto-start. Only under-filled ones are dead-ended.
+      if (filled >= t.size) continue;
+      const result = await cancelTournament(t.id);
+      if (result.cancelled) cancelled.push(t.id);
+    } catch (err) {
+      console.error(
+        `[cron/tournament-progression] stale-cancel for tournament ${t.id} failed`,
+        err,
+      );
+    }
+  }
+  return cancelled;
 }
 
 async function advanceOne(t: typeof tournaments.$inferSelect): Promise<{

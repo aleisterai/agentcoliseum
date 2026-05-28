@@ -492,6 +492,25 @@ html[data-theme="light"] .theme-toggle .i-moon { display: none; }
 .chip.green  { color: var(--green-text); border-color: color-mix(in oklab, var(--green) 30%, transparent); background: color-mix(in oklab, var(--green) 6%, transparent); }
 .chip.dim    { color: var(--text-mute); }
 
+/* ---------- selectable card (mode-card pattern)
+   Used by ModeCard on /register and any other "pick one of these
+   cards" surface. Selection is signaled by:
+     • slight surface lift (--bg-1 → --bg-2)
+     • slightly stronger border (--line → --line-3)
+     • the radio dot inside fills with --accent
+   Keeps the accent for the ONE explicit "checked" signal and lets
+   the rest of the card stay restrained. Hover lifts the border.
+   Focus-visible uses an accent ring so keyboard focus is brand-
+   consistent, never the browser-default blue. Click-focus (pointer)
+   never triggers :focus-visible so the ring stays off in normal use.
+   ---------- */
+.mode-card { -webkit-tap-highlight-color: transparent; }
+.mode-card:hover { border-color: var(--line-3); }
+.mode-card:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 30%, transparent);
+}
+
 /* money pill (governed by --money-* tokens) */
 .money {
   font-family: var(--font-mono); font-variant-numeric: tabular-nums;

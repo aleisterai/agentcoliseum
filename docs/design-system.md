@@ -121,6 +121,13 @@ Defined in `coliseum.css`. They already encode the right tokens for both themes.
 | `.down` | Negative delta text — `--ox-bright` |
 | `.dim` | Tertiary annotation text — `--text-dim` |
 
+### Tabs + selectable surfaces
+| Class | When to use |
+|---|---|
+| `.title-tabs` + `.title-tab` + `.title-tab.on` | Page-level tab strip (e.g. `/leaderboard` time-window picker). Selected = inverted (`bg: var(--text); color: var(--bg)`) |
+| `.tabbar` + `.tab` + `.tab.on` | Panel-internal tab strip (smaller, inside `.panel-hd`). Same inversion |
+| `.mode-card` (with `data-selected="true"`) | "Pick one of these cards" surfaces. Selected = `--bg-2` surface lift + `--line-3` border + accent-filled radio dot. Focus-visible uses accent ring |
+
 ---
 
 ## Mandatory rules
@@ -170,6 +177,21 @@ Money, Elo, timestamps, 0x addresses, tx hashes, percentages — all `font-famil
 ### 7. Sentence case for all UI copy
 Not Title Case. Not ALL CAPS (the brand wordmark "AGENT COLISEUM" in the header is font styling, not literal caps).
 
+### 8. Selection is signaled by SURFACE CONTRAST, not by accent color
+This brand reads as terminal/density-first. Selection on tabs is full monochrome inversion (`.tab.on` — `bg: var(--text); color: var(--bg)`). Selection on cards is a subtle surface lift (`--bg-1` → `--bg-2`) + a slightly stronger border (`--line` → `--line-3`). The **only** accent-colored signal on a selected card is the radio dot inside it. Do not paint colored borders + tinted backgrounds + colored badges all at once — that creates three competing signals and overwhelms the surface.
+
+### 9. Kill the browser focus ring; use `--accent` for keyboard focus
+Default `<button>` focus is a blue browser outline. On every interactive element:
+```css
+outline: none;
+/* and for keyboard users: */
+&:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 30%, transparent);
+}
+```
+Pointer clicks don't trigger `:focus-visible`, so the ring stays off in normal use. Keyboard focus stays brand-consistent. Never let Chrome/Safari blue leak through.
+
 ---
 
 ## Anti-patterns (real mistakes I've made — don't repeat)
@@ -185,6 +207,8 @@ Not Title Case. Not ALL CAPS (the brand wordmark "AGENT COLISEUM" in the header 
 | Hardcode `background: "#1a1a1a"` because "dark mode is dark" | `background: "var(--bg-1)"` — light mode panels are bone, not black |
 | Repeat the same explanation in the subtitle and the body | Put it in the body. Subtitle is one sentence |
 | Add a new oklch value because the existing token is "close enough" | Adjust the existing token via PR if needed; don't fork the palette |
+| Paint a selected card with accent border + accent tint + colored badge all at once | Selection = surface lift (`--bg-1` → `--bg-2`) + slightly stronger border. Accent only on the radio dot |
+| Leave `<button>` focus styling to the browser (blue ring leaks through) | Set `outline: none` + `:focus-visible` with `box-shadow: 0 0 0 3px color-mix(--accent 30%, transparent)` |
 
 ---
 

@@ -1009,27 +1009,27 @@ function ModeCard({
       type="button"
       onClick={onClick}
       aria-pressed={selected}
+      className="mode-card"
+      data-selected={selected ? "true" : "false"}
       style={{
         textAlign: "left",
         padding: 16,
         borderRadius: 6,
-        // Selection state uses the theme accent (the same color as
-        // `btn primary` and `.lnk` — the primary CTA color on Coliseum).
-        // Gold is reserved for money chips + branded emphasis; never for
-        // selection or "done" state.
-        background: selected
-          ? "color-mix(in oklab, var(--accent) 8%, var(--bg-1))"
-          : "var(--bg-1)",
-        border: `1px solid ${
-          selected
-            ? "color-mix(in oklab, var(--accent) 60%, var(--line))"
-            : "var(--line)"
-        }`,
-        boxShadow: selected
-          ? "0 0 0 1px color-mix(in oklab, var(--accent) 60%, transparent)"
-          : "none",
+        // Selection signal in this brand is SUBTLE monochrome contrast —
+        // matches the `.tab.on` / `.title-tab.on` pattern (inverted text
+        // bg). Cards lift to --bg-2 + a slightly stronger border when
+        // selected; the radio dot is the one accent-colored element that
+        // says "this is checked." No accent border, no accent tint —
+        // those would compete with the primary CTA button below.
+        background: selected ? "var(--bg-2)" : "var(--bg-1)",
+        border: `1px solid ${selected ? "var(--line-3)" : "var(--line)"}`,
+        // Kill the browser-default focus outline (blue ring in Chrome /
+        // Safari) and replace with an accent ring on keyboard focus only.
+        // Click-focus doesn't trigger `:focus-visible`, so the ring stays
+        // off when the user is using a pointer.
+        outline: "none",
         cursor: "pointer",
-        transition: "border-color 0.15s, box-shadow 0.15s, background 0.15s",
+        transition: "border-color 0.15s, background 0.15s",
         display: "flex",
         flexDirection: "column",
         gap: 10,
@@ -1045,6 +1045,10 @@ function ModeCard({
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {/* Radio dot — the one accent-colored signal. When selected it
+              fills with --accent (the theme primary CTA color, matches
+              the Generate button). When unselected it's a hollow circle
+              in the muted text color. */}
           <span
             aria-hidden
             style={{
@@ -1056,7 +1060,7 @@ function ModeCard({
               }`,
               background: selected ? "var(--accent)" : "transparent",
               flexShrink: 0,
-              boxShadow: selected ? "inset 0 0 0 2px var(--bg-1)" : "none",
+              boxShadow: selected ? "inset 0 0 0 2px var(--bg-2)" : "none",
             }}
           />
           <span

@@ -147,6 +147,27 @@ html[data-theme="light"][data-money="loud"] {
   --money-border: color-mix(in oklab, var(--gold) 65%, transparent);
 }
 
+/* Light-mode chip color amplification.
+   The default .chip.green / .chip.gold rules (lines ~490-492) use 6%
+   bg / 30% border mixed against the *bright* --green / --gold. That
+   reads fine on the dark --bg-1 panel, but on the bone --bg-1 in
+   light mode those mixes wash out to nearly invisible.
+   Mirror what the data-money light overrides do: bump bg + border
+   percentages and (for green) mix against --green-text — the deeper
+   lime that exists specifically to remain legible on bone. */
+html[data-theme="light"] .chip.green {
+  border-color: color-mix(in oklab, var(--green-text) 50%, transparent);
+  background: color-mix(in oklab, var(--green-text) 12%, transparent);
+}
+html[data-theme="light"] .chip.gold {
+  border-color: color-mix(in oklab, var(--gold) 55%, transparent);
+  background: color-mix(in oklab, var(--gold) 14%, transparent);
+}
+html[data-theme="light"] .chip.live {
+  border-color: color-mix(in oklab, var(--ox) 55%, transparent);
+  background: color-mix(in oklab, var(--ox) 12%, transparent);
+}
+
 /* light-mode tweaks for board / surface treatments */
 html[data-theme="light"] .mini-board {
   background: linear-gradient(180deg, var(--bg-2), var(--bg-3));

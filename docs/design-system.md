@@ -155,6 +155,20 @@ background: "color-mix(in oklab, var(--accent) 8%, var(--bg-1))"
 borderColor: "color-mix(in oklab, var(--accent) 60%, var(--line))"
 ```
 
+#### Tint percentage reference (matched to the codebase's existing presets)
+
+When you reach for `color-mix`, use these percentages, not ad-hoc numbers. They match what `coliseum.css` already does for money + chip + alert surfaces in both themes, so they read consistently.
+
+| Surface | Dark mode bg / border | Light mode bg / border | Mix against |
+|---|---|---|---|
+| Subtle tint (info badge, dim chip) | 6% / 22% | 12% / 38% | The token itself, or its `-text` variant if it has one |
+| Normal chip (`.chip.green`, `.chip.gold`, `.chip.live`) | 6-8% / 30-35% | 12-14% / 50-55% | **Light: use the `-text` variant for green** (`--green-text`). Other tokens have the same value in both themes — mix the base |
+| Loud / important callout (CTA panel border, win banner) | 18% / 55% | 22% / 65% | The token itself |
+
+**Critical light-mode rule.** `--green` is the bright `#B6F500` lime in *both* themes. On the dark `--bg-1` panel, mixing bright lime at 6% bg / 30% border resolves to a visible tinted chip. On the bone bg-1 in light mode, that same mix washes out to nearly white. The codebase has a deeper `--green-text` token specifically for "green that survives on bone." When you need a green tint that has to be visible in light mode (border on a chip, bg on a button), mix against `--green-text`, not `--green`.
+
+You don't have to invent these — they're baked into `coliseum.css` light-mode overrides for `.chip.green`, `.chip.gold`, `.chip.live`. Just use the class.
+
 ### 2. `--accent` for CTAs, `--gold` for money. They are not interchangeable.
 This is the rule I have screwed up. Burn it in:
 - **The button you most want the user to click → `--accent`** (via `.btn.primary` or the gold-CTA variant only if it's a money action like "Buy").
@@ -247,11 +261,16 @@ Is this a text element?
 
 Before committing any frontend work:
 
-1. **Toggle light + dark mode in the header.** Anything that goes invisible or jarring → you hardcoded a color.
+1. **Toggle BOTH theme modes in the header and visually inspect every new element.**
+   - Light mode is not "an afterthought" — it's first-class and a large fraction of users use it.
+   - Specifically check: chip borders/backgrounds (do they wash out on bone?), accent borders (still visible?), checkmark glyphs (legible against their fill?), focus rings (visible without being browser-blue?).
+   - If a green/gold tint disappears in light mode, you mixed against `--green` or `--gold` instead of `--green-text` or instead of using the prebuilt `.chip.green` / `.chip.gold` classes (which already handle the light-mode boost).
 2. **Run `pnpm typecheck`** — TypeScript catches missing/renamed props.
 3. **Run `pnpm lint`** — ESLint catches unescaped entities and other React-isms.
 4. **Grep your diff for hardcoded colors**: `grep -E "#[0-9a-f]{3,8}|rgb\(|oklch\(" <files>`. The only legitimate hex literal is `#000`/`#ffffff` inside SVG strokes that need to be theme-overridden via `currentColor`. Even that should be rare.
-5. **Visually compare against an existing similar surface.** If you're building a card with badge + title + body, find one that already exists and match its rhythm.
+5. **Grep your diff for bespoke chip styling**: `grep -E "fontSize: 9\.|fontSize: 10|letterSpacing.*0\.1|textTransform.*uppercase" <files>`. If you're hand-rolling a chip from inline styles, stop and use `.chip` + the right modifier class — it already handles light + dark + density + theme swap.
+6. **Visually compare against an existing similar surface.** If you're building a card with badge + title + body, find one that already exists and match its rhythm.
+7. **For new selectable surfaces**: cross-check `.tab.on` and `.mode-card`. Selection in this brand is a surface-contrast pattern, NOT a colored-border pattern.
 
 ---
 

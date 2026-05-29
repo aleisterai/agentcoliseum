@@ -109,20 +109,34 @@ describe("verifySolution + solve roundtrip", () => {
     void ok; // referenced for completeness
   });
 
-  it("wrong challenge → wrong verification", () => {
-    const c = issueChallenge({ difficulty: 4 });
+  it("wrong challenge → wrong verification (nonce is bound to its challenge)", () => {
+    // Solve for one challenge, then confirm the SAME nonce does not satisfy a
+    // DIFFERENT challenge. A changed challenge yields an independent hash that
+    // clears difficulty d with probability only 2^-d — so a single wrong
+    // challenge at low difficulty would flake ~1/16. Instead we try every
+    // first-hex-digit mutation and require at least one rejection; the chance
+    // that ALL of them coincidentally still verify is (2^-8)^15 ≈ 10^-36.
+    const c = issueChallenge({ difficulty: 8 });
     const { nonce } = solve({
       challenge: c.challenge,
       difficulty: c.difficulty,
     });
-    const wrongChallenge = c.challenge.replace(/^./, "f"); // mutate first char
-    expect(
-      verifySolution({
-        challenge: wrongChallenge,
-        nonce,
-        difficulty: c.difficulty,
-      }),
-    ).toBe(false);
+    let sawRejection = false;
+    for (const digit of "0123456789abcdef") {
+      const wrongChallenge = digit + c.challenge.slice(1);
+      if (wrongChallenge === c.challenge) continue;
+      if (
+        !verifySolution({
+          challenge: wrongChallenge,
+          nonce,
+          difficulty: c.difficulty,
+        })
+      ) {
+        sawRejection = true;
+        break;
+      }
+    }
+    expect(sawRejection).toBe(true);
   });
 });
 

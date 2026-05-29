@@ -119,7 +119,9 @@ async function sweepGame(ackToken: string, gameType: string): Promise<void> {
     gameType,
     mode: "system",
     systemBotDifficulty: "easy",
-    perMoveSeconds: 60, // give the bot the floor budget
+    // Lowest valid budget → shortest match lifetime. The propose schema only
+    // accepts 120|240|360|600|1200 (the per-move floor was raised to 120).
+    perMoveSeconds: 120,
   });
   const proposeBody = parseToolBody<ProposeRespMatch | ProposeRespErr>(proposeResp);
   if (!proposeBody) {
@@ -157,28 +159,29 @@ async function sweepGame(ackToken: string, gameType: string): Promise<void> {
   }
   pass(`${gameType} · state → active, gameType matches, isMyTurn=${stateBody.isMyTurn}`);
 
-  // 3 · move with empty payload → expect ADAPTER-level rejection
-  //     The MCP tool's outer Zod schema accepts any object as payload
-  //     (z.record(z.string(), z.unknown())), so {} passes validation
-  //     and is routed to the adapter's move-validator. Every game's
-  //     applyMove must then reject {} as an illegal/malformed move.
-  //     The exact error code varies per adapter (illegal_move,
-  //     malformed_move, etc.) but the response MUST surface an error
-  //     string, not a successful match advance.
+  // 3 · incomplete move → the move pipeline MUST reject (never silently
+  //     advance the match). We send an empty payload and omit the required
+  //     voice-gated `say` / `reactingTo`, so the move contract rejects this at
+  //     the schema gate (missing_say) before it ever reaches the adapter's
+  //     payload validator. That's fine for a prod smoke: the property we care
+  //     about here is "garbage is rejected, not accepted." Adapter-level
+  //     payload validation (every game's validateMovePayload rejecting {}) is
+  //     pinned by the headless suite — schemas.test.ts, each game's
+  //     bots/game tests, and test/sim-movers.test.ts.
   const moveResp = await mcpCall(ackToken, "coliseum_match_move", {
     matchId,
-    payload: {}, // intentionally empty — adapter must reject
-    reasoning: "Sweep test: submitting an empty payload to verify the per-adapter move validator rejects malformed input. This reasoning is intentional and not a real game move.",
+    payload: {}, // intentionally empty
+    reasoning: "Sweep test: submitting an incomplete move to verify the move pipeline rejects it rather than advancing the match. Not a real game move.",
   });
   const moveBody = parseToolBody<{ error?: string; moveAccepted?: boolean; state?: { moveCount?: number } }>(moveResp);
   if (!moveBody) {
     fail(`${gameType} · move`, `no body from move tool: ${JSON.stringify(moveResp).slice(0, 200)}`);
     return;
   }
-  if (moveBody.error && /illegal|malformed|invalid|payload|move|required|missing/i.test(moveBody.error)) {
-    pass(`${gameType} · empty payload → adapter rejected: ${moveBody.error.slice(0, 80)}`);
+  if (moveBody.error && /illegal|malformed|invalid|payload|move|required|missing|say|reasoning|validation/i.test(moveBody.error)) {
+    pass(`${gameType} · incomplete move rejected: ${moveBody.error.slice(0, 80)}`);
   } else if (moveBody.moveAccepted === true || (moveBody.state?.moveCount ?? 0) > 0) {
-    fail(`${gameType} · move`, `empty payload ACCEPTED — validator regression: ${JSON.stringify(moveBody).slice(0, 200)}`);
+    fail(`${gameType} · move`, `incomplete move ACCEPTED — pipeline regression: ${JSON.stringify(moveBody).slice(0, 200)}`);
   } else {
     fail(`${gameType} · move`, `unexpected move response: ${JSON.stringify(moveBody).slice(0, 200)}`);
   }

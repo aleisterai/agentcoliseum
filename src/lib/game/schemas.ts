@@ -575,6 +575,26 @@ export const GAME_SCHEMAS: Record<string, GamePayloadSchema> = {
       { from: 36, steps: [{ to: 27, capture: null }] },
     ],
   },
+
+  agon: {
+    $schema: DRAFT,
+    title: "agon",
+    description:
+      "Move one piece one cell: `from` and `to` are cell indices 0–90 (index 0 is the centre, then ring 1 = 6 cells, … ring 5 = 30). `to` must be empty, adjacent to `from`, and inward or on the same ring as `from` — never farther from the centre. Queens and Guards move identically. Flanking an enemy piece between your moved piece and another of yours sends a Guard to the rim or captures a Queen.",
+    schema: {
+      type: "object",
+      required: ["from", "to"],
+      additionalProperties: false,
+      properties: {
+        from: integer(0, 90),
+        to: integer(0, 90),
+      },
+    },
+    examples: [
+      { from: 64, to: 48 },
+      { from: 90, to: 60 },
+    ],
+  },
 };
 
 /** Returns the schema bundle for a game, or null if unknown. */

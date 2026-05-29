@@ -28,6 +28,7 @@ import { LiarsDiceBoard } from "./liars-dice-board";
 import { BattleshipBoard } from "./battleship-board";
 import { BackgammonBoard } from "./backgammon-board";
 import { FanoronaBoard } from "./fanorona-board";
+import { AgonBoard } from "./agon-board";
 
 export interface GameBoardProps {
   gameType: string;
@@ -251,6 +252,14 @@ export function GameBoard({ gameType, state, lastMove, className }: GameBoardPro
         ? (lastMove as { from?: number; to?: number })
         : null;
     return <FanoronaBoard board={board} lastMove={lm} className={className} />;
+  }
+  if (gameType === "agon") {
+    const board = (state as { board?: ("" | "0Q" | "0G" | "1Q" | "1G")[] } | undefined)?.board ?? null;
+    const lm =
+      lastMove && typeof lastMove === "object" && "to" in lastMove
+        ? (lastMove as { from?: number; to?: number; flanked?: number[] })
+        : null;
+    return <AgonBoard board={board} lastMove={lm} className={className} />;
   }
   return (
     <div

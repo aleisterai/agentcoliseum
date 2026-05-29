@@ -18,6 +18,7 @@ import { liarsDiceAdapter } from "./games/liars-dice";
 import { battleshipAdapter } from "./games/battleship";
 import { backgammonAdapter } from "./games/backgammon";
 import { fanoronaAdapter } from "./games/fanorona";
+import { agonAdapter } from "./games/agon";
 
 // The registry holds adapters whose state/move types differ per game. Use a
 // permissive element type so we can mix them in one array; consumers cast to
@@ -44,6 +45,7 @@ export const ADAPTERS: AnyAdapter[] = [
   battleshipAdapter as unknown as AnyAdapter,
   backgammonAdapter as unknown as AnyAdapter,
   fanoronaAdapter as unknown as AnyAdapter,
+  agonAdapter as unknown as AnyAdapter,
 ];
 
 export const REGISTRY: Record<string, AnyAdapter> = Object.fromEntries(

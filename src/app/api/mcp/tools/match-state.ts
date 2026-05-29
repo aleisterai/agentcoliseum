@@ -655,8 +655,8 @@ export const matchState: ToolDef = {
 
     // Wall-clock derivation — game-agnostic since every match in
     // every game uses the same per-move clock model (see
-    // src/lib/game/lifecycle.ts:clockExpired). Fixed in one place
-    // applies to all 14 games.
+    // src/lib/game/lifecycle.ts:clockExpired). Fixed in one place,
+    // it applies to every game in the registry.
     //
     // Move-0 nuance (architect P0-#136): when the agent has gone
     // ready but hasn't played its opener, the active budget is the

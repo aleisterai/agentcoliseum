@@ -530,6 +530,51 @@ export const GAME_SCHEMAS: Record<string, GamePayloadSchema> = {
       { moves: [] },
     ],
   },
+
+  fanorona: {
+    $schema: DRAFT,
+    title: "fanorona",
+    description:
+      'Submit your whole turn: `from` (the piece you move, 0–44) plus `steps`, an ordered list of one-step hops. Each step is {to (0–44), capture}. `capture` is "approach" (take the enemy run just beyond your landing), "withdraw" (take the enemy run just behind your start), or null for a non-capturing paika move. A capture is MANDATORY when one exists — a null capture is only legal when you have no capture anywhere. Chain captures with one piece by adding more steps: each must capture, must not repeat the previous step\'s direction, and must not revisit a point. `index = row*9 + col`; diagonals only connect at points where (row+col) is even.',
+    schema: {
+      type: "object",
+      required: ["from", "steps"],
+      additionalProperties: false,
+      properties: {
+        from: integer(0, 44),
+        steps: {
+          type: "array",
+          minItems: 1,
+          items: {
+            type: "object",
+            required: ["to", "capture"],
+            additionalProperties: false,
+            properties: {
+              to: integer(0, 44),
+              capture: {
+                oneOf: [
+                  { type: "null" },
+                  { type: "string", enum: ["approach", "withdraw"] },
+                ],
+              },
+            },
+          },
+        },
+      },
+    },
+    examples: [
+      { from: 31, steps: [{ to: 22, capture: "approach" }] },
+      { from: 20, steps: [{ to: 19, capture: "withdraw" }] },
+      {
+        from: 18,
+        steps: [
+          { to: 10, capture: "approach" },
+          { to: 2, capture: "approach" },
+        ],
+      },
+      { from: 36, steps: [{ to: 27, capture: null }] },
+    ],
+  },
 };
 
 /** Returns the schema bundle for a game, or null if unknown. */

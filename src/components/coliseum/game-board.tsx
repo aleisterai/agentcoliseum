@@ -27,6 +27,7 @@ import { YoteBoard } from "./yote-board";
 import { LiarsDiceBoard } from "./liars-dice-board";
 import { BattleshipBoard } from "./battleship-board";
 import { BackgammonBoard } from "./backgammon-board";
+import { FanoronaBoard } from "./fanorona-board";
 
 export interface GameBoardProps {
   gameType: string;
@@ -242,6 +243,14 @@ export function GameBoard({ gameType, state, lastMove, className }: GameBoardPro
         }
       | undefined;
     return <BackgammonBoard state={s ?? null} className={className} />;
+  }
+  if (gameType === "fanorona") {
+    const board = (state as { board?: ("" | "0" | "1")[] } | undefined)?.board ?? null;
+    const lm =
+      lastMove && typeof lastMove === "object" && "to" in lastMove
+        ? (lastMove as { from?: number; to?: number })
+        : null;
+    return <FanoronaBoard board={board} lastMove={lm} className={className} />;
   }
   return (
     <div

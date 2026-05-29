@@ -6,7 +6,6 @@
  *   - aggregate in-escrow USDC + match count
  *   - 30-day P&L (wins - losses, fees out)
  *   - 30-day move spend
- *   - open side bet positions
  *   - escrowed open matches
  *   - flat payment history (POT WIN, x402 MOVE, BET, TOP-UP)
  *
@@ -25,7 +24,6 @@ import {
   matches,
   matchMoves,
   owners,
-  sidePoolStakes,
 } from "@/lib/db/schema";
 import { resolvePrivyWallet, UnauthorizedError } from "@/lib/auth";
 import { errorResponse, jsonError } from "@/lib/http";
@@ -90,9 +88,7 @@ export async function POST(req: Request) {
         inEscrow: { usdc: 0, matches: 0 },
         pnl30d: { netUsdc: 0, wins: 0, losses: 0, draws: 0 },
         moveSpend30d: { usdc: 0, paidMoves: 0 },
-        sideBets: { openUsdc: 0, openCount: 0 },
         escrowed: [],
-        bets: [],
         history: [],
       });
     }
@@ -103,7 +99,7 @@ export async function POST(req: Request) {
       inArray(matches.p2AgentId, ids),
     );
 
-    const [escrowedRows, completed30d, paidMoves30d, openBets, paymentRows] =
+    const [escrowedRows, completed30d, paidMoves30d, paymentRows] =
       await Promise.all([
         db
           .select({
@@ -153,19 +149,6 @@ export async function POST(req: Request) {
               sql`${matchMoves.x402PaymentId} IS NOT NULL`,
             ),
           ),
-        db
-          .select({
-            id: sidePoolStakes.id,
-            matchId: sidePoolStakes.matchId,
-            side: sidePoolStakes.side,
-            amountUsdc: sidePoolStakes.amountUsdc,
-            payoutUsdc: sidePoolStakes.payoutUsdc,
-            resolvedAt: sidePoolStakes.resolvedAt,
-          })
-          .from(sidePoolStakes)
-          .where(eq(sidePoolStakes.stakerOwnerId, owner.id))
-          .orderBy(desc(sidePoolStakes.placedAt))
-          .limit(40),
         // Most recent paid-mode moves (their x402 settlements appear in history)
         db
           .select({
@@ -230,9 +213,6 @@ export async function POST(req: Request) {
 
     const paidMovesTotal = Number(paidMoves30d[0]?.paidMoves ?? 0);
     const moveSpendUsdc = paidMovesTotal * X402_PER_MOVE_USDC;
-
-    const openBetsList = openBets.filter((b) => !b.resolvedAt);
-    const openBetsUsdc = openBetsList.reduce((acc, b) => acc + b.amountUsdc, 0);
 
     // Build flat history. Pot wins/losses first (recent), then x402 moves.
     type Entry = {
@@ -305,7 +285,6 @@ export async function POST(req: Request) {
       inEscrow: { usdc: inEscrowUsdc, matches: escrowedRows.length },
       pnl30d: { netUsdc, wins, losses, draws },
       moveSpend30d: { usdc: moveSpendUsdc, paidMoves: paidMovesTotal },
-      sideBets: { openUsdc: openBetsUsdc, openCount: openBetsList.length },
       escrowed: escrowedRows.map((m) => {
         const isP1 = m.p1AgentId && ids.includes(m.p1AgentId);
         const myAgent = isP1 ? m.p1AgentId : m.p2AgentId;
@@ -319,18 +298,6 @@ export async function POST(req: Request) {
           potUsdc: m.potUsdc ?? 0,
         };
       }),
-      bets: openBetsList.map((b) => ({
-        matchId: b.matchId,
-        onAgent: "?", // would resolve by joining with side_pools.match → matches.p{1,2}
-        side: b.side,
-        stakeUsdc: b.amountUsdc,
-        payoutUsdc: b.payoutUsdc,
-        status: b.resolvedAt
-          ? b.payoutUsdc && b.payoutUsdc > 0
-            ? ("won" as const)
-            : ("lost" as const)
-          : ("open" as const),
-      })),
       history: history.slice(0, 50),
     });
   } catch (err) {

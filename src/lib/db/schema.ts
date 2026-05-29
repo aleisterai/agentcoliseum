@@ -11,7 +11,6 @@
  *   match_moves → every move, with reasoning + ev + state snapshot
  *   match_transcripts → finalized replay payload (one row per completed match)
  *   head_to_head → per-(pair, game) aggregates
- *   side_pools / side_pool_stakes → spectator betting
  *   match_chat / match_reactions → spectator chat + reactions
  *
  * Conventions:
@@ -90,26 +89,17 @@ export const challengeStatusEnum = pgEnum("challenge_status", [
 export const matchStatusEnum = pgEnum("match_status", [
   "active",
   "resolving",
-  // 'paused' is reserved in the production enum (migration 0011,
-  // 2026-05-28) but NOT used by any active code path. We considered
-  // pause/resume on clock-out and reverted: it would let a human
-  // operator stall when a position is hard, analyze externally, and
-  // resume with a fresh clock — laundering machine analysis as agent
-  // reasoning. The chess-clock discipline is the product. The enum
-  // value stays in the DB so a future cleanup migration can drop it
-  // safely (Postgres doesn't support dropping enum values online).
+  // 'paused' is reserved in the production enum (migration 0011) but NOT used
+  // by any active code path — pause/resume was reverted (it would let an
+  // operator stall a hard position, analyze externally, and resume with a
+  // fresh clock, laundering machine analysis as agent reasoning; the
+  // chess-clock discipline IS the product). The dormant pause columns +
+  // pause_reason type were dropped in migration 0014; this enum value stays
+  // only because Postgres can't drop an enum value online. Harmless + unused.
   "paused",
   "completed",
   "abandoned",
   "disputed",
-]);
-
-// Dormant enum (migration 0011). Documented for the same reason as
-// the 'paused' value above — kept so a future cleanup migration can
-// DROP TYPE cleanly. No active code references this.
-export const pauseReasonEnum = pgEnum("pause_reason", [
-  "idle_timeout",
-  "operator_pause",
 ]);
 
 /**
@@ -128,7 +118,6 @@ export const resultReasonEnum = pgEnum("result_reason", [
   "draw",
   "abandoned",
 ]);
-export const sideEnum = pgEnum("side_t", ["p1", "p2"]);
 export const playerIdEnum = pgEnum("player_id_t", ["0", "1"]);
 export const recallSourceEnum = pgEnum("recall_source", [
   "owner",
@@ -514,27 +503,6 @@ export const matches = pgTable(
     //
     // Default 0 so existing rows are valid; first event sets to 1.
     lastEventSeq: integer("last_event_seq").default(0).notNull(),
-
-    /* ===== Pause/resume columns — DORMANT (migration 0011) ============
-     *
-     * Reserved in the production schema for a 2026-05-28 pause/resume
-     * experiment that was reverted before going live. The columns
-     * stay nullable + default-zero so existing INSERTs are unaffected;
-     * no production code path reads or writes them. Kept here for
-     * schema/DB parity until a follow-up cleanup migration drops them.
-     *
-     * Why reverted: pause/resume on clock-out lets the operator stall
-     * a hard position, analyze externally for hours/days, and resume
-     * with a fresh clock — laundering external compute as agent
-     * reasoning. Time pressure is the product; this would break it.
-     */
-    pausedAt: timestamp("paused_at", { withTimezone: true }),
-    pausedReason: pauseReasonEnum("paused_reason"),
-    pausedPlayerId: playerIdEnum("paused_player_id"),
-    pauseCount: integer("pause_count").default(0).notNull(),
-    totalPausedMs: bigint("total_paused_ms", { mode: "number" })
-      .default(0)
-      .notNull(),
   },
   (table) => [
     index("matches_status_idx").on(table.status),
@@ -880,46 +848,6 @@ export const headToHead = pgTable(
     primaryKey({ columns: [table.agentAId, table.agentBId, table.gameType] }),
     check("agents_canonical_order", sql`${table.agentAId} < ${table.agentBId}`),
     index("head_to_head_b_idx").on(table.agentBId),
-  ],
-).enableRLS();
-
-// -----------------------------------------------------------------------------
-// side_pools — spectator betting on a match. One row per match, lazily.
-// -----------------------------------------------------------------------------
-
-export const sidePools = pgTable("side_pools", {
-  matchId: uuid("match_id")
-    .references(() => matches.id, { onDelete: "cascade" })
-    .primaryKey(),
-  closedAt: timestamp("closed_at", { withTimezone: true }),
-  p1TotalUsdc: integer("p1_total_usdc").default(0).notNull(),
-  p2TotalUsdc: integer("p2_total_usdc").default(0).notNull(),
-  totalStakers: integer("total_stakers").default(0).notNull(),
-  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
-}).enableRLS();
-
-export const sidePoolStakes = pgTable(
-  "side_pool_stakes",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    matchId: uuid("match_id")
-      .references(() => matches.id, { onDelete: "cascade" })
-      .notNull(),
-    stakerOwnerId: uuid("staker_owner_id")
-      .references(() => owners.id, { onDelete: "cascade" })
-      .notNull(),
-    side: sideEnum("side").notNull(),
-    amountUsdc: integer("amount_usdc").notNull(),
-    payoutUsdc: integer("payout_usdc"),
-    payoutTxHash: text("payout_tx_hash"),
-    placedAt: timestamp("placed_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
-  },
-  (table) => [
-    index("side_pool_stakes_match_idx").on(table.matchId),
-    index("side_pool_stakes_staker_idx").on(table.stakerOwnerId),
   ],
 ).enableRLS();
 
@@ -1404,8 +1332,6 @@ export type MatchChatMessage = typeof matchChatMessages.$inferSelect;
 export type NewMatchChatMessage = typeof matchChatMessages.$inferInsert;
 export type MatchTranscript = typeof matchTranscripts.$inferSelect;
 export type HeadToHead = typeof headToHead.$inferSelect;
-export type SidePool = typeof sidePools.$inferSelect;
-export type SidePoolStake = typeof sidePoolStakes.$inferSelect;
 export type MatchChat = typeof matchChat.$inferSelect;
 export type MatchReaction = typeof matchReactions.$inferSelect;
 export type TreasuryFlow = typeof treasuryFlows.$inferSelect;

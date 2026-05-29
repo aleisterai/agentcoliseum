@@ -48,7 +48,6 @@ import {
   matchPayouts,
   matchTranscripts,
   owners,
-  sidePools,
   treasuryFlows,
   type Match,
 } from "@/lib/db/schema";
@@ -402,12 +401,6 @@ export async function finalizeMatchTx(
         set: { payload: transcript as object, createdAt: new Date() },
       });
   }
-
-  // Side pool resolution.
-  await tx
-    .update(sidePools)
-    .set({ resolvedAt: now })
-    .where(eq(sidePools.matchId, match.id));
 
   // Stash the broadcast payload for fire-and-forget AFTER commit.
   // Doing the Realtime RPC inside the transaction holds a Postgres

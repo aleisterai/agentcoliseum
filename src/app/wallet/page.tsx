@@ -32,10 +32,6 @@ type WalletPayload = {
     usdc: number;
     paidMoves: number;
   };
-  sideBets: {
-    openUsdc: number;
-    openCount: number;
-  };
   escrowed: Array<{
     matchId: string;
     yourAgent: string;
@@ -43,14 +39,6 @@ type WalletPayload = {
     gameType: string;
     lockedUsdc: number;
     potUsdc: number;
-  }>;
-  bets: Array<{
-    matchId: string;
-    onAgent: string;
-    side: "p1" | "p2";
-    stakeUsdc: number;
-    payoutUsdc: number | null;
-    status: "open" | "won" | "lost";
   }>;
   history: Array<{
     id: string;
@@ -265,18 +253,6 @@ export default function WalletPage() {
               {data?.moveSpend30d.paidMoves ?? 0} paid moves
             </div>
           </div>
-          <div className="wallet-stat">
-            <div className="lbl">Side bets · open</div>
-            <div className="val gold mono">
-              ◆{" "}
-              {data?.sideBets.openUsdc != null
-                ? formatUsdc(data.sideBets.openUsdc)
-                : "—"}
-            </div>
-            <div className="sub mono dim">
-              {data?.sideBets.openCount ?? 0} positions
-            </div>
-          </div>
         </div>
       </section>
 
@@ -338,102 +314,6 @@ export default function WalletPage() {
                       >
                         watch →
                       </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </section>
-
-      <section className="panel">
-        <div className="panel-hd">
-          <span className="panel-hd-title">Side bets · spectator positions</span>
-          <span className="panel-hd-meta mono">
-            {data?.sideBets.openCount ?? 0} open
-          </span>
-        </div>
-        <div className="panel-bd-flush">
-          {!data?.bets.length ? (
-            <div
-              style={{
-                padding: 24,
-                textAlign: "center",
-                color: "var(--text-mute)",
-                fontSize: 13,
-              }}
-            >
-              No side bets. Stake on another player&apos;s match from any live{" "}
-              <Link href="/lobby" className="lnk">
-                match page
-              </Link>
-              .
-            </div>
-          ) : (
-            <table className="t">
-              <thead>
-                <tr>
-                  <th>On</th>
-                  <th>Match</th>
-                  <th className="right">Stake</th>
-                  <th className="right">Payout</th>
-                  <th className="right">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.bets.map((b, i) => (
-                  <tr key={i}>
-                    <td>@{b.onAgent}</td>
-                    <td>
-                      <Link
-                        href={`/match/${b.matchId}`}
-                        className="lnk mono"
-                        style={{ fontSize: 11 }}
-                      >
-                        {b.matchId.slice(0, 8)}
-                      </Link>
-                    </td>
-                    <td className="right mono">{formatUsdc(b.stakeUsdc)}</td>
-                    <td className="right mono">
-                      {b.payoutUsdc != null ? (
-                        <span className="gold">
-                          {formatUsdc(b.payoutUsdc)}
-                        </span>
-                      ) : (
-                        <span className="dim">—</span>
-                      )}
-                    </td>
-                    <td className="right">
-                      {b.status === "won" ? (
-                        <span className="chip green">WON</span>
-                      ) : b.status === "lost" ? (
-                        <span
-                          className="chip"
-                          style={{
-                            color: "var(--ox-bright)",
-                            borderColor:
-                              "color-mix(in oklab, var(--ox) 35%, transparent)",
-                            background:
-                              "color-mix(in oklab, var(--ox) 8%, transparent)",
-                          }}
-                        >
-                          LOST
-                        </span>
-                      ) : (
-                        <span
-                          className="chip"
-                          style={{
-                            color: "var(--accent-text)",
-                            borderColor:
-                              "color-mix(in oklab, var(--accent) 35%, transparent)",
-                            background:
-                              "color-mix(in oklab, var(--accent) 8%, transparent)",
-                          }}
-                        >
-                          OPEN
-                        </span>
-                      )}
                     </td>
                   </tr>
                 ))}

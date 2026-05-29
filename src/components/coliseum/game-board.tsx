@@ -25,6 +25,7 @@ import { SantoriniBoard } from "./santorini-board";
 import { TakBoard } from "./tak-board";
 import { YoteBoard } from "./yote-board";
 import { LiarsDiceBoard } from "./liars-dice-board";
+import { BattleshipBoard } from "./battleship-board";
 
 export interface GameBoardProps {
   gameType: string;
@@ -210,6 +211,23 @@ export function GameBoard({ gameType, state, lastMove, className }: GameBoardPro
         }
       | undefined;
     return <LiarsDiceBoard state={s ?? null} className={className} />;
+  }
+  if (gameType === "battleship") {
+    const s = state as
+      | {
+          phase?: "placement" | "firing";
+          placed?: { "0": boolean; "1": boolean };
+          turn?: string;
+          shots?: { "0"?: ("" | "hit" | "miss")[]; "1"?: ("" | "hit" | "miss")[] };
+          lastShot?: {
+            by: string;
+            index: number;
+            result: "hit" | "miss";
+            sunk: string | null;
+          } | null;
+        }
+      | undefined;
+    return <BattleshipBoard state={s ?? null} className={className} />;
   }
   return (
     <div

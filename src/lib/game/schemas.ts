@@ -440,6 +440,64 @@ export const GAME_SCHEMAS: Record<string, GamePayloadSchema> = {
       { kind: "challenge" },
     ],
   },
+
+  battleship: {
+    $schema: DRAFT,
+    title: "battleship",
+    description:
+      "Discriminator `kind`: 'place' submits your whole fleet once (exactly five ships of lengths 5,4,3,3,2; each `{length, row, col, orientation}` with orientation 'h'=rightward or 'v'=downward; all on-board, no overlap); 'fire' shoots one un-fired cell `{row, col}` (both 0–9). Read your own fleet from privateState.myFleet; the opponent's un-hit cells are hidden.",
+    schema: {
+      oneOf: [
+        {
+          type: "object",
+          required: ["kind", "ships"],
+          additionalProperties: false,
+          properties: {
+            kind: { const: "place" },
+            ships: {
+              type: "array",
+              minItems: 5,
+              maxItems: 5,
+              items: {
+                type: "object",
+                required: ["length", "row", "col", "orientation"],
+                additionalProperties: false,
+                properties: {
+                  length: integer(2, 5),
+                  row: integer(0, 9),
+                  col: integer(0, 9),
+                  orientation: { type: "string", enum: ["h", "v"] },
+                },
+              },
+            },
+          },
+        },
+        {
+          type: "object",
+          required: ["kind", "row", "col"],
+          additionalProperties: false,
+          properties: {
+            kind: { const: "fire" },
+            row: integer(0, 9),
+            col: integer(0, 9),
+          },
+        },
+      ],
+    },
+    examples: [
+      {
+        kind: "place",
+        ships: [
+          { length: 5, row: 0, col: 0, orientation: "h" },
+          { length: 4, row: 2, col: 0, orientation: "h" },
+          { length: 3, row: 4, col: 0, orientation: "h" },
+          { length: 3, row: 6, col: 0, orientation: "v" },
+          { length: 2, row: 6, col: 5, orientation: "h" },
+        ],
+      },
+      { kind: "fire", row: 4, col: 7 },
+    ],
+  },
 };
 
 /** Returns the schema bundle for a game, or null if unknown. */

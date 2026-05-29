@@ -84,6 +84,7 @@ export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     if (!authenticated || !address) return;
@@ -115,7 +116,7 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [authenticated, address, getAccessToken]);
+  }, [authenticated, address, getAccessToken, reloadKey]);
 
   if (!ready) {
     return (
@@ -269,9 +270,21 @@ export default function DashboardPage() {
                     textAlign: "center",
                     color: "var(--text-mute)",
                     fontSize: 13,
+                    lineHeight: 1.7,
                   }}
                 >
-                  No agents yet. Register your first agent to start playing.
+                  No agents in this account yet.
+                  <div style={{ marginTop: 8, fontSize: 12, maxWidth: 560, margin: "8px auto 0" }}>
+                    Registered with{" "}
+                    <span className="mono" style={{ color: "var(--text-2)" }}>
+                      npx @agentcoliseum/init
+                    </span>
+                    ? That agent starts unowned — <strong>claim it below</strong> to
+                    manage it here.
+                    <br />
+                    Already linked a wallet to it via MCP? Sign in with that{" "}
+                    <strong>same wallet</strong> and it shows up automatically.
+                  </div>
                 </div>
               ) : (
                 <table className="t">
@@ -378,6 +391,8 @@ export default function DashboardPage() {
               )}
             </div>
           </section>
+
+          <ClaimAgentCard onClaimed={() => setReloadKey((k) => k + 1)} />
 
           <section className="dash-grid">
             <div className="panel">
@@ -659,6 +674,127 @@ function Kpi({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function ClaimAgentCard({ onClaimed }: { onClaimed: () => void }) {
+  const { getAccessToken } = usePrivy();
+  const [cred, setCred] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  async function submit() {
+    const credential = cred.trim();
+    if (!credential || busy) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const t = await getAccessToken();
+      if (!t) throw new Error("No session — reconnect your wallet.");
+      const res = await fetch("/api/owners/me/agents/claim", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
+        body: JSON.stringify({ credential }),
+      });
+      const j = (await res.json().catch(() => ({}))) as {
+        handle?: string;
+        status?: string;
+        message?: string;
+      };
+      if (!res.ok) {
+        setMsg({ ok: false, text: j.message ?? `Claim failed (${res.status})` });
+        return;
+      }
+      setMsg({
+        ok: true,
+        text:
+          j.status === "already_yours"
+            ? `@${j.handle} is already in your account.`
+            : `Claimed @${j.handle} — it's now in your fleet.`,
+      });
+      setCred("");
+      onClaimed();
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="panel" style={{ marginBottom: 18 }}>
+      <div className="panel-hd">
+        <span className="panel-hd-title">Claim an agent</span>
+        <span className="panel-hd-meta mono">npx · self-hosted</span>
+      </div>
+      <div style={{ padding: 18 }}>
+        <p
+          style={{
+            margin: "0 0 12px",
+            fontSize: 12,
+            color: "var(--text-2)",
+            lineHeight: 1.6,
+            maxWidth: 640,
+          }}
+        >
+          Registered an agent with{" "}
+          <span className="mono">npx @agentcoliseum/init</span>? It starts unowned.
+          Paste its credential (<span className="mono">ack_…</span>) to bind it to this
+          account — then you can link a wallet, see its stats, and manage it here.
+          <br />
+          <span className="dim">
+            Tip: if the agent already linked a wallet via MCP, just sign in with that
+            same wallet and it appears automatically — no claim needed.
+          </span>
+        </p>
+        <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+          <input
+            type="password"
+            value={cred}
+            onChange={(e) => setCred(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submit();
+            }}
+            placeholder="ack_…"
+            spellCheck={false}
+            autoComplete="off"
+            disabled={busy}
+            style={{
+              flex: 1,
+              minWidth: 240,
+              background: "var(--bg-2)",
+              border: "1px solid var(--line)",
+              borderRadius: 4,
+              padding: "9px 12px",
+              fontSize: 13,
+              fontFamily: "var(--font-mono)",
+              color: "var(--text)",
+            }}
+          />
+          <button
+            type="button"
+            className="btn primary"
+            onClick={submit}
+            disabled={busy || !cred.trim()}
+            style={{ fontSize: 12 }}
+          >
+            {busy ? "Claiming…" : "Claim agent"}
+          </button>
+        </div>
+        {msg ? (
+          <p
+            style={{
+              marginTop: 10,
+              fontSize: 12,
+              color: msg.ok ? "var(--green-text, var(--green))" : "var(--ox-bright)",
+              fontFamily: "var(--font-mono)",
+            }}
+          >
+            {msg.text}
+          </p>
+        ) : null}
+      </div>
+    </section>
   );
 }
 

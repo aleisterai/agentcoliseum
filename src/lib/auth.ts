@@ -81,12 +81,16 @@ export async function requireAgentByApiKey(
 }
 
 /**
- * Resolve a Privy access token to a wallet address. Used by the
- * /api/owners/me endpoint where the frontend hands us the Privy session.
+ * Resolve a Privy access token to the verified identity: the user's primary
+ * EVM wallet address + their Privy user id. The user id lets callers
+ * back-fill `owners.privy_user_id` on a row that was first created via the
+ * MCP wallet-link flow (which only knew the wallet).
  *
  * Returns null if no valid Privy token is present.
  */
-export async function resolvePrivyWallet(req: Request): Promise<`0x${string}` | null> {
+export async function resolvePrivyIdentity(
+  req: Request,
+): Promise<{ wallet: `0x${string}`; privyUserId: string } | null> {
   const token = bearerFrom(req);
   if (!token) return null;
   // Lazy import — keeps the privy SDK out of the cold path for non-Privy routes.
@@ -105,8 +109,19 @@ export async function resolvePrivyWallet(req: Request): Promise<`0x${string}` | 
       (a) => a.type === "wallet" && (a as { chainType?: string }).chainType !== "solana",
     ) as { address?: string } | undefined;
     if (!wallet?.address) return null;
-    return wallet.address.toLowerCase() as `0x${string}`;
+    return {
+      wallet: wallet.address.toLowerCase() as `0x${string}`,
+      privyUserId: claims.userId,
+    };
   } catch {
     return null;
   }
+}
+
+/**
+ * Resolve a Privy access token to a wallet address. Thin wrapper over
+ * `resolvePrivyIdentity` kept for the many callers that only need the wallet.
+ */
+export async function resolvePrivyWallet(req: Request): Promise<`0x${string}` | null> {
+  return (await resolvePrivyIdentity(req))?.wallet ?? null;
 }

@@ -15,7 +15,7 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { owners } from "@/lib/db/schema";
-import { generateApiKey, resolvePrivyWallet, UnauthorizedError } from "@/lib/auth";
+import { generateApiKey, resolvePrivyIdentity, UnauthorizedError } from "@/lib/auth";
 import { errorResponse } from "@/lib/http";
 import { getAddress } from "viem";
 
@@ -23,16 +23,25 @@ export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   try {
-    const wallet = await resolvePrivyWallet(req);
-    if (!wallet) {
+    const identity = await resolvePrivyIdentity(req);
+    if (!identity) {
       throw new UnauthorizedError("unauthorized", "Valid Privy session required");
     }
-    const checksummed = getAddress(wallet);
+    const checksummed = getAddress(identity.wallet);
 
     const existing = await db.query.owners.findFirst({
       where: eq(owners.walletAddress, checksummed),
     });
     if (existing) {
+      // Reconcile a row first created via the MCP wallet-link flow (which
+      // only knew the wallet, leaving privy_user_id null) now that the same
+      // human has signed in with Privy.
+      if (!existing.privyUserId && identity.privyUserId) {
+        await db
+          .update(owners)
+          .set({ privyUserId: identity.privyUserId })
+          .where(eq(owners.id, existing.id));
+      }
       return NextResponse.json({
         id: existing.id,
         walletAddress: existing.walletAddress,
@@ -44,7 +53,7 @@ export async function POST(req: Request) {
     const apiKey = generateApiKey();
     const [inserted] = await db
       .insert(owners)
-      .values({ walletAddress: checksummed, apiKey })
+      .values({ walletAddress: checksummed, apiKey, privyUserId: identity.privyUserId })
       .returning();
 
     return NextResponse.json(

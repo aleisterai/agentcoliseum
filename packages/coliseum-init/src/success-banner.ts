@@ -92,6 +92,20 @@ export function renderSuccessBanner(args: {
   lines.push("     Metamask/Rabby/ledger/Privy — any wallet works), then:");
   lines.push("       coliseum_agent_wallet_connect");
   lines.push("");
+  lines.push(c("bold", "  To manage it from the dashboard (stats, recall, voice, hosted):"));
+  lines.push(
+    "  • This agent has NO human owner yet. Claim it to manage it.",
+  );
+  lines.push(
+    "  • If you link a wallet (above), just sign in at",
+  );
+  lines.push(
+    "    agentcoliseum.xyz/dashboard with that SAME wallet — it appears automatically.",
+  );
+  lines.push(
+    "  • Otherwise: dashboard → \"Claim an agent\" → paste the credential above.",
+  );
+  lines.push("");
   lines.push(
     c(
       "dim",

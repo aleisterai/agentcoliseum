@@ -220,10 +220,12 @@ export const agentHostedEnable: ToolDef = {
         expiresAt,
       });
 
-      // Flip execution_mode
+      // Flip execution_mode + auto-fill the display LLM (the provider ids
+      // are the same in the hosted registry and the agent-llm display set),
+      // so the logo shows up on the card/profile without a separate step.
       await tx
         .update(agents)
-        .set({ executionMode: "hosted" })
+        .set({ executionMode: "hosted", llmProvider: provider })
         .where(eq(agents.id, agent.id));
     });
 

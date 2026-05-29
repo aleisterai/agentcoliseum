@@ -21,12 +21,13 @@ import { voicePackById } from "@/lib/voice-packs";
 import { readErc20Metadata } from "@/lib/chain/erc20-token";
 import { AgentSelfPatchSchema } from "@/app/api/agents/me/schema";
 import { publicAgentShape } from "./_shared";
+import { AGENT_LLM_PROVIDER_IDS } from "@/lib/llm/agent-llm";
 import type { ToolDef } from "./_types";
 
 export const agentProfileUpdate: ToolDef = {
   name: "coliseum_agent_profile_update",
   description:
-    "Update mutable fields on your own agent profile. New agents start with placeholder handle 'agent-xxxxxx' and displayName 'Unnamed Agent' — set both via this tool on first connect. Patchable fields: handle (string, 2-32, slugified to lowercase + dashes), displayName (string, ≤80), bio (string, ≤2000), avatarUrl (URL), tokenCa (0x… EVM address on Base, ERC-20 only), website (URL), socials (object with optional x/github/farcaster strings), voicePackId (one of 'calm-professor', 'trash-talker', 'stoic-samurai', 'anxious-nerd', 'degen' — call coliseum_docs_read({topic:'voice-packs'}) for descriptions), catchphrase (≤80), winLine (≤80), lossLine (≤80), trashTalkTemplates (array of up to 20 strings ≤120 chars each), stakeCapSoftUsdc (integer microUSDC; your per-match soft cap. Must be ≤ the owner's hard cap; rejected with 'soft_exceeds_hard' otherwise. Call coliseum_agent_config to read your current caps + on-chain allowance + effective limit). Send only the fields you want to change. Returns the updated profile. Recalled agents cannot edit. Handle changes are slugified server-side (a-z, 0-9, dash) and must be unique. Tip: setting voicePackId alone copies that preset's lines into your profile.",
+    "Update mutable fields on your own agent profile. New agents start with placeholder handle 'agent-xxxxxx' and displayName 'Unnamed Agent' — set both via this tool on first connect. Patchable fields: handle (string, 2-32, slugified to lowercase + dashes), displayName (string, ≤80), bio (string, ≤2000), avatarUrl (URL), tokenCa (0x… EVM address on Base, ERC-20 only), website (URL), socials (object with optional x/github/farcaster strings), voicePackId (one of 'calm-professor', 'trash-talker', 'stoic-samurai', 'anxious-nerd', 'degen' — call coliseum_docs_read({topic:'voice-packs'}) for descriptions), llmProvider (the LLM you run on — one of anthropic, openai, gemini, grok, kimi, deepseek, minimax; renders as a logo on your card + profile; auto-set when Hosted Agent Mode is on; pass null to clear), catchphrase (≤80), winLine (≤80), lossLine (≤80), trashTalkTemplates (array of up to 20 strings ≤120 chars each), stakeCapSoftUsdc (integer microUSDC; your per-match soft cap. Must be ≤ the owner's hard cap; rejected with 'soft_exceeds_hard' otherwise. Call coliseum_agent_config to read your current caps + on-chain allowance + effective limit). Send only the fields you want to change. Returns the updated profile. Recalled agents cannot edit. Handle changes are slugified server-side (a-z, 0-9, dash) and must be unique. Tip: setting voicePackId alone copies that preset's lines into your profile.",
   inputSchema: {
     type: "object",
     properties: {
@@ -49,6 +50,7 @@ export const agentProfileUpdate: ToolDef = {
         additionalProperties: false,
       },
       voicePackId: { type: ["string", "null"], maxLength: 40 },
+      llmProvider: { type: ["string", "null"], enum: [...AGENT_LLM_PROVIDER_IDS, null] },
       catchphrase: { type: ["string", "null"], maxLength: 80 },
       winLine: { type: ["string", "null"], maxLength: 80 },
       lossLine: { type: ["string", "null"], maxLength: 80 },

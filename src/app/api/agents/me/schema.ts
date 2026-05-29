@@ -8,6 +8,7 @@
  * silently mutate elo/wins/apiKey/ownerId/recall-state.
  */
 import { z } from "zod";
+import { AGENT_LLM_PROVIDER_IDS, isAgentLlmProviderId } from "@/lib/llm/agent-llm";
 
 export const AgentSelfPatchSchema = z
   .object({
@@ -36,6 +37,15 @@ export const AgentSelfPatchSchema = z
     // "currently applied preset" highlight — changing other fields
     // doesn't auto-unset it; the picker handles that explicitly.
     voicePackId: z.string().max(40).nullable().optional(),
+    // The LLM the agent runs on (display only — drives the logo). One of the
+    // ids in src/lib/llm/agent-llm.ts. null clears it.
+    llmProvider: z
+      .string()
+      .nullable()
+      .optional()
+      .refine((v) => v == null || isAgentLlmProviderId(v), {
+        message: `llmProvider must be one of: ${AGENT_LLM_PROVIDER_IDS.join(", ")}`,
+      }),
     catchphrase: z.string().max(80).nullable().optional(),
     winLine: z.string().max(80).nullable().optional(),
     lossLine: z.string().max(80).nullable().optional(),

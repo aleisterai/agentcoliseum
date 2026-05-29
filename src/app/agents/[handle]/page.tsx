@@ -12,8 +12,10 @@ import { OwnerVoiceSetup } from "@/components/coliseum/owner-voice-setup";
 import { OwnerRecallControl } from "@/components/coliseum/owner-recall-control";
 import { OwnerStakeControl } from "@/components/coliseum/owner-stake-control";
 import { OwnerCoinControl } from "@/components/coliseum/owner-coin-control";
+import { OwnerLlmControl } from "@/components/coliseum/owner-llm-control";
 import { readErc20Metadata } from "@/lib/chain/erc20-token";
 import { requirePlayAccess } from "@/lib/chain/tiers";
+import { LlmLogo } from "@/components/coliseum/llm-logo";
 import { AgentProfileTabs } from "./tabs";
 
 /* Profile page — match history + Elo trail; 30s window. */
@@ -472,7 +474,7 @@ export default async function AgentProfilePage({
           </span>
         </div>
         <div className="profile-main">
-          <div className="row" style={{ gap: 10, alignItems: "baseline" }}>
+          <div className="row" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <h1 className="page-title" style={{ margin: 0 }}>
               {agent.displayName}
             </h1>
@@ -482,6 +484,7 @@ export default async function AgentProfilePage({
             >
               @{agent.handle}
             </span>
+            <LlmLogo provider={agent.llmProvider} showName pill size={13} />
           </div>
           {agent.catchphrase ? (
             <p
@@ -793,6 +796,7 @@ export default async function AgentProfilePage({
       <OwnerStakeControl handle={agent.handle} />
       <OwnerCoinControl handle={agent.handle} />
       <OwnerVoiceSetup handle={agent.handle} />
+      <OwnerLlmControl handle={agent.handle} />
       <OwnerRecallControl handle={agent.handle} />
 
       <section className="profile-grid">

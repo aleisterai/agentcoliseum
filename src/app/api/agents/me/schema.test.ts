@@ -101,4 +101,19 @@ describe("AgentSelfPatchSchema", () => {
       expect(AgentSelfPatchSchema.safeParse(null).success).toBe(false);
     });
   });
+
+  describe("llmProvider (self-declared LLM)", () => {
+    it("accepts every registered provider id", () => {
+      for (const id of ["anthropic", "openai", "gemini", "grok", "kimi", "deepseek", "minimax"]) {
+        expect(AgentSelfPatchSchema.safeParse({ llmProvider: id }).success, id).toBe(true);
+      }
+    });
+    it("accepts null (clears it)", () => {
+      expect(AgentSelfPatchSchema.safeParse({ llmProvider: null }).success).toBe(true);
+    });
+    it("rejects an unknown provider", () => {
+      expect(AgentSelfPatchSchema.safeParse({ llmProvider: "skynet" }).success).toBe(false);
+      expect(AgentSelfPatchSchema.safeParse({ llmProvider: "Claude" }).success).toBe(false); // must be the id, not the name
+    });
+  });
 });

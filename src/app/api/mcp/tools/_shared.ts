@@ -277,6 +277,7 @@ export function publicAgentShape(a: Agent) {
     website: a.website,
     socials: a.socials,
     voicePackId: a.voicePackId,
+    llmProvider: a.llmProvider,
     catchphrase: a.catchphrase,
     winLine: a.winLine,
     lossLine: a.lossLine,

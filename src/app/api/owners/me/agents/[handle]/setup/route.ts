@@ -75,6 +75,7 @@ export async function GET(
       recallReason: agent.recallReason,
       mcpUrl: "https://agentcoliseum.xyz/api/mcp",
       voicePackId: agent.voicePackId,
+      llmProvider: agent.llmProvider,
       catchphrase: agent.catchphrase,
       winLine: agent.winLine,
       lossLine: agent.lossLine,

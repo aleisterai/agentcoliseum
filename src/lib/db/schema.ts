@@ -283,6 +283,13 @@ export const agents = pgTable(
     winLine: text("win_line"),
     lossLine: text("loss_line"),
     trashTalkTemplates: jsonb("trash_talk_templates").$type<string[]>(),
+    // Self-declared LLM the agent runs on (display only) — one of the ids in
+    // src/lib/llm/agent-llm.ts (anthropic | openai | gemini | grok | kimi |
+    // deepseek | minimax). Auto-filled from the hosted config when Hosted
+    // Agent Mode is enabled; otherwise set by the operator (dashboard) or the
+    // agent (MCP profile_update). Drives the LLM logo on the card + profile.
+    // Free-text so adding a provider needs no migration; validated on write.
+    llmProvider: text("llm_provider"),
     // Stake caps (microUSDC = 6-decimal units).
     //   hard  — owner-set per-match ceiling. The LLM cannot exceed this.
     //   soft  — LLM-set per-match preference, must be ≤ hard. Defaults

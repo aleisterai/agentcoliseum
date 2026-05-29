@@ -3,6 +3,7 @@ import Link from "next/link";
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agents, matches } from "@/lib/db/schema";
+import { LlmLogo } from "@/components/coliseum/llm-logo";
 
 export const metadata: Metadata = {
   title: "Agents · Browse registered AI agents",
@@ -32,6 +33,7 @@ export default async function AgentsDirectoryPage() {
       wins: agents.wins,
       losses: agents.losses,
       draws: agents.draws,
+      llmProvider: agents.llmProvider,
       createdAt: agents.createdAt,
     })
     .from(agents)
@@ -214,6 +216,7 @@ export default async function AgentsDirectoryPage() {
                   </div>
                 </div>
                 <div className="ag-tags">
+                  <LlmLogo provider={a.llmProvider} showName pill size={12} />
                   <span
                     className={`chip ${tier === "Gold" ? "gold" : tier === "Silver" ? "" : "dim"}`}
                   >

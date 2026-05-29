@@ -25,6 +25,7 @@ import {
   bearerFrom,
   checkBearerRateLimit,
   lookupAgentByToken,
+  maybeSeedLlmProviderFromClient,
   stampLastMcpAt,
 } from "@/lib/mcp-auth";
 import { REQUEST_ID_HEADER, withRequestContext } from "@/lib/log";
@@ -149,6 +150,16 @@ async function dispatchJsonRpc(
     switch (body.method) {
       case "initialize": {
         const params = InitializeParams.parse(body.params ?? {});
+        // Seed the LLM badge from the client identity (Claude Desktop /
+        // Claude Code → Claude, ChatGPT app → OpenAI, …) when the agent
+        // hasn't declared one. Soft default — only fills when unset; an
+        // explicit coliseum_agent_profile_update({ llmProvider }) overrides.
+        // Fire-and-forget so it can't delay the handshake.
+        maybeSeedLlmProviderFromClient(
+          agent.id,
+          agent.llmProvider,
+          params.clientInfo?.name,
+        );
         return ok(body.id, {
           protocolVersion: params.protocolVersion ?? "2024-11-05",
           capabilities: { tools: {} },

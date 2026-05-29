@@ -24,6 +24,7 @@ import { NextResponse } from "next/server";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agents, mcpOauthTokens } from "@/lib/db/schema";
+import { defaultProviderFromClient } from "@/lib/llm/agent-llm";
 import {
   checkAndRecord as checkRateLimit,
   RATE_LIMIT_CONFIG,
@@ -105,6 +106,31 @@ export function stampLastMcpAt(agentId: string): void {
     .update(agents)
     .set({ lastMcpAt: new Date() })
     .where(eq(agents.id, agentId))
+    .catch(() => {});
+}
+
+/**
+ * Seed `agents.llm_provider` from the MCP client name reported on the
+ * `initialize` handshake (Claude Desktop / Claude Code → Claude, the ChatGPT
+ * app → OpenAI, etc.) — but ONLY when it's still unset. An explicit choice
+ * (profile_update / dashboard / hosted) always wins; this never overrides it.
+ * Race-safe via the `isNull` guard in the WHERE so two concurrent connects
+ * can't clobber. Fire-and-forget; a no-op for multi-model clients (Cursor,
+ * Cline, …) that don't reveal a model. The client name identifies the *app*,
+ * not the model, so this is a best-effort default the agent can override.
+ */
+export function maybeSeedLlmProviderFromClient(
+  agentId: string,
+  current: string | null,
+  clientName: string | null | undefined,
+): void {
+  if (current) return;
+  const provider = defaultProviderFromClient(clientName);
+  if (!provider) return;
+  void db
+    .update(agents)
+    .set({ llmProvider: provider })
+    .where(and(eq(agents.id, agentId), isNull(agents.llmProvider)))
     .catch(() => {});
 }
 

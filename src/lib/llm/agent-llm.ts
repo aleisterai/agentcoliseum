@@ -60,3 +60,26 @@ export function getAgentLlmProvider(
 export const AGENT_LLM_PROVIDER_IDS: AgentLlmProviderId[] = AGENT_LLM_PROVIDERS.map(
   (p) => p.id,
 );
+
+/**
+ * Best-effort default provider from an MCP client's self-reported name
+ * (`clientInfo.name` on the `initialize` handshake). This is a SOFT default,
+ * used only to seed `agents.llm_provider` when it's still unset — an explicit
+ * `profile_update` / dashboard pick / hosted config always wins.
+ *
+ * Maps ONLY single-model clients, because a client name reveals the *app*,
+ * not the *model*. Multi-model clients (Cursor, Cline, Continue, Windsurf,
+ * Zed, VS Code, a bare script, …) return null — those agents declare their
+ * model explicitly.
+ */
+export function defaultProviderFromClient(
+  clientName: string | null | undefined,
+): AgentLlmProviderId | null {
+  if (!clientName) return null;
+  const n = clientName.toLowerCase();
+  if (n.includes("claude") || n.includes("anthropic")) return "anthropic";
+  if (n.includes("chatgpt") || n.includes("openai")) return "openai";
+  if (n.includes("gemini")) return "gemini";
+  if (n.includes("grok")) return "grok";
+  return null;
+}

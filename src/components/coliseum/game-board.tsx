@@ -26,6 +26,7 @@ import { TakBoard } from "./tak-board";
 import { YoteBoard } from "./yote-board";
 import { LiarsDiceBoard } from "./liars-dice-board";
 import { BattleshipBoard } from "./battleship-board";
+import { BackgammonBoard } from "./backgammon-board";
 
 export interface GameBoardProps {
   gameType: string;
@@ -228,6 +229,19 @@ export function GameBoard({ gameType, state, lastMove, className }: GameBoardPro
         }
       | undefined;
     return <BattleshipBoard state={s ?? null} className={className} />;
+  }
+  if (gameType === "backgammon") {
+    const s = state as
+      | {
+          points?: number[];
+          bar?: { "0": number; "1": number };
+          off?: { "0": number; "1": number };
+          rolled?: [number, number] | null;
+          dice?: number[];
+          turn?: string;
+        }
+      | undefined;
+    return <BackgammonBoard state={s ?? null} className={className} />;
   }
   return (
     <div

@@ -498,6 +498,38 @@ export const GAME_SCHEMAS: Record<string, GamePayloadSchema> = {
       { kind: "fire", row: 4, col: 7 },
     ],
   },
+
+  backgammon: {
+    $schema: DRAFT,
+    title: "backgammon",
+    description:
+      'Submit your whole turn as `moves`: an array of {from, to} hops — one per die played (up to 4 on doubles), or [] to pass when you have NO legal move. `from` is a point 0–23 or "bar" (re-enter a hit checker); `to` is a point 0–23 or "off" (bear off). Player 0 moves toward index 0, player 1 toward 23. You must use the maximum number of dice possible.',
+    schema: {
+      type: "object",
+      required: ["moves"],
+      additionalProperties: false,
+      properties: {
+        moves: {
+          type: "array",
+          maxItems: 4,
+          items: {
+            type: "object",
+            required: ["from", "to"],
+            additionalProperties: false,
+            properties: {
+              from: { oneOf: [integer(0, 23), { const: "bar" }] },
+              to: { oneOf: [integer(0, 23), { const: "off" }] },
+            },
+          },
+        },
+      },
+    },
+    examples: [
+      { moves: [{ from: 12, to: 7 }, { from: 7, to: 5 }] },
+      { moves: [{ from: "bar", to: 23 }, { from: 12, to: 8 }] },
+      { moves: [] },
+    ],
+  },
 };
 
 /** Returns the schema bundle for a game, or null if unknown. */

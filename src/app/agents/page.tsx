@@ -43,8 +43,8 @@ export default async function AgentsDirectoryPage() {
   const ids = rows.map((r) => r.id);
   const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-  // 7d Elo delta + earnings + recent specialties (per game)
-  const [p1Deltas, p2Deltas, earnRows, specRows] = ids.length
+  // 7d Elo delta + earnings (per agent)
+  const [p1Deltas, p2Deltas, earnRows] = ids.length
     ? await Promise.all([
         db
           .select({
@@ -88,22 +88,8 @@ export default async function AgentsDirectoryPage() {
             ),
           )
           .groupBy(matches.winnerAgentId),
-        db.execute<{ agent_id: string; game_type: string; played: number }>(sql`
-          SELECT agent_id, game_type, COUNT(*)::int AS played
-          FROM (
-            SELECT p1_agent_id AS agent_id, game_type
-              FROM ${matches}
-              WHERE status = 'completed' AND p1_agent_id IS NOT NULL
-            UNION ALL
-            SELECT p2_agent_id AS agent_id, game_type
-              FROM ${matches}
-              WHERE status = 'completed' AND p2_agent_id IS NOT NULL
-          ) t
-          WHERE agent_id IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
-          GROUP BY agent_id, game_type
-        `),
       ])
-    : [[], [], [], []];
+    : [[], [], []];
 
   const earnMap = Object.fromEntries(
     earnRows.map((r) => [r.winnerAgentId ?? "", Number(r.earnings)]),
@@ -112,22 +98,6 @@ export default async function AgentsDirectoryPage() {
   const eloDeltaMap: Record<string, number> = {};
   for (const r of p1Deltas) if (r.agentId) eloDeltaMap[r.agentId] = (eloDeltaMap[r.agentId] ?? 0) + Number(r.sumDelta);
   for (const r of p2Deltas) if (r.agentId) eloDeltaMap[r.agentId] = (eloDeltaMap[r.agentId] ?? 0) + Number(r.sumDelta);
-
-  // Top specialties per agent
-  const specByAgent: Record<string, string[]> = {};
-  const grouped: Record<string, Array<{ gt: string; n: number }>> = {};
-  const specList = Array.isArray(specRows)
-    ? (specRows as Array<{ agent_id: string; game_type: string; played: number }>)
-    : ((specRows as unknown as { rows: Array<{ agent_id: string; game_type: string; played: number }> }).rows ?? []);
-  for (const r of specList) {
-    (grouped[r.agent_id] ??= []).push({ gt: r.game_type, n: Number(r.played) });
-  }
-  for (const [aid, list] of Object.entries(grouped)) {
-    specByAgent[aid] = list
-      .sort((a, b) => b.n - a.n)
-      .slice(0, 3)
-      .map((x) => x.gt);
-  }
 
   return (
     <main className="page" id="page">
@@ -174,8 +144,6 @@ export default async function AgentsDirectoryPage() {
             const earned = earnMap[a.id] ?? 0;
             const recentMs = Date.now() - new Date(a.createdAt).getTime();
             const recentlyActive = recentMs < 30 * 60 * 1000;
-            const specialties = specByAgent[a.id] ?? [];
-            const tier = a.elo >= 1600 ? "Gold" : a.elo >= 1400 ? "Silver" : "Bronze";
             return (
               <Link key={a.id} className="ag-card" href={`/agents/${a.handle}`}>
                 <div className="ag-card-hd">
@@ -215,19 +183,11 @@ export default async function AgentsDirectoryPage() {
                     </div>
                   </div>
                 </div>
-                <div className="ag-tags">
-                  <LlmLogo provider={a.llmProvider} showName pill size={12} />
-                  <span
-                    className={`chip ${tier === "Gold" ? "gold" : tier === "Silver" ? "" : "dim"}`}
-                  >
-                    {tier}
-                  </span>
-                  {specialties.map((s) => (
-                    <span key={s} className="chip dim">
-                      {s}
-                    </span>
-                  ))}
-                </div>
+                {a.llmProvider ? (
+                  <div className="ag-tags">
+                    <LlmLogo provider={a.llmProvider} showName pill size={12} />
+                  </div>
+                ) : null}
               </Link>
             );
           })

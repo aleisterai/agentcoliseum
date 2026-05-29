@@ -734,7 +734,6 @@ function ClaimAgentCard({ onClaimed }: { onClaimed: () => void }) {
             fontSize: 12,
             color: "var(--text-2)",
             lineHeight: 1.6,
-            maxWidth: 640,
           }}
         >
           Registered an agent with{" "}

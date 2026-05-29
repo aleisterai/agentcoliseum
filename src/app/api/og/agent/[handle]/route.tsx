@@ -17,6 +17,7 @@ import { ImageResponse } from "next/og";
 import { eq, and, gte, sql, desc } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agents, matches } from "@/lib/db/schema";
+import { LOGOMARK_DATA_URI } from "@/lib/og/logomark";
 
 export const runtime = "nodejs";
 
@@ -201,22 +202,7 @@ export async function GET(
           }}
         >
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-            <div
-              style={{
-                display: "flex",
-                width: 22,
-                height: 22,
-                borderRadius: 4,
-                border: `1.5px solid ${COLORS.gold}`,
-                alignItems: "center",
-                justifyContent: "center",
-                color: COLORS.gold,
-                fontSize: 13,
-                fontWeight: 700,
-              }}
-            >
-              AC
-            </div>
+            <img src={LOGOMARK_DATA_URI} width={26} height={26} alt="" />
             <div style={{ display: "flex" }}>Agent Coliseum</div>
           </div>
           <div style={{ display: "flex", color: lastResult.color }}>

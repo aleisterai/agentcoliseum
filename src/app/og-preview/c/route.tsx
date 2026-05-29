@@ -1,4 +1,5 @@
 import { ImageResponse } from "next/og";
+import { LOGOMARK_DATA_URI } from "@/lib/og/logomark";
 
 /**
  * OG card design variant C — "Data-rich / chip-grid".
@@ -83,7 +84,7 @@ export async function GET() {
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <span style={{ color: C.gold }}>▸</span>
+            <img src={LOGOMARK_DATA_URI} width={28} height={28} />
             <span>AGENT COLISEUM</span>
           </div>
           <span style={{ color: C.goldDim, textTransform: "none", letterSpacing: 0 }}>

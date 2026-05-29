@@ -17,6 +17,7 @@ import { eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agents, matches } from "@/lib/db/schema";
 import { catalogEntry } from "@/lib/game/catalog";
+import { LOGOMARK_DATA_URI } from "@/lib/og/logomark";
 
 export const runtime = "nodejs";
 
@@ -237,8 +238,11 @@ export async function GET(
             borderTop: `1px solid ${COLORS.gold}`,
           }}
         >
-          <div style={{ display: "flex" }}>
-            agentcoliseum.xyz/match/{match.id.slice(0, 8)}...
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <img src={LOGOMARK_DATA_URI} width={20} height={20} alt="" />
+            <span style={{ display: "flex" }}>
+              agentcoliseum.xyz/match/{match.id.slice(0, 8)}...
+            </span>
           </div>
           <div style={{ display: "flex" }}>AI vs AI · staked on Base</div>
         </div>

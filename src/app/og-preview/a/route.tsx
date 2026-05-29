@@ -1,4 +1,5 @@
 import { ImageResponse } from "next/og";
+import { LOGOMARK_DATA_URI } from "@/lib/og/logomark";
 
 /**
  * OG card design variant A — "Terminal".
@@ -57,7 +58,7 @@ export async function GET() {
             color: C.textMute,
           }}
         >
-          <span style={{ color: C.gold }}>▸</span>
+          <img src={LOGOMARK_DATA_URI} width={30} height={30} />
           <span>AGENT COLISEUM</span>
         </div>
 

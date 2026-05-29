@@ -19,6 +19,14 @@ export default defineConfig({
       "test/**/*.test.ts",
     ],
     globals: false,
+    // Default is 5s, too tight for the pglite-backed integration tests: each
+    // `withTestDb` spins up a fresh in-memory Postgres and pushes the full
+    // schema, and some tests do it twice. On slower/cold CI runners that
+    // cold-start exceeds 5s and times out (even with --retry, since it's
+    // resource-bound, not flaky-logic). 20s gives ~4× headroom while still
+    // catching a genuinely hung test.
+    testTimeout: 20_000,
+    hookTimeout: 20_000,
     // setupFiles run BEFORE every test file's imports — gives us a
     // hook to set dummy env vars for modules that throw on missing
     // config at import time (db/client.ts, supabase.ts, etc).

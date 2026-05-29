@@ -111,6 +111,14 @@ export interface ApplyMoveInput {
 }
 
 /**
+ * Input to `applyMoveCore` — the pure engine/persistence mechanism. Identical
+ * to `ApplyMoveInput` except `reasoning` is a non-empty, trimmed string: the
+ * `applyMoveWithVoice` decorator has already run the voice INPUT policy
+ * (require-reasoning + the in-voice marker gate). Core does NOT re-validate it.
+ */
+type ApplyMoveCoreInput = Omit<ApplyMoveInput, "reasoning"> & { reasoning: string };
+
+/**
  * Trim + REQUIRE reasoning. Throws MissingReasoningError if the
  * string is missing, empty, whitespace-only, or shorter than the
  * 40-char minimum. 40 was chosen to block trivial "ok" / "fine" /
@@ -165,36 +173,16 @@ function requireReasoning(raw: string | null | undefined): string {
  * commit. `finalizeMatch` (the legacy entry) stays untouched for
  * the clock-cron + bot-driver callers.
  */
-export async function applyMove(input: ApplyMoveInput): Promise<Match> {
-  // Reasoning is REQUIRED. Voice-driven reasoning is Coliseum's
-  // product — empty bubbles are dead UI. Reject up front before
-  // any clock cost or DB writes.
-  const reasoning = requireReasoning(input.reasoning);
-
-  // Agent voice pack — used by the in-voice marker check. Read
-  // outside the tx because (a) it's a small, read-only lookup and
-  // (b) keeping it inside the tx would force us to lock the agent
-  // row too, which we don't need.
-  const myAgent = await db.query.agents.findFirst({
-    where: eq(agents.id, input.agentId),
-    columns: { voicePackId: true },
-  });
-  // `say` is required on agent-submitted moves (the Zod schema
-  // enforces it; this is defence-in-depth). System bot calls with
-  // null `say` get filled by the bot-synthesis path.
-  if (input.say !== null && input.say !== undefined) {
-    const voiceCheck = checkVoiceMarkers(
-      input.say,
-      myAgent?.voicePackId ?? null,
-    );
-    if (!voiceCheck.ok) {
-      throw new OffVoiceError(
-        voiceCheck.voicePackId!,
-        voiceCheck.expectedMarkers!,
-        voiceCheck.got!,
-      );
-    }
-  }
+export async function applyMoveCore(input: ApplyMoveCoreInput): Promise<Match> {
+  // The voice INPUT policy (require-reasoning + the in-voice `say` marker
+  // gate) is owned by the `applyMoveWithVoice` decorator and has already run
+  // by the time we reach core — `input.reasoning` is a validated, trimmed
+  // string and `input.say` (if present) passed the marker check. Core is the
+  // pure mechanism: lock → clock → validate payload → engine apply → persist
+  // → finalize/advance → broadcast. The one voice gate that stays here is the
+  // engagement check (below), because it needs the FOR UPDATE-locked match
+  // row's moveCount.
+  const reasoning = input.reasoning;
 
   type DeferredBroadcast = () => Promise<void>;
   interface ApplyResult {
@@ -354,7 +342,7 @@ export async function applyMove(input: ApplyMoveInput): Promise<Match> {
         throw new IllegalMoveError("engine_rejected");
       }
 
-      // `reasoning` was already validated + trimmed at the top of applyMove.
+      // `reasoning` was validated + trimmed by the applyMoveWithVoice decorator.
       const moveNumber = match.moveCount;
 
       // INSERT match_moves. The unique constraint on (matchId, moveNumber)
@@ -592,6 +580,55 @@ export async function applyMove(input: ApplyMoveInput): Promise<Match> {
   }
   return updated;
 }
+
+/**
+ * Voice decorator over `applyMoveCore` (P1-5 phase 2 — engine vs product).
+ * Owns the agent's voice INPUT policy, i.e. the two checks that don't need
+ * the FOR UPDATE-locked match row, then delegates the engine/persistence/
+ * broadcast mechanism to core:
+ *
+ *   1. `reasoning` is REQUIRED — voiced moves are Coliseum's product; empty
+ *      bubbles are dead UI. Rejected up front, before any clock cost or DB
+ *      write (MissingReasoningError).
+ *   2. `say`, when present, must carry the agent's voice-pack markers, else
+ *      OffVoiceError. The system bot submits say=null and is exempt — its
+ *      dialogue is synthesized separately in driveSystemBot.
+ *
+ * The moveCount-dependent engagement gate (reactingTo on move ≥ 2) stays in
+ * core because it needs the locked row.
+ */
+export async function applyMoveWithVoice(input: ApplyMoveInput): Promise<Match> {
+  // Reasoning is REQUIRED — reject before any clock cost or DB write.
+  const reasoning = requireReasoning(input.reasoning);
+
+  // Agent voice pack — read outside the tx (small read-only lookup; no need
+  // to lock the agent row) for the in-voice `say` marker check.
+  const myAgent = await db.query.agents.findFirst({
+    where: eq(agents.id, input.agentId),
+    columns: { voicePackId: true },
+  });
+  // `say` is required on agent-submitted moves (the Zod schema enforces it;
+  // this is defence-in-depth). System-bot calls with null `say` are exempt.
+  if (input.say !== null && input.say !== undefined) {
+    const voiceCheck = checkVoiceMarkers(input.say, myAgent?.voicePackId ?? null);
+    if (!voiceCheck.ok) {
+      throw new OffVoiceError(
+        voiceCheck.voicePackId!,
+        voiceCheck.expectedMarkers!,
+        voiceCheck.got!,
+      );
+    }
+  }
+
+  return applyMoveCore({ ...input, reasoning });
+}
+
+/**
+ * Public entry point for agent moves — kept under the historical name so the
+ * MCP/REST move handlers and the server-flow re-export don't change. Every
+ * agent move goes through the voice decorator.
+ */
+export const applyMove = applyMoveWithVoice;
 
 /**
  * Helper: build the post-commit broadcast list for a match that just

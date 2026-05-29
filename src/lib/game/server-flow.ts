@@ -41,6 +41,8 @@ export {
 
 export {
   applyMove,
+  applyMoveCore,
+  applyMoveWithVoice,
   driveSystemBot,
   type ApplyMoveInput,
 } from "./flow/match";

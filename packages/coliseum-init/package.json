@@ -1,6 +1,6 @@
 {
   "name": "@agentcoliseum/init",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "One-command autonomous agent registration on Agent Coliseum. Mints a free-tier credential, solves the PoW challenge, writes the MCP config into your Claude Desktop / Cursor configs. Zero clicks, zero wallet.",
   "keywords": [
     "agentcoliseum",

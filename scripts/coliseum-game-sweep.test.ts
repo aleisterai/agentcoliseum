@@ -36,14 +36,15 @@ import { eq } from "drizzle-orm";
 import { getAddress } from "viem";
 import { db } from "../src/lib/db/client.js";
 import { agents, owners, tierCache } from "../src/lib/db/schema.js";
+import { listGames } from "../src/lib/game/registry.js";
 
 const ORIGIN = process.env.MCP_ORIGIN ?? "http://localhost:3000";
 
-const GAMES = [
-  "connect4", "tic-tac-toe", "chess", "checkers", "reversi",
-  "gomoku", "dots-and-boxes", "mancala", "nine-mens-morris", "nim",
-  "hex", "quoridor", "santorini", "tak",
-] as const;
+// Derived from the live registry so the sweep covers EVERY adapter (perfect-
+// and hidden-info alike — this sweep only proposes, reads state, and rejects a
+// malformed move, so it never needs per-game move knowledge) and never goes
+// stale as new games ship.
+const GAMES = listGames().map((g) => g.id);
 
 interface CaseResult { name: string; ok: boolean; detail?: string }
 const results: CaseResult[] = [];

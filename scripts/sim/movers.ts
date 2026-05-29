@@ -37,7 +37,13 @@ export type GameId =
   | "hex"
   | "quoridor"
   | "santorini"
-  | "tak";
+  | "tak"
+  // wave 5/6 perfect-information additions — drivable by the playthrough
+  // simulator because their publicState is the full game state.
+  | "yote"
+  | "backgammon"
+  | "fanorona"
+  | "agon";
 
 export const ALL_GAMES: GameId[] = [
   "tic-tac-toe",
@@ -54,7 +60,19 @@ export const ALL_GAMES: GameId[] = [
   "quoridor",
   "santorini",
   "tak",
+  "yote",
+  "backgammon",
+  "fanorona",
+  "agon",
 ];
+
+// NOTE — hidden-information games (battleship, liars-dice) are intentionally
+// NOT in ALL_GAMES. The playthrough simulator reads `boardState` from
+// /api/v1/match/state, which for those games is the REDACTED publicState; a
+// bot can't pick a legal move without the agent's own `privateState` (fleet /
+// dice). Driving them end-to-end needs the runner to merge privateAddendum
+// first — deferred. They are still exercised by the propose→state→reject
+// game-sweep (which never plays a move).
 
 export type WirePayload = Record<string, unknown>;
 
@@ -76,6 +94,10 @@ export type WirePayload = Record<string, unknown>;
  *   quoridor    → { kind, ?to, ?wall} → identity
  *   santorini   → { builder, to, build } → identity
  *   tak         → { to, kind }        → identity
+ *   yote        → { kind, ... }       → identity
+ *   fanorona    → { from, steps }     → identity
+ *   agon        → { from, to }        → identity
+ *   backgammon  → { kind:"play", moves } → { moves }  (strip internal `kind`)
  */
 function encode(gameType: GameId, internal: unknown): WirePayload {
   if (gameType === "tic-tac-toe") {
@@ -94,7 +116,16 @@ function encode(gameType: GameId, internal: unknown): WirePayload {
     }
     return { column: internal };
   }
-  // Identity for the other 12 — the adapter's internal type IS the wire
+  if (gameType === "backgammon") {
+    // The bot returns the internal move { kind: "play", moves }, but the wire
+    // payload is just { moves } (the schema forbids extra keys). Strip to the
+    // documented shape.
+    if (typeof internal !== "object" || internal === null || !("moves" in internal)) {
+      throw new Error(`backgammon encoder: expected { moves }, got ${typeof internal}`);
+    }
+    return { moves: (internal as { moves: unknown }).moves };
+  }
+  // Identity for the rest — the adapter's internal type IS the wire
   // payload shape (confirmed by reading each game's validateMovePayload).
   if (typeof internal !== "object" || internal === null) {
     throw new Error(

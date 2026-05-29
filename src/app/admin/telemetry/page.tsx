@@ -5,7 +5,7 @@
  *
  * 30s revalidate keeps the page snappy without hammering the DB.
  */
-import { count, eq, gte, isNotNull, isNull, and, desc, sql } from "drizzle-orm";
+import { count, eq, gte, isNotNull, and, desc, sql } from "drizzle-orm";
 import Link from "next/link";
 import { db } from "@/lib/db/client";
 import { agents, matches } from "@/lib/db/schema";

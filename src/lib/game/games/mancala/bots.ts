@@ -15,7 +15,6 @@ import {
   applyMove,
   checkResult,
   legalMoves,
-  opposite,
   type MancalaMove,
   type MancalaState,
   type PlayerId,

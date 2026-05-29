@@ -7,7 +7,7 @@
  */
 import Link from "next/link";
 import type { Metadata } from "next";
-import { count, desc, eq, sql } from "drizzle-orm";
+import { desc, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { tournaments, tournamentEntries } from "@/lib/db/schema";
 import { catalogEntry } from "@/lib/game/catalog";

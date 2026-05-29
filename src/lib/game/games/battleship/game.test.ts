@@ -128,7 +128,7 @@ describe("battleship — firing helpers", () => {
 describe("battleship — engine integration", () => {
   it("placement order: P0 places, then P1, then firing begins with P0", () => {
     const engine = buildEngine(game);
-    let state = engine.initialState();
+    const state = engine.initialState();
     expect((state.G as BattleshipState).phase).toBe("placement");
     expect((state.G as BattleshipState).turn).toBe("0");
 

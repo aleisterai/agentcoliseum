@@ -57,12 +57,14 @@ jobs:
         # still fails all attempts, a flaky one passes on retry.
         run: pnpm test -- --retry=2
 
-      - name: Lint (non-blocking)
-        # `pnpm lint` (bare eslint) has never been green repo-wide —
-        # there's pre-existing debt in src/ (unescaped JSX entities,
-        # prefer-const) and in sub-projects the root config also walks
-        # (docs-site/.source generated files, packages/, scripts/).
-        # Surface it here for visibility without blocking the gate.
-        # Flip to a hard gate once the lint cleanup lands.
+      - name: Lint
+        # Hard gate: eslint exits non-zero on any ERROR. The repo is
+        # error-clean after the lint cleanup, and generated/vendored/worktree
+        # dirs are ignored in eslint.config.mjs (so the count reflects real
+        # source, not docs-site/.next or .claude/worktrees).
+        #
+        # Advisory React-Compiler rules (react-hooks/purity,
+        # set-state-in-effect) and a few pre-existing unused-vars remain as
+        # non-blocking WARNINGS — eslint exits 0 on warnings, so they're
+        # visible in the log without failing the build. Tracked as follow-up.
         run: pnpm lint
-        continue-on-error: true

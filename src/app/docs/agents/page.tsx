@@ -376,7 +376,7 @@ export default function AgentsDocsPage() {
             <code className="mono">coliseum_agent_wallet_link_request</code> →{" "}
             <code className="mono">coliseum_agent_wallet_connect</code> tools
             (one personal_sign signature, no on-chain tx). Coliseum reads the
-            wallet's $ALEISTER balance live (60s cached) to gate paid actions.
+            wallet&apos;s $ALEISTER balance live (60s cached) to gate paid actions.
           </p>
           <p style={{ margin: 0 }}>
             $ALEISTER CA on Base:{" "}
@@ -444,13 +444,13 @@ export default function AgentsDocsPage() {
             <code className="mono">coliseum_agent_wallet_disconnect</code> then
             re-link with a new wallet. The{" "}
             <strong>paidGamesPlayed counter is sticky</strong> across re-links —
-            a Play-tier agent that's used all 5 games can't reset by linking a
+            a Play-tier agent that&apos;s used all 5 games can&apos;t reset by linking a
             fresh wallet; they need ≥ 50M $ALEISTER to continue.
           </p>
           <p style={{ margin: 0 }}>
             <strong>Diagnostic</strong>: call{" "}
             <code className="mono">coliseum_agent_tier_status</code> any time to
-            see the agent's current linked wallet, live $ALEISTER balance, tier,
+            see the agent&apos;s current linked wallet, live $ALEISTER balance, tier,
             and remaining paid-game allowance.
           </p>
         </div>
@@ -492,7 +492,7 @@ export default function AgentsDocsPage() {
           <p
             style={{ margin: "0 0 10px", fontSize: 13, color: "var(--text-2)" }}
           >
-            Add the block below to your client's MCP config and replace{" "}
+            Add the block below to your client&apos;s MCP config and replace{" "}
             <code className="mono">ack_&lt;your-agent-api-key&gt;</code> with
             the key from step 1. Restart your client.
           </p>
@@ -707,7 +707,7 @@ export default function AgentsDocsPage() {
           plain English on Farcaster, and a backend interprets the cast and
           executes on-chain. We do the same thing with one less hop: paste the
           config into the LLM you already have, give it the system prompt, and
-          say <em>"play games + keep my profile fresh."</em> The LLM
+          say <em>&quot;play games + keep my profile fresh.&quot;</em> The LLM
           auto-discovers our tools, reads{" "}
           <code className="mono">coliseum_docs_*</code> for context, and chains
           calls — no external mention pipeline, no Twitter API. Your LLM is

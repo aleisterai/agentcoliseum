@@ -21,7 +21,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, or } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agents, headToHead, matches } from "@/lib/db/schema";
 import { catalogEntry } from "@/lib/game/catalog";

@@ -12,7 +12,6 @@ import { db } from "@/lib/db/client";
 import { agents, matches, owners } from "@/lib/db/schema";
 import { errorResponse, jsonError } from "@/lib/http";
 import { getAdapter } from "@/lib/game/registry";
-import type { State } from "boardgame.io";
 
 export const dynamic = "force-dynamic";
 

@@ -71,7 +71,7 @@ function parseFlags(argv: string[]): ParsedFlags {
 }
 
 function printHelp(): void {
-  // eslint-disable-next-line no-console
+
   console.log(`
 Agent Coliseum · agent onboarding CLI
 
@@ -120,8 +120,8 @@ async function run(): Promise<void> {
   // ── Step 1: gather inputs ────────────────────────────────────────
   let handle = flags.handle;
   let voicePackId: VoicePackId = (flags.voice ?? "calm-professor") as VoicePackId;
-  let bio = flags.bio;
-  let displayName = flags.displayName;
+  const bio = flags.bio;
+  const displayName = flags.displayName;
 
   if (!flags.yes && !flags.json) {
     if (!handle) {
@@ -152,12 +152,12 @@ async function run(): Promise<void> {
   }
 
   if (!handle) {
-    // eslint-disable-next-line no-console
+
     console.error("Missing handle. Pass --handle or run interactively.");
     process.exit(1);
   }
   if (!VOICE_PACK_IDS.includes(voicePackId)) {
-    // eslint-disable-next-line no-console
+
     console.error(
       `Unknown voice "${voicePackId}". Valid: ${VOICE_PACK_IDS.join(", ")}`,
     );
@@ -215,17 +215,17 @@ async function run(): Promise<void> {
   });
 
   if (flags.json) {
-    // eslint-disable-next-line no-console
+
     console.log(JSON.stringify(result, null, 2));
     process.exit(result.ok ? 0 : 1);
   }
 
   if (!result.ok) {
     process.stderr.write(`FAILED\n`);
-    // eslint-disable-next-line no-console
+
     console.error(`\n  Error: ${result.error.code} — ${result.error.message}`);
     if (result.error.hint) {
-      // eslint-disable-next-line no-console
+
       console.error(`  Hint:  ${result.error.hint}\n`);
     }
     process.exit(1);
@@ -271,7 +271,7 @@ async function run(): Promise<void> {
         });
         injections.push(out);
       } catch (err) {
-        // eslint-disable-next-line no-console
+
         console.error(
           `  ✗ ${client.label}: ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -279,24 +279,24 @@ async function run(): Promise<void> {
     }
   } else {
     // --print: just print the config block to stdout
-    // eslint-disable-next-line no-console
+
     console.log("\n# Copy this into your MCP client config:");
-    // eslint-disable-next-line no-console
+
     console.log(JSON.stringify(result.mcpInstallConfig.claudeDesktop, null, 2));
-    // eslint-disable-next-line no-console
+
     console.log();
   }
 
   // ── Step 7: success banner ───────────────────────────────────────
-  // eslint-disable-next-line no-console
+
   console.log(renderSuccessBanner({ success: result, injections }));
 }
 
 run().catch((err) => {
-  // eslint-disable-next-line no-console
+
   console.error(`\nUnexpected error: ${err instanceof Error ? err.message : String(err)}`);
   if (err instanceof Error && err.stack) {
-    // eslint-disable-next-line no-console
+
     console.error(err.stack);
   }
   process.exit(1);

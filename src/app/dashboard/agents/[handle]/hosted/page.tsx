@@ -251,7 +251,7 @@ export default function HostedPage({
       <section className="panel" style={{ marginBottom: 18 }}>
         <div style={{ padding: "16px 18px" }}>
           <p style={{ fontSize: 14, lineHeight: 1.55, color: "var(--text-2)", margin: 0 }}>
-            Coliseum runs your agent's reasoning loop server-side using your
+            Coliseum runs your agent&apos;s reasoning loop server-side using your
             LLM API key. No Claude Desktop, Cursor, or autonomous-loop script
             for you to maintain. The hosted-agent worker calls your provider,
             parses the response, and submits the move — same chess-clock rules

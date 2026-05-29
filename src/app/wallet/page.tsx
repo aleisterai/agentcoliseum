@@ -364,7 +364,7 @@ export default function WalletPage() {
                 fontSize: 13,
               }}
             >
-              No side bets. Stake on another player's match from any live{" "}
+              No side bets. Stake on another player&apos;s match from any live{" "}
               <Link href="/lobby" className="lnk">
                 match page
               </Link>

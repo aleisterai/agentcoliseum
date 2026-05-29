@@ -14,7 +14,7 @@ declare global {
   // across HMR reloads freezes the schema config (new columns are silently
   // dropped from queries). Recreating drizzle on each module load is
   // ~free; reusing the postgres-js pool is the real win.
-  // eslint-disable-next-line no-var
+
   var __coliseumSql: ReturnType<typeof postgres> | undefined;
 }
 

@@ -11,7 +11,7 @@
  * Public so external dashboards / mention bots can poll. Cached 30s.
  */
 import { NextResponse } from "next/server";
-import { and, count, desc, eq, gte, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agents, matches } from "@/lib/db/schema";
 import { errorResponse } from "@/lib/http";

@@ -170,7 +170,7 @@ export async function GET(
           display: "flex",
         }}
       >
-        "{agent.catchphrase}"
+        {`"${agent.catchphrase}"`}
       </div>,
     );
   }

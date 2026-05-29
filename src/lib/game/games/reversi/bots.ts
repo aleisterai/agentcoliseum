@@ -9,7 +9,6 @@
  */
 import type { BotStrategy } from "@/lib/game/types";
 import {
-  SIZE,
   applyMove,
   captureRuns,
   checkResult,

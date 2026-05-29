@@ -10,7 +10,7 @@
  * We DON'T touch a client unless the user opts in — the CLI presents
  * the detected list and the user picks.
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 
@@ -107,8 +107,7 @@ function detectExistingColiseum(path: string): boolean {
     // tolerates JSON-with-comments) and a parse error shouldn't lie
     // about "no existing coliseum" — be conservative and assume YES
     // if the file is unreadable.
-    const fs = require("node:fs") as typeof import("node:fs");
-    const text = fs.readFileSync(path, "utf8");
+    const text = readFileSync(path, "utf8");
     return /"coliseum"\s*:/.test(text);
   } catch {
     return false;

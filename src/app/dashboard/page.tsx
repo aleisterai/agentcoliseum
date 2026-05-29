@@ -154,7 +154,7 @@ export default function DashboardPage() {
             No wallet connected.
             <br />
             <span className="dim mono" style={{ fontSize: 11 }}>
-              The header's Connect button opens Privy. After connecting we'll
+              The header&apos;s Connect button opens Privy. After connecting we&apos;ll
               auto-create your owner row and API key.
             </span>
           </div>

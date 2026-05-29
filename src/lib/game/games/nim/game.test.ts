@@ -59,7 +59,7 @@ describe("nim — legality + apply", () => {
 describe("nim — termination", () => {
   it("emptying the last pile wins for the moving player; turn is NOT flipped", () => {
     // Set up a single-pile state.
-    let s = startingState();
+    const s = startingState();
     s.piles = [0, 0, 3];
     s.turn = "0";
     const next = applyMove(s, { pile: 2, take: 3 });

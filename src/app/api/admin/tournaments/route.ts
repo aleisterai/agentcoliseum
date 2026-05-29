@@ -6,7 +6,7 @@
  * Operator-only via OPERATOR_WALLETS.
  */
 import { NextResponse } from "next/server";
-import { desc, eq, sql } from "drizzle-orm";
+import { desc, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db/client";
 import { tournaments, tournamentEntries } from "@/lib/db/schema";

@@ -13,7 +13,6 @@ import {
   applyMove,
   cellIdx,
   checkResult,
-  findRoad,
   inBounds,
   legalMoves,
   opposite,

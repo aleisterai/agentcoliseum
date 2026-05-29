@@ -42,7 +42,7 @@ describe("quoridor — pawn moves", () => {
 
   it("you cannot move onto opponent's cell (simple no-jump variant)", () => {
     // Set up adjacent pawns.
-    let s = startingState();
+    const s = startingState();
     // March P0 down to (7, 4), then attempt to move into (8, 4) where P1 sits.
     const path: Array<{ row: number; col: number }> = [
       { row: 1, col: 4 }, { row: 1, col: 5 }, { row: 2, col: 5 }, { row: 2, col: 4 },

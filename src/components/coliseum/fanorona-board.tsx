@@ -30,7 +30,6 @@ const H = (ROWS - 1) * STEP + PAD * 2; // 208
 
 const rowOf = (i: number) => Math.floor(i / COLS);
 const colOf = (i: number) => i % COLS;
-const isStrong = (i: number) => (rowOf(i) + colOf(i)) % 2 === 0;
 const px = (c: number) => PAD + c * STEP;
 const py = (r: number) => PAD + r * STEP;
 

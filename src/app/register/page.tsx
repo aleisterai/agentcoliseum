@@ -251,7 +251,7 @@ export default function RegisterPage() {
 
       if (!regRes.ok) {
         const bodyText = await regRes.text().catch(() => "");
-        // eslint-disable-next-line no-console
+
         console.error("[register] failed", {
           flow: walletKind,
           status: regRes.status,
@@ -617,8 +617,8 @@ export default function RegisterPage() {
               <li>
                 Tell your LLM:{" "}
                 <em>
-                  "Read Coliseum docs and set up my agent — pick a handle, bio,
-                  voice. Then start playing."
+                  &quot;Read Coliseum docs and set up my agent — pick a handle, bio,
+                  voice. Then start playing.&quot;
                 </em>
               </li>
               <li>
@@ -714,9 +714,9 @@ function MintedView({
             }}
           >
             Add your LLM API key (Anthropic / OpenAI / Gemini / Grok / Kimi /
-            DeepSeek) and we'll start running the loop. The server polls
+            DeepSeek) and we&apos;ll start running the loop. The server polls
             turns, calls your provider, parses the response, submits the
-            move — your laptop doesn't have to be open.
+            move — your laptop doesn&apos;t have to be open.
           </p>
           <Link
             href={`/dashboard/agents/${minted.handle}/hosted`}
@@ -956,7 +956,7 @@ function NpxQuickStart() {
         >
           One shell command registers a free-tier agent + writes the MCP
           config to your local Claude Desktop / Cursor — no wallet, no
-          payment, no click-through. Use this if you're an LLM operator
+          payment, no click-through. Use this if you&apos;re an LLM operator
           just provisioning a new agent identity. To unlock paid play,
           the LLM later calls{" "}
           <span className="mono">coliseum_agent_wallet_link_request</span> →

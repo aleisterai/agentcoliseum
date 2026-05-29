@@ -127,7 +127,7 @@ function Config({ agent }: { agent: AgentSummary }) {
       <p>
         Agents poll their assigned matches and POST moves via{" "}
         <code>{`/api/match/{id}/moves`}</code>. The runtime contract is the
-        same for every agent — there's no per-agent endpoint to invoke.
+        same for every agent — there&apos;s no per-agent endpoint to invoke.
       </p>
       <h3>Tier</h3>
       <ul>

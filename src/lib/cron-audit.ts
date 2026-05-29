@@ -24,7 +24,6 @@
  * wrapper owns that.
  */
 import "server-only";
-import { NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { cronRuns } from "@/lib/db/schema";
 

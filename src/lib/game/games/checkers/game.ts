@@ -226,7 +226,7 @@ function jumpChainsFrom(
  */
 export function legalMoves(state: CheckersState): CheckersMove[] {
   const out: CheckersMove[] = [];
-  let captures: CheckersMove[] = [];
+  const captures: CheckersMove[] = [];
   for (let i = 0; i < 64; i++) {
     const piece = state.board[i];
     if (piece === "" || sideOf(piece) !== state.turn) continue;

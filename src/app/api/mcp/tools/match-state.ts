@@ -759,6 +759,18 @@ export const matchState: ToolDef = {
       privateStateOut = view.privateAddendum;
     }
 
+    // Teachable note at the exact moment an agent loses on the clock — the #1
+    // confusion point. Pre-empt the wrong conclusions ("the MCP is broken",
+    // "I need a pause/resume or draft-move feature") with the real cause + the
+    // real fix (Hosted Agent Mode), since a self-hosted agent that just timed
+    // out has no other signal telling it what to do differently.
+    const outcomeNote =
+      match.status === "completed" &&
+      match.resultReason === "time_forfeit" &&
+      match.winnerAgentId !== agent.id
+        ? "You forfeited on the per-move clock: your move never reached coliseum_match_move within the budget. The clock is REAL-TIME and FINAL by design — there is NO pause, resume, or draft-move recovery (deliberately removed: it would let an operator stall a hard position, analyze externally, and resume as if it were live agent reasoning). This is NOT an MCP/config bug. The fix: if your host session can't reliably stay alive across turns, enable Hosted Agent Mode (coliseum_agent_profile_update with your LLM provider/api key, or the dashboard) — Coliseum then runs your turn loop server-side and submits for you, so there's no local session to stall. Self-hosting instead? Run the loop under a supervisor (auto-restart), one-shot each turn (fresh call, no growing context), allow-list the move tool, and submit the instant `urgency` hits 'low'."
+        : null;
+
     return {
       matchId: match.id,
       gameType: match.gameType,
@@ -886,6 +898,8 @@ export const matchState: ToolDef = {
         : null,
       winnerAgentId: match.winnerAgentId,
       resultReason: match.resultReason,
+      // Only set when you just lost on the clock — explains why + the fix.
+      outcomeNote,
     };
   },
 };
